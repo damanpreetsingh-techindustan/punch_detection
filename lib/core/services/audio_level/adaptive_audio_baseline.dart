@@ -172,9 +172,6 @@ class AdaptiveAudioBaseline {
       return null;
     }
 
-    // 3. Robust Percussive Onset Rise Verification (Enforce safety floor at >= 70 dB)
-    final double effectiveMinFloor = max(absoluteMinFloorDb, calibratedAmbientDb + 4.0);
-
     // Measure onset rise across the last 4 frames (40ms)
     final double onsetTrough = min(
       min(_onsetHistory0, _onsetHistory1),
@@ -196,13 +193,22 @@ class AdaptiveAudioBaseline {
     final double targetDb =
         fixedAudioTargetDb ?? (calibratedAmbientDb + spikeThresholdDb);
 
+    // Robust Percussive Onset Rise Verification:
+    // Safety floor defaults to absoluteMinFloorDb, but must not exceed targetDb when user lowers threshold
+    final double ambientFloor = spikeThresholdDb < 0
+        ? (calibratedAmbientDb + spikeThresholdDb)
+        : (calibratedAmbientDb + 4.0);
+    final double effectiveMinFloor = min(
+      targetDb,
+      max(min(absoluteMinFloorDb, targetDb), ambientFloor),
+    );
+
     // Strict percussive impact onset verification:
     // Physical punches produce explosive shockwaves (>= +6.0 dB jump in 20ms or steep onset).
     // Human voices, speech, and background movement ramp up gradually (1-3 dB) and are completely filtered out.
     final bool isOnsetMet = frameJump >= 6.0 ||
         windowRise >= 10.0 ||
         (windowRise >= 8.0 && frameJump >= 4.0);
-
 
     // Condition 1: Target Met (Valid punch threshold achieved)
     final bool isThresholdMet = db >= targetDb && db >= effectiveMinFloor;

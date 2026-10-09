@@ -176,6 +176,50 @@ class FreeSessionController extends GetxController {
   final List<double> _frameLatencyMsList = [];
   int _candidateActivationCount = 0;
 
+  /// Settings view & audio tune modal detection suppression state.
+  /// Counter of currently active settings sheets / dialogs.
+  int _openSettingsViewsCount = 0;
+
+  /// Timestamp in milliseconds until which punch detection is suppressed
+  /// following the closure of a settings sheet or tune dialog.
+  int _settingsCooldownUntilMs = 0;
+
+  /// True if settings sheet or tune dialog is currently open OR in post-close cooldown period.
+  bool get isSettingsViewActive =>
+      _openSettingsViewsCount > 0 ||
+      DateTime.now().millisecondsSinceEpoch < _settingsCooldownUntilMs;
+
+  int get openSettingsViewsCount => _openSettingsViewsCount;
+  int get settingsCooldownUntilMs => _settingsCooldownUntilMs;
+
+  void notifySettingsViewOpened() {
+    _openSettingsViewsCount++;
+    developer.log(
+      'Settings view opened (active count: $_openSettingsViewsCount). Punch detection paused.',
+      name: 'FreeSessionController',
+    );
+  }
+
+  void notifySettingsViewClosed() {
+    if (_openSettingsViewsCount > 0) {
+      _openSettingsViewsCount--;
+      if (_openSettingsViewsCount == 0) {
+        _settingsCooldownUntilMs =
+            DateTime.now().millisecondsSinceEpoch +
+            AppConstants.postSettingsCooldownMs;
+        developer.log(
+          'Settings view closed. Post-settings cooldown active until $_settingsCooldownUntilMs (${AppConstants.postSettingsCooldownMs}ms).',
+          name: 'FreeSessionController',
+        );
+      }
+    }
+  }
+
+  void resetSettingsGate() {
+    _openSettingsViewsCount = 0;
+    _settingsCooldownUntilMs = 0;
+  }
+
   // Dynamic Audio & Video Punch Settings (Tunable live during session)
   final RxDouble staticCalibratedAudioDb =
       0.0.obs; // Static base audio dB captured during precheck calibration
@@ -353,6 +397,17 @@ class FreeSessionController extends GetxController {
         _isVibrationArmed =
             false; // Lock out until physical shockwave dies down
 
+        if (isSettingsViewActive) {
+          final String vibeRejectLog =
+              '🔴 [REJECTED] VIBRATION_IMPACT (Declined: Settings open or client using mobile) | '
+              'Vibe: ${mag.toStringAsFixed(2)} m/s² (Thresh: ${minVibrationThreshold.value.toStringAsFixed(2)} m/s²) | '
+              'Audio: ${liveDecibelLevel.value.toStringAsFixed(1)} dB (Base: ${liveBaselineDb.value.toStringAsFixed(1)} dB)';
+          _insertSpikeLog(vibeRejectLog);
+          detectionStatusText.value =
+              'Impact Rejected (Settings open or client using mobile)';
+          return;
+        }
+
         final String vibeLog =
             '🟡 [CANDIDATE] VIBRATION_IMPACT | '
             'Vibe: ${mag.toStringAsFixed(2)} m/s² (Thresh: ${minVibrationThreshold.value.toStringAsFixed(2)} m/s²) | '
@@ -371,13 +426,13 @@ class FreeSessionController extends GetxController {
           _triggerPunchHaptic();
         }
 
-        // BIDIRECTIONAL SYNC: Check if audio spike occurred slightly before vibration (within 600ms)
+        // BIDIRECTIONAL SYNC: Check if audio spike occurred slightly before vibration (within 120ms)
         final double effectiveTargetDb = customTargetAudioDb.value > 0
             ? customTargetAudioDb.value
             : (staticCalibratedAudioDb.value + minAudioPunchSpikeDb.value);
 
         final bool hasRecentAudio =
-            (nowMs - _lastPendingAudioSpikeMs) <= 600 &&
+            (nowMs - _lastPendingAudioSpikeMs) <= 120 &&
             _lastPendingAudioSpikeMs > 0 &&
             _lastPendingAudioSpikeDb >= effectiveTargetDb;
 
@@ -721,9 +776,7 @@ class FreeSessionController extends GetxController {
     // Sync parameters with live settings
     _adaptiveBaseline.spikeThresholdDb = minAudioPunchSpikeDb.value;
     _adaptiveBaseline.absoluteMinFloorDb = minPunchAudioDb.value;
-    _adaptiveBaseline.refractoryMs = sessionMode.value == DetectionMode.audio
-        ? 140
-        : 110;
+    _adaptiveBaseline.refractoryMs = 160;
     _adaptiveBaseline.fixedAudioTargetDb = customTargetAudioDb.value > 0
         ? customTargetAudioDb.value
         : null;
@@ -745,9 +798,7 @@ class FreeSessionController extends GetxController {
     final double spikeIntensity = confirmedSpike.spikeHeight;
     final int spikeTimeMs = confirmedSpike.timestampMs;
 
-    final int audioRefractoryMs = sessionMode.value == DetectionMode.audio
-        ? 140
-        : 110;
+    final int audioRefractoryMs = 160;
     final bool isAudioInRefractory =
         (nowMs - _lastAudioPunchTimestampMs < audioRefractoryMs);
 
@@ -802,9 +853,15 @@ class FreeSessionController extends GetxController {
                 isBodyVisibleInFrame));
     final bool isCamRejected = isCamAvailable && !isCamConfirmed;
 
-    // Use windowed physical vibration confirmation so microsecond decay does not drop hits
-    final double peakVibeInWindow =
-        _vibrationService.recentPeakVibrationMagnitude;
+    // Use windowed physical vibration confirmation so microsecond decay does not drop hits.
+    // Clean Impact Coincidence: Vibration peak must be temporally coincident with audio spike onset (<= 120ms).
+    // Lingering mechanical sway / old peaks from past punches (> 120ms) are strictly ignored.
+    final int peakVibeTime = _vibrationService.recentPeakTimestampMs;
+    final bool isVibeCoincident =
+        peakVibeTime > 0 && (spikeTimeMs - peakVibeTime).abs() <= 120;
+    final double peakVibeInWindow = isVibeCoincident
+        ? _vibrationService.recentPeakVibrationMagnitude
+        : 0.0;
     final double effectiveVibeMag = max(
       peakVibeInWindow,
       liveVibrationMagnitude.value,
@@ -846,7 +903,13 @@ class FreeSessionController extends GetxController {
     String decisionCode = 'UNKNOWN';
     String reasonLabel = '';
 
-    if (!isAudioTargetReached) {
+    if (isSettingsViewActive) {
+      isValidPunch = false;
+      isCandidate = false;
+      isRejected = true;
+      decisionCode = 'SETTINGS_OPEN_GATE';
+      reasonLabel = 'Declined: Settings open or client using mobile';
+    } else if (!isAudioTargetReached) {
       // Sub-target strike: volume is below the target threshold.
       // Must NEVER count as a valid punch under ANY mode until settings are tuned or target is reached!
       isValidPunch = false;
@@ -1030,6 +1093,8 @@ class FreeSessionController extends GetxController {
     return true;
   }
 
+  void checkPunchDetectionForTesting() => _checkPunchDetection();
+
   void _checkPunchDetection() {
     final int nowMs = DateTime.now().millisecondsSinceEpoch;
 
@@ -1037,6 +1102,16 @@ class FreeSessionController extends GetxController {
     final int warmupMs = AppConstants.warmUpDurationInMiliSeconds.round();
     if (nowMs - _sessionStartTimeMs < warmupMs) {
       detectionStatusText.value = 'Warming Up Engine…';
+      return;
+    }
+
+    if (isSettingsViewActive) {
+      if (sessionMode.value.requiresMicrophone) {
+        _isAudioTransient();
+      }
+      if (!detectionStatusText.value.startsWith('Impact Rejected')) {
+        detectionStatusText.value = 'Punch Detection Disabled (Settings Open)';
+      }
       return;
     }
 
@@ -1089,8 +1164,12 @@ class FreeSessionController extends GetxController {
       onSpikeDbChanged: (double value) {
         minAudioPunchSpikeDb.value = value;
         _adaptiveBaseline.spikeThresholdDb = value;
+        final double minAllowedTarget =
+            (AppConstants.minCalibratedTargetPunchDb +
+                    AppConstants.minAudioSpikeSliderDb)
+                .clamp(40.0, AppConstants.minCalibratedTargetPunchDb);
         final double newTarget = (staticCalibratedAudioDb.value + value).clamp(
-          AppConstants.minCalibratedTargetPunchDb,
+          minAllowedTarget,
           AppConstants.maxCalibratedTargetPunchDb,
         );
         customTargetAudioDb.value = newTarget.roundToDouble();
@@ -1101,6 +1180,8 @@ class FreeSessionController extends GetxController {
       onToggleVibrationGate: toggleVibrationGate,
       onEvaluateAutoConfig: evaluateAutoConfig,
       onApplyAutoConfig: applyAutoConfig,
+      onOpened: notifySettingsViewOpened,
+      onClosed: notifySettingsViewClosed,
     );
   }
 
@@ -1171,6 +1252,8 @@ class FreeSessionController extends GetxController {
       context,
       result: result,
       onApply: () => applyAutoConfig(result),
+      onOpened: notifySettingsViewOpened,
+      onClosed: notifySettingsViewClosed,
     );
   }
 
@@ -1180,6 +1263,13 @@ class FreeSessionController extends GetxController {
     String? arm,
     String? telemetryLog,
   }) {
+    if (isSettingsViewActive) {
+      developer.log(
+        'Punch rejected by master safety gate: settings view or cooldown active',
+        name: 'FreeSessionController',
+      );
+      return;
+    }
     punchCount.value++;
     final String armUpper = (arm ?? status).toUpperCase();
     if (armUpper.contains('LEFT')) {
@@ -1197,7 +1287,8 @@ class FreeSessionController extends GetxController {
     // Reset audio & vibration state so the exact same strike cannot re-trigger a second punch
     _lastAudioPunchTimestampMs = nowMs;
     _lastPendingAudioSpikeMs = 0;
-    _vibrationService.resetMagnitude();
+    _vibrationService.consumeRecentPeak();
+    liveVibrationMagnitude.value = 0.0;
     // _lastVisionPunchTimestampMs = 0;
     detectionStatusText.value = status;
 
@@ -1641,6 +1732,18 @@ class FreeSessionController extends GetxController {
     if (sessionMode.value == DetectionMode.camera &&
         tempResult.isPunchConfirmed &&
         nowMs - _lastPunchTimestampMs >= 280) {
+      if (isSettingsViewActive) {
+        final String currentDrivingArm = tempResult.confirmedArm ?? 'right';
+        final String cameraRejectLog =
+            '🔴 [REJECTED] CAMERA_ONLY (Declined: Settings open or client using mobile) | '
+            'Cam: ${tempResult.confidenceScore.round()}% ($currentDrivingArm) | '
+            'Audio: ${liveDecibelLevel.value.toStringAsFixed(1)} dB | '
+            'Vibe: ${liveVibrationMagnitude.value.toStringAsFixed(2)} m/s²';
+        _insertSpikeLog(cameraRejectLog);
+        detectionStatusText.value =
+            'Impact Rejected (Settings open or client using mobile)';
+        return;
+      }
       final String currentDrivingArm = tempResult.confirmedArm ?? 'right';
       final String punchTitle = currentDrivingArm == 'face'
           ? '★ PUNCH CONFIRMED! (Face / Head Motion)'
@@ -1783,6 +1886,7 @@ class FreeSessionController extends GetxController {
 
   @override
   void onClose() {
+    resetSettingsGate();
     _elapsedTimer?.cancel();
     _audioLevelSubscription?.cancel();
     _audioLevelService.dispose();

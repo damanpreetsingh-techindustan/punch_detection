@@ -93,20 +93,21 @@ class SessionPreCheckController extends GetxController {
     final int baseSteps;
     if (AppConstants.showAllFeatures) {
       if (mode == DetectionMode.fusion) {
-        baseSteps = 4;
+        baseSteps = 3;
       } else if (mode == DetectionMode.vibration) {
+        baseSteps = 1;
+      } else if (mode == DetectionMode.camera) {
         baseSteps = 2;
       } else {
-        baseSteps = 3;
+        baseSteps = 2;
       }
     } else {
-      if (mode == DetectionMode.fusion) {
-        baseSteps = 3;
-      } else if (mode == DetectionMode.camera ||
-          mode == DetectionMode.vibration) {
-        baseSteps = 1;
-      } else {
+      if (mode == DetectionMode.fusion ||
+          mode == DetectionMode.audio ||
+          mode == DetectionMode.audioVibration) {
         baseSteps = 2;
+      } else {
+        baseSteps = 1;
       }
     }
     return needsPermissionsStep ? (baseSteps + 1) : baseSteps;
@@ -116,6 +117,7 @@ class SessionPreCheckController extends GetxController {
   void onInit() {
     super.onInit();
     AppConstants.changeSettingToDefault();
+    selectedMountType.value = MountType.wall;
     pageController = PageController();
     checkPermissions();
     _startDeviceStabilityMonitor();

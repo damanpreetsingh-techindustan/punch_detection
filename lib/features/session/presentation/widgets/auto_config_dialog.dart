@@ -5,41 +5,55 @@ import '../../../../core/utils/size_box.dart';
 import '../../domain/services/auto_config_evaluator.dart';
 
 /// Shows an adaptive, review dialog for the Auto-Configuration feature.
-void showAutoConfigDialog(
+Future<void> showAutoConfigDialog(
   BuildContext context, {
   required AutoConfigResult result,
   VoidCallback? onApply,
-}) {
-  showDialog(
-    context: context,
-    builder: (ctx) => _AutoConfigReviewDialogContent(
-      result: result,
-      onApply: () {
-        Navigator.of(ctx).pop();
-        if (onApply != null) {
-          onApply();
-        }
-      },
-    ),
-  );
+  VoidCallback? onOpened,
+  VoidCallback? onClosed,
+}) async {
+  onOpened?.call();
+  try {
+    await showDialog(
+      context: context,
+      builder: (ctx) => _AutoConfigReviewDialogContent(
+        result: result,
+        onApply: () {
+          Navigator.of(ctx).pop();
+          if (onApply != null) {
+            onApply();
+          }
+        },
+      ),
+    );
+  } finally {
+    onClosed?.call();
+  }
 }
 
 /// Shows an adaptive, premium review dialog for the Auto-Configuration feature.
-void showAutoConfigReviewDialog(
+Future<void> showAutoConfigReviewDialog(
   BuildContext context, {
   required AutoConfigResult result,
   required Function(AutoConfigResult) onApply,
-}) {
-  showDialog(
-    context: context,
-    builder: (ctx) => _AutoConfigReviewDialogContent(
-      result: result,
-      onApply: () {
-        Navigator.of(ctx).pop();
-        onApply(result);
-      },
-    ),
-  );
+  VoidCallback? onOpened,
+  VoidCallback? onClosed,
+}) async {
+  onOpened?.call();
+  try {
+    await showDialog(
+      context: context,
+      builder: (ctx) => _AutoConfigReviewDialogContent(
+        result: result,
+        onApply: () {
+          Navigator.of(ctx).pop();
+          onApply(result);
+        },
+      ),
+    );
+  } finally {
+    onClosed?.call();
+  }
 }
 
 class _AutoConfigReviewDialogContent extends StatelessWidget {

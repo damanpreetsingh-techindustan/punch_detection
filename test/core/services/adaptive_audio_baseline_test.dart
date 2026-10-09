@@ -90,5 +90,19 @@ void main() {
       final spike3 = baselineEngine.processFrame(73.0, 50.0, nowMs: 1200);
       expect(spike3, isNotNull);
     });
+    test('supports negative spikeThresholdDb down to -15 dB and confirms punches reaching lower target', () {
+      baselineEngine.seedBaseline(70.0);
+      baselineEngine.spikeThresholdDb = -10.0; // Target is 70 + (-10) = 60 dB
+
+      // Steady ambient
+      baselineEngine.processFrame(50.0, 50.0, nowMs: 1000);
+      baselineEngine.processFrame(50.0, 50.0, nowMs: 1020);
+
+      // Punch at 63 dB: explosive onset exceeding the 60 dB target
+      final confirmedSpike = baselineEngine.processFrame(63.0, 50.0, nowMs: 1060);
+      expect(confirmedSpike, isNotNull);
+      expect(confirmedSpike!.isTargetMet, isTrue);
+      expect(confirmedSpike.peakDb, equals(63.0));
+    });
   });
 }

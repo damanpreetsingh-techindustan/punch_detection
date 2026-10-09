@@ -95,7 +95,6 @@ class SessionPreCheckPage extends GetView<SessionPreCheckController> {
                           if (showPermissionsStep)
                             _buildStep1CheckPermissions(context),
                           _buildStep2SelectMode(context),
-                          _buildStep3MountPhone(context),
                           if (isFusion || isCameraOnly)
                             _buildStep4ConfirmCamera(context),
                           if (isFusion || isAudioMode)
@@ -109,7 +108,6 @@ class SessionPreCheckPage extends GetView<SessionPreCheckController> {
                           if (showPermissionsStep)
                             _buildStep1CheckPermissions(context),
                           _buildStep2SelectMode(context),
-                          if (isFusion) _buildStep3MountPhone(context),
                           if (isFusion || isAudioMode)
                             _buildStep5CalibrateGymNoise(
                               context,
@@ -352,28 +350,35 @@ class SessionPreCheckPage extends GetView<SessionPreCheckController> {
                       ),
                       onPressed: controller.nextStep,
                       child: Obx(() {
-                        final mode = controller.selectedMode.value;
-                        final String label;
-                        if (AppConstants.showAllFeatures) {
-                          label = 'Continue to Mount Phone';
+                      final mode = controller.selectedMode.value;
+                      final String label;
+                      if (AppConstants.showAllFeatures) {
+                        if (mode == DetectionMode.fusion ||
+                            mode == DetectionMode.camera) {
+                          label = 'Continue to Confirm Camera';
+                        } else if (mode == DetectionMode.audio ||
+                            mode == DetectionMode.audioVibration) {
+                          label = 'Continue to 5s Calibration';
                         } else {
-                          if (mode == DetectionMode.fusion) {
-                            label = 'Continue to Mount Phone';
-                          } else if (mode == DetectionMode.audio ||
-                              mode == DetectionMode.audioVibration) {
-                            label = 'Continue to 5s Calibration';
-                          } else {
-                            label = 'Finish & Launch Session';
-                          }
+                          label = 'Finish & Launch Session';
                         }
-                        return Text(
-                          label,
-                          style: AppTextStyles.buttonLabel(context).copyWith(
-                            color: AppColors.ink,
-                            fontSize: 12.ts(context),
-                            fontWeight: FontWeight.w900,
-                          ),
-                        );
+                      } else {
+                        if (mode == DetectionMode.fusion ||
+                            mode == DetectionMode.audio ||
+                            mode == DetectionMode.audioVibration) {
+                          label = 'Continue to 5s Calibration';
+                        } else {
+                          label = 'Finish & Launch Session';
+                        }
+                      }
+                      return Text(
+                        label,
+                        style: AppTextStyles.buttonLabel(context).copyWith(
+                          color: AppColors.ink,
+                          fontSize: 12.ts(context),
+                          fontWeight: FontWeight.w900,
+                        ),
+                      );
                       }),
                     ),
                   ],
@@ -403,69 +408,73 @@ class SessionPreCheckPage extends GetView<SessionPreCheckController> {
                       ),
                     ),
                     8.height,
-                    Obx(
-                      () => _modeCardRow(
-                        context: context,
-                        id: DetectionMode.audioVibration.id,
-                        icon: DetectionMode.audioVibration.icon,
-                        title: DetectionMode.audioVibration.title,
-                        subtitle: DetectionMode.audioVibration.subtitle,
-                        isSelected:
-                            controller.selectedMode.value ==
+                    if (!AppConstants.showAllFeatures && false) ...[
+                      Obx(
+                        () => _modeCardRow(
+                          context: context,
+                          id: DetectionMode.audioVibration.id,
+                          icon: DetectionMode.audioVibration.icon,
+                          title: DetectionMode.audioVibration.title,
+                          subtitle: DetectionMode.audioVibration.subtitle,
+                          isSelected:
+                              controller.selectedMode.value ==
+                              DetectionMode.audioVibration,
+                          onTap: () => controller.selectMode(
                             DetectionMode.audioVibration,
-                        onTap: () =>
-                            controller.selectMode(DetectionMode.audioVibration),
-                        forTesting: true,
+                          ),
+                          forTesting: true,
+                        ),
                       ),
-                    ),
-                    8.height,
-                    Obx(
-                      () => _modeCardRow(
-                        context: context,
-                        id: DetectionMode.audio.id,
-                        icon: DetectionMode.audio.icon,
-                        title: DetectionMode.audio.title,
-                        subtitle: DetectionMode.audio.subtitle,
-                        isSelected:
-                            controller.selectedMode.value ==
-                            DetectionMode.audio,
-                        onTap: () => controller.selectMode(DetectionMode.audio),
-                        forTesting: true,
+                      8.height,
+                      Obx(
+                        () => _modeCardRow(
+                          context: context,
+                          id: DetectionMode.audio.id,
+                          icon: DetectionMode.audio.icon,
+                          title: DetectionMode.audio.title,
+                          subtitle: DetectionMode.audio.subtitle,
+                          isSelected:
+                              controller.selectedMode.value ==
+                              DetectionMode.audio,
+                          onTap: () =>
+                              controller.selectMode(DetectionMode.audio),
+                          forTesting: true,
+                        ),
                       ),
-                    ),
 
-                    8.height,
-                    Obx(
-                      () => _modeCardRow(
-                        context: context,
-                        id: DetectionMode.vibration.id,
-                        icon: DetectionMode.vibration.icon,
-                        title: DetectionMode.vibration.title,
-                        subtitle: DetectionMode.vibration.subtitle,
-                        isSelected:
-                            controller.selectedMode.value ==
-                            DetectionMode.vibration,
-                        onTap: () =>
-                            controller.selectMode(DetectionMode.vibration),
-                        forTesting: true,
+                      8.height,
+                      Obx(
+                        () => _modeCardRow(
+                          context: context,
+                          id: DetectionMode.vibration.id,
+                          icon: DetectionMode.vibration.icon,
+                          title: DetectionMode.vibration.title,
+                          subtitle: DetectionMode.vibration.subtitle,
+                          isSelected:
+                              controller.selectedMode.value ==
+                              DetectionMode.vibration,
+                          onTap: () =>
+                              controller.selectMode(DetectionMode.vibration),
+                          forTesting: true,
+                        ),
                       ),
-                    ),
-                    8.height,
-                    Obx(
-                      () => _modeCardRow(
-                        context: context,
-                        id: DetectionMode.camera.id,
-                        icon: DetectionMode.camera.icon,
-                        title: DetectionMode.camera.title,
-                        subtitle: DetectionMode.camera.subtitle,
-                        isSelected:
-                            controller.selectedMode.value ==
-                            DetectionMode.camera,
-                        onTap: () =>
-                            controller.selectMode(DetectionMode.camera),
-                        forTesting: true,
+                      8.height,
+                      Obx(
+                        () => _modeCardRow(
+                          context: context,
+                          id: DetectionMode.camera.id,
+                          icon: DetectionMode.camera.icon,
+                          title: DetectionMode.camera.title,
+                          subtitle: DetectionMode.camera.subtitle,
+                          isSelected:
+                              controller.selectedMode.value ==
+                              DetectionMode.camera,
+                          onTap: () =>
+                              controller.selectMode(DetectionMode.camera),
+                          forTesting: true,
+                        ),
                       ),
-                    ),
+                    ],
                   ],
                 ),
               ),
@@ -585,11 +594,18 @@ class SessionPreCheckPage extends GetView<SessionPreCheckController> {
                       final mode = controller.selectedMode.value;
                       final String label;
                       if (AppConstants.showAllFeatures) {
-                        label = 'Continue to Mount Phone';
-                      } else {
-                        if (mode == DetectionMode.fusion) {
-                          label = 'Continue to Mount Phone';
+                        if (mode == DetectionMode.fusion ||
+                            mode == DetectionMode.camera) {
+                          label = 'Continue to Confirm Camera';
                         } else if (mode == DetectionMode.audio ||
+                            mode == DetectionMode.audioVibration) {
+                          label = 'Continue to 5s Calibration';
+                        } else {
+                          label = 'Finish & Launch Session';
+                        }
+                      } else {
+                        if (mode == DetectionMode.fusion ||
+                            mode == DetectionMode.audio ||
                             mode == DetectionMode.audioVibration) {
                           label = 'Continue to 5s Calibration';
                         } else {
@@ -615,243 +631,7 @@ class SessionPreCheckPage extends GetView<SessionPreCheckController> {
     );
   }
 
-  // STEP 3: MOUNT PHONE & GUIDANCE
-  Widget _buildStep3MountPhone(BuildContext context) {
-    final bool isLandscape = CommonFunction.checkOrientationLandscape(context);
 
-    if (isLandscape) {
-      return Padding(
-        padding: EdgeInsets.symmetric(vertical: 6.h),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Left Column: Header, Description & Button
-            Expanded(
-              flex: 5,
-              child: SingleChildScrollView(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Mount Phone & Placement',
-                      style: AppTextStyles.heading2(
-                        context,
-                      ).copyWith(fontSize: 18.ts(context)),
-                    ),
-                    6.height,
-                    Text(
-                      'Mount phone at chest height, 4–8 ft away on a tripod or stable ledge.',
-                      style: AppTextStyles.bodyMedium(
-                        context,
-                      ).copyWith(fontSize: 11.ts(context)),
-                    ),
-                    16.height,
-                    Obx(() {
-                      final mode = controller.selectedMode.value;
-                      final bool toCamera =
-                          AppConstants.showAllFeatures &&
-                          (mode == DetectionMode.fusion ||
-                              mode == DetectionMode.camera);
-                      final bool toLaunch = mode == DetectionMode.vibration;
-                      final String btnText = toCamera
-                          ? 'Proceed to Confirm Camera'
-                          : (toLaunch
-                                ? 'Finish & Launch Session'
-                                : 'Proceed to 5s Calibration');
-                      return ElevatedButton(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.primary,
-                          minimumSize: Size(double.infinity, 44.h),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14.r),
-                          ),
-                        ),
-                        onPressed: controller.nextStep,
-                        child: Text(
-                          btnText,
-                          style: AppTextStyles.buttonLabel(context).copyWith(
-                            color: AppColors.ink,
-                            fontSize: 12.ts(context),
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
-                      );
-                    }),
-                  ],
-                ),
-              ),
-            ),
-            16.width,
-
-            // Right Column: Mount Selection Card & Optimal Distance Card
-            Expanded(
-              flex: 6,
-              child: SingleChildScrollView(
-                child: Column(
-                  children: [
-                    if (controller.selectedMode.value ==
-                        DetectionMode.fusion) ...[
-                      _buildMountSelectionCard(context),
-                      10.height,
-                    ],
-                    // Container(
-                    //   width: double.infinity,
-                    //   padding: EdgeInsets.all(16.r),
-                    //   decoration: BoxDecoration(
-                    //     color: AppColors.panel,
-                    //     borderRadius: BorderRadius.circular(16.r),
-                    //     border: Border.all(color: AppColors.border),
-                    //   ),
-                    //   child: Column(
-                    //     children: [
-                    //       Container(
-                    //         width: 48.r,
-                    //         height: 48.r,
-                    //         decoration: BoxDecoration(
-                    //           color: AppColors.primary.withValues(alpha: 0.15),
-                    //           shape: BoxShape.circle,
-                    //         ),
-                    //         child: Center(
-                    //           child: Text(
-                    //             '📱',
-                    //             style: TextStyle(fontSize: 24.ts(context)),
-                    //           ),
-                    //         ),
-                    //       ),
-                    //       10.height,
-                    //       Text(
-                    //         'Optimal Mounting Distance',
-                    //         style: AppTextStyles.heading3(
-                    //           context,
-                    //         ).copyWith(fontSize: 14.ts(context)),
-                    //       ),
-                    //       6.height,
-                    //       Text(
-                    //         '• Place phone 4 to 8 feet away from punching area.\n• Ensure upper body & arms are clearly in frame.\n• Keep microphone unobstructed by phone case.',
-                    //         style: AppTextStyles.bodyMedium(
-                    //           context,
-                    //         ).copyWith(height: 1.4, fontSize: 11.ts(context)),
-                    //       ),
-                    //     ],
-                    //   ),
-                    // ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        return SingleChildScrollView(
-          child: ConstrainedBox(
-            constraints: BoxConstraints(minHeight: constraints.maxHeight),
-            child: IntrinsicHeight(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Mount Phone & Placement',
-                    style: AppTextStyles.heading2(context),
-                  ),
-                  8.height,
-                  Text(
-                    'Mount phone at chest height, 4–8 ft away on a tripod or stable ledge.',
-                    style: AppTextStyles.bodyMedium(context),
-                  ),
-                  16.height,
-
-                  if (controller.selectedMode.value ==
-                      DetectionMode.fusion) ...[
-                    _buildMountSelectionCard(context),
-                    14.height,
-                  ],
-
-                  // Container(
-                  //   width: double.infinity,
-                  //   padding: EdgeInsets.all(22.r),
-                  //   decoration: BoxDecoration(
-                  //     color: AppColors.panel,
-                  //     borderRadius: BorderRadius.circular(20.r),
-                  //     border: Border.all(color: AppColors.border),
-                  //   ),
-                  //   child: Column(
-                  //     children: [
-                  //       Container(
-                  //         width: 64.r,
-                  //         height: 64.r,
-                  //         decoration: BoxDecoration(
-                  //           color: AppColors.primary.withValues(alpha: 0.15),
-                  //           shape: BoxShape.circle,
-                  //         ),
-                  //         child: Center(
-                  //           child: Text(
-                  //             '📱',
-                  //             style: TextStyle(fontSize: 32.ts(context)),
-                  //           ),
-                  //         ),
-                  //       ),
-                  //       16.height,
-                  //       Text(
-                  //         'Optimal Mounting Distance',
-                  //         style: AppTextStyles.heading3(context),
-                  //       ),
-                  //       8.height,
-                  //       Text(
-                  //         '• Place phone 4 to 8 feet away from punching area.\n• Ensure upper body & arms are clearly in frame.\n• Keep microphone unobstructed by phone case.',
-                  //         style: AppTextStyles.bodyMedium(
-                  //           context,
-                  //         ).copyWith(height: 1.5, fontSize: 13.ts(context)),
-                  //       ),
-                  //     ],
-                  //   ),
-                  // ),
-                  16.height,
-
-                  const Spacer(),
-                  16.height,
-                  Obx(() {
-                    final mode = controller.selectedMode.value;
-                    final bool toCamera =
-                        AppConstants.showAllFeatures &&
-                        (mode == DetectionMode.fusion ||
-                            mode == DetectionMode.camera);
-                    final bool toLaunch = mode == DetectionMode.vibration;
-                    final String btnText = toCamera
-                        ? 'Proceed to Confirm Camera'
-                        : (toLaunch
-                              ? 'Finish & Launch Session'
-                              : 'Proceed to 5s Calibration');
-                    return ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        minimumSize: Size(double.infinity, 54.h),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16.r),
-                        ),
-                      ),
-                      onPressed: controller.nextStep,
-                      child: Text(
-                        btnText,
-                        style: AppTextStyles.buttonLabel(context).copyWith(
-                          color: AppColors.ink,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                    );
-                  }),
-                  16.height,
-                ],
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
 
   // STEP 4: CONFIRM CAMERA / VISION
   Widget _buildStep4ConfirmCamera(BuildContext context) {
@@ -1491,151 +1271,7 @@ class SessionPreCheckPage extends GetView<SessionPreCheckController> {
     );
   }
 
-  // Mount Selection Card (Wall vs Pole) embedded directly in PreCheck steps
-  Widget _buildMountSelectionCard(BuildContext context) {
-    final bool isLandscape = CommonFunction.checkOrientationLandscape(context);
-    return Obx(() {
-      final isWall = controller.selectedMountType.value == MountType.wall;
-      return Container(
-        width: double.infinity,
-        margin: EdgeInsets.zero,
-        padding: EdgeInsets.all(isLandscape ? 10.r : 14.r),
-        decoration: BoxDecoration(
-          color: AppColors.panel,
-          borderRadius: BorderRadius.circular(16.r),
-          border: Border.all(color: AppColors.border),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(
-                  Icons.phonelink_setup,
-                  size: isLandscape ? 16.w : 18.w,
-                  color: AppColors.primary,
-                ),
-                8.width,
-                Text(
-                  'Phone Mount Placement',
-                  style: AppTextStyles.heading3(context).copyWith(
-                    fontSize: isLandscape ? 12.ts(context) : 13.ts(context),
-                  ),
-                ),
-              ],
-            ),
-            4.height,
-            Text(
-              'Select where your phone is mounted during this workout:',
-              style: AppTextStyles.bodyMedium(context).copyWith(
-                fontSize: isLandscape ? 10.ts(context) : 11.ts(context),
-              ),
-            ),
-            10.height,
-            Row(
-              children: [
-                Expanded(
-                  child: _mountSelectionOption(
-                    context: context,
-                    icon: MountType.wall.icon,
-                    title: MountType.wall.title,
-                    subtitle: MountType.wall.subtitle,
-                    isSelected: isWall,
-                    onTap: () => controller.selectMountType(MountType.wall),
-                  ),
-                ),
-                10.width,
-                Expanded(
-                  child: _mountSelectionOption(
-                    context: context,
-                    icon: MountType.pole.icon,
-                    title: MountType.pole.title,
-                    subtitle: MountType.pole.subtitle,
-                    isSelected: !isWall,
-                    onTap: () => controller.selectMountType(MountType.pole),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      );
-    });
-  }
 
-  Widget _mountSelectionOption({
-    required BuildContext context,
-    required String icon,
-    required String title,
-    required String subtitle,
-    required bool isSelected,
-    required VoidCallback onTap,
-  }) {
-    final bool isLandscape = CommonFunction.checkOrientationLandscape(context);
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12.r),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        padding: EdgeInsets.symmetric(
-          horizontal: 10.w,
-          vertical: isLandscape ? 8.h : 10.h,
-        ),
-        decoration: BoxDecoration(
-          color: isSelected ? AppColors.selectedBg : const Color(0xFF131E2C),
-          borderRadius: BorderRadius.circular(12.r),
-          border: Border.all(
-            color: isSelected ? AppColors.primary : AppColors.border,
-            width: isSelected ? 1.8.w : 1.w,
-          ),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(icon, style: TextStyle(fontSize: 18.ts(context))),
-                Container(
-                  width: 16.r,
-                  height: 16.r,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: isSelected ? AppColors.primary : Colors.transparent,
-                    border: Border.all(
-                      color: isSelected ? AppColors.primary : AppColors.border,
-                      width: 1.5.r,
-                    ),
-                  ),
-                  child: isSelected
-                      ? Icon(Icons.check, size: 11.r, color: AppColors.ink)
-                      : null,
-                ),
-              ],
-            ),
-            6.height,
-            Text(
-              title,
-              style: AppTextStyles.heading3(context).copyWith(
-                fontSize: isLandscape ? 11.5.ts(context) : 12.5.ts(context),
-                color: isSelected ? AppColors.primary : AppColors.textPrimary,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-            2.height,
-            Text(
-              subtitle,
-              style: AppTextStyles.bodyMedium(context).copyWith(
-                fontSize: isLandscape ? 9.5.ts(context) : 10.ts(context),
-                color: isSelected ? AppColors.cyan : AppColors.textMuted,
-                fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 
   // Full-width Mode Card Row for Detection Modes
   Widget _modeCardRow({

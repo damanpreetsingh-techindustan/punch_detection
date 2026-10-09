@@ -51,11 +51,11 @@ class AppConstants {
   static const double minAudioSafetyFloorDb = 60.0;
 
   /// Bounds for target punch dB sent to workout session after calibration.
-  /// Minimum calibrated target dB sent (Testing default: 90.0 dB).write
-  static const double minCalibratedTargetPunchDb = 60.0;
+  /// Minimum calibrated target dB sent (Testing default: 66.0 dB).write
+  static const double minCalibratedTargetPunchDb = 66.0;
 
-  /// Maximum calibrated target dB sent (Testing default: 107.0 dB).
-  static const double maxCalibratedTargetPunchDb = 106.0;
+  /// Maximum calibrated target dB sent (Testing default: 90.0 dB).
+  static const double maxCalibratedTargetPunchDb = 90.0;
 
   /// Direct Audio Target Calibration Offset:
   /// Default 0.0: direct max calibrated average dB shown on screen is used with no extra offset added.
@@ -64,8 +64,8 @@ class AppConstants {
   /// Default audio punch spike threshold added above calibrated audio (default +6 dB)
   static const double defaultAudioSpikeThresholdDb = 8.0;
 
-  /// Spike Threshold Slider bounds in session detection settings (min: 0 dB, max: 50 dB)
-  static const double minAudioSpikeSliderDb = 0.0;
+  /// Spike Threshold Slider bounds in session detection settings (min: -15.0 dB, max: 50.0 dB)
+  static const double minAudioSpikeSliderDb = -15.0;
   static const double maxAudioSpikeSliderDb = 50.0;
 
   /// Audio Spike Waveform Graph Visual Display Boundaries:
@@ -82,11 +82,16 @@ class AppConstants {
   static double maxImpactVibrationSlider = 1.0;
   static double warmUpDurationInMiliSeconds = 200;
 
+  /// Cooldown duration in milliseconds after closing settings sheet or tune dialog
+  /// before punch detection is re-enabled (Default: 1000ms / 1 second).
+  static int postSettingsCooldownMs = 1000;
+
   static void changeSettingToDefault() {
     globalAudioSampleIntervalMs = AppConstants.globalStaticAudioMsg;
     defaultImpactVibrationThreshold = Platform.isIOS ? 0.18 : 0.06;
     enableDeviceStabilityCheck = false;
     enableExtraFaceRestrictions = false;
+    postSettingsCooldownMs = 1000;
   }
 
   /// Official Fighter Callout Combo List

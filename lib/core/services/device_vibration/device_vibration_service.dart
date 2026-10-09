@@ -49,6 +49,9 @@ class DeviceVibrationService implements IDeviceVibrationService {
   int get lastVibrationTimestampMs => _lastVibrationTimestampMs;
 
   @override
+  int get recentPeakTimestampMs => _recentPeakTimestampMs;
+
+  @override
   bool hasRecentVibration(int nowMs, {int maxAgeMs = 600}) {
     if (_lastVibrationTimestampMs <= 0) return false;
     return (nowMs - _lastVibrationTimestampMs) <= maxAgeMs;
@@ -157,12 +160,19 @@ class DeviceVibrationService implements IDeviceVibrationService {
   }
 
   @override
+  void consumeRecentPeak() {
+    _currentVibrationMagnitude = 0.0;
+    _recentPeakMagnitude = 0.0;
+    _recentPeakTimestampMs = 0;
+    _lastVibrationTimestampMs = 0;
+  }
+
+  @override
   void resetMagnitude() {
     _currentVibrationMagnitude = 0.0;
     _recentPeakMagnitude = 0.0;
     _recentPeakTimestampMs = 0;
     _lastVibrationTimestampMs = 0;
-    _isDcInitialized = false;
     _lastEmittedMagnitude = 0.0;
     if (!_vibrationStreamController.isClosed) {
       _vibrationStreamController.add(0.0);

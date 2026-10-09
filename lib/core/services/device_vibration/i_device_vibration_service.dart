@@ -25,6 +25,12 @@ abstract class IDeviceVibrationService {
   /// Stops monitoring hardware sensors to save battery.
   void stopMonitoring();
 
+  /// Timestamp of the peak vibration recorded in the recent window.
+  int get recentPeakTimestampMs;
+
+  /// Consumes the recent peak magnitude after punch confirmation so lingering decay/oscillations cannot be recycled.
+  void consumeRecentPeak();
+
   /// Resets peak accumulated magnitude to zero right after punch confirmation.
   void resetMagnitude();
 

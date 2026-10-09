@@ -29,6 +29,9 @@ class MockDeviceVibrationService implements IDeviceVibrationService {
   int get lastVibrationTimestampMs => _lastVibeTimestampMs;
 
   @override
+  int get recentPeakTimestampMs => _peakTimestampMs;
+
+  @override
   bool hasRecentVibration(int nowMs, {int maxAgeMs = 600}) {
     if (_lastVibeTimestampMs <= 0) return false;
     return (nowMs - _lastVibeTimestampMs) <= maxAgeMs;
@@ -77,6 +80,14 @@ class MockDeviceVibrationService implements IDeviceVibrationService {
 
   @override
   void stopMonitoring() {}
+
+  @override
+  void consumeRecentPeak() {
+    _currentVibration = 0.0;
+    _peakVibration = 0.0;
+    _peakTimestampMs = 0;
+    _lastVibeTimestampMs = 0;
+  }
 
   @override
   void resetMagnitude() {
@@ -145,6 +156,22 @@ void main() {
       expect(service.currentVibrationMagnitude, closeTo(0.245, 0.001));
       // Windowed peak remains 0.35 for fusion coincidence sync
       expect(service.recentPeakVibrationMagnitude, equals(0.35));
+    });
+
+    test('4. consumeRecentPeak clears peak magnitude and timestamps so subsequent sounds cannot borrow shockwave', () {
+      final service = MockDeviceVibrationService();
+      final int now = DateTime.now().millisecondsSinceEpoch;
+
+      service.simulateImpact(0.50, now);
+      expect(service.recentPeakVibrationMagnitude, equals(0.50));
+      expect(service.recentPeakTimestampMs, equals(now));
+
+      // After punch is confirmed, peak is consumed
+      service.consumeRecentPeak();
+      expect(service.recentPeakVibrationMagnitude, equals(0.0));
+      expect(service.recentPeakTimestampMs, equals(0));
+      expect(service.lastVibrationTimestampMs, equals(0));
+      expect(service.hasRecentVibration(now + 50), isFalse);
     });
   });
 }

@@ -1,4 +1,3 @@
-import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:get/get.dart';
@@ -40,39 +39,48 @@ void showSessionDetectionSettingsSheet(
   Function(bool)? onToggleVibrationGate,
   AutoConfigResult Function()? onEvaluateAutoConfig,
   Function(AutoConfigResult)? onApplyAutoConfig,
-}) {
-  showModalBottomSheet(
-    context: context,
-    backgroundColor: Colors.transparent,
-    isScrollControlled: true,
-    useSafeArea: true,
-    constraints: const BoxConstraints(maxWidth: double.infinity),
-    builder: (ctx) => _SessionDetectionSettingsSheetContent(
-      staticCalibratedAudioDb: staticCalibratedAudioDb,
-      customTargetAudioDb: customTargetAudioDb,
-      minAudioPunchSpikeDb: minAudioPunchSpikeDb,
-      audioSampleIntervalMs: audioSampleIntervalMs,
-      audioIntervalOptions: audioIntervalOptions,
-      onSetAudioInterval: onSetAudioInterval,
-      minPunchAudioDb: minPunchAudioDb,
-      liveBaselineDb: liveBaselineDb,
-      liveDecibelLevel: liveDecibelLevel,
-      minVibrationThreshold: minVibrationThreshold,
-      liveVibrationMagnitude: liveVibrationMagnitude,
-      peakAudioDbRecorded: peakAudioDbRecorded,
-      onUpdateVibrationThreshold: onUpdateVibrationThreshold,
-      isVisionConfirmationRequired: isVisionConfirmationRequired,
-      isDeviceStabilityEnabled: isDeviceStabilityEnabled,
-      onToggleDeviceStability: onToggleDeviceStability,
-      onApplyEnvironmentPreset: onApplyEnvironmentPreset,
-      onSpikeDbChanged: onSpikeDbChanged,
-      isVibrationDisabled: isVibrationDisabled,
-      isVibrationGateEnabled: isVibrationGateEnabled,
-      onToggleVibrationGate: onToggleVibrationGate,
-      onEvaluateAutoConfig: onEvaluateAutoConfig,
-      onApplyAutoConfig: onApplyAutoConfig,
-    ),
-  );
+  VoidCallback? onOpened,
+  VoidCallback? onClosed,
+}) async {
+  onOpened?.call();
+  try {
+    await showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      useSafeArea: true,
+      constraints: const BoxConstraints(maxWidth: double.infinity),
+      builder: (ctx) => _SessionDetectionSettingsSheetContent(
+        staticCalibratedAudioDb: staticCalibratedAudioDb,
+        customTargetAudioDb: customTargetAudioDb,
+        minAudioPunchSpikeDb: minAudioPunchSpikeDb,
+        audioSampleIntervalMs: audioSampleIntervalMs,
+        audioIntervalOptions: audioIntervalOptions,
+        onSetAudioInterval: onSetAudioInterval,
+        minPunchAudioDb: minPunchAudioDb,
+        liveBaselineDb: liveBaselineDb,
+        liveDecibelLevel: liveDecibelLevel,
+        minVibrationThreshold: minVibrationThreshold,
+        liveVibrationMagnitude: liveVibrationMagnitude,
+        peakAudioDbRecorded: peakAudioDbRecorded,
+        onUpdateVibrationThreshold: onUpdateVibrationThreshold,
+        isVisionConfirmationRequired: isVisionConfirmationRequired,
+        isDeviceStabilityEnabled: isDeviceStabilityEnabled,
+        onToggleDeviceStability: onToggleDeviceStability,
+        onApplyEnvironmentPreset: onApplyEnvironmentPreset,
+        onSpikeDbChanged: onSpikeDbChanged,
+        isVibrationDisabled: isVibrationDisabled,
+        isVibrationGateEnabled: isVibrationGateEnabled,
+        onToggleVibrationGate: onToggleVibrationGate,
+        onEvaluateAutoConfig: onEvaluateAutoConfig,
+        onApplyAutoConfig: onApplyAutoConfig,
+        onOpened: onOpened,
+        onClosed: onClosed,
+      ),
+    );
+  } finally {
+    onClosed?.call();
+  }
 }
 
 class _SessionDetectionSettingsSheetContent extends StatelessWidget {
@@ -100,6 +108,8 @@ class _SessionDetectionSettingsSheetContent extends StatelessWidget {
   final Function(bool)? onToggleVibrationGate;
   final AutoConfigResult Function()? onEvaluateAutoConfig;
   final Function(AutoConfigResult)? onApplyAutoConfig;
+  final VoidCallback? onOpened;
+  final VoidCallback? onClosed;
 
   const _SessionDetectionSettingsSheetContent({
     required this.staticCalibratedAudioDb,
@@ -125,6 +135,8 @@ class _SessionDetectionSettingsSheetContent extends StatelessWidget {
     this.onToggleVibrationGate,
     this.onEvaluateAutoConfig,
     this.onApplyAutoConfig,
+    this.onOpened,
+    this.onClosed,
   });
 
   @override
@@ -478,6 +490,8 @@ class _SessionDetectionSettingsSheetContent extends StatelessWidget {
                   onApply: onApplyAutoConfig != null
                       ? () => onApplyAutoConfig!(result)
                       : null,
+                  onOpened: onOpened,
+                  onClosed: onClosed,
                 );
               }
             },
@@ -878,7 +892,7 @@ class _SessionDetectionSettingsSheetContent extends StatelessWidget {
             ),
             2.height,
             Text(
-              'Current punch threshold: ${staticCalibratedAudioDb.value.round()} dB Base + ${minAudioPunchSpikeDb.value.round()} dB Spike.',
+              'Current punch threshold: ${staticCalibratedAudioDb.value.round()} dB Base ${minAudioPunchSpikeDb.value.round() >= 0 ? '+ ' : ''}${minAudioPunchSpikeDb.value.round()} dB Spike.',
               style: TextStyle(
                 color: AppColors.textMuted,
                 fontSize: isLandscape ? 8.ts(context) : 9.ts(context),
@@ -898,10 +912,7 @@ class _SessionDetectionSettingsSheetContent extends StatelessWidget {
     return Obx(() {
       final double targetAudioDb = customTargetAudioDb.value > 0
           ? customTargetAudioDb.value
-          : max(
-              minPunchAudioDb.value,
-              staticCalibratedAudioDb.value + minAudioPunchSpikeDb.value,
-            );
+          : (staticCalibratedAudioDb.value + minAudioPunchSpikeDb.value);
       final double liveDb = liveDecibelLevel.value;
       final double peakDb = peakAudioDbRecorded.value;
       final bool isTriggered = liveDb >= targetAudioDb;
@@ -1032,8 +1043,12 @@ class _SessionDetectionSettingsSheetContent extends StatelessWidget {
     BuildContext context, {
     required bool isLandscape,
   }) {
-    return Obx(
-      () => Column(
+    return Obx(() {
+      final int spikeVal = minAudioPunchSpikeDb.value.round();
+      final String spikeLabel =
+          spikeVal > 0 ? '+$spikeVal dB' : '$spikeVal dB';
+
+      return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
@@ -1062,7 +1077,7 @@ class _SessionDetectionSettingsSheetContent extends StatelessWidget {
                   border: Border.all(color: AppColors.lime),
                 ),
                 child: Text(
-                  '+${minAudioPunchSpikeDb.value.round()} dB',
+                  spikeLabel,
                   style: TextStyle(
                     color: AppColors.lime,
                     fontSize: isLandscape ? 11.ts(context) : 13.ts(context),
@@ -1074,7 +1089,9 @@ class _SessionDetectionSettingsSheetContent extends StatelessWidget {
           ),
           3.height,
           Text(
-            'Extra dB added to calibrated base audio (${staticCalibratedAudioDb.value.round()} dB) to set the audio target.',
+            spikeVal >= 0
+                ? 'Extra dB added to calibrated base audio (${staticCalibratedAudioDb.value.round()} dB) to set the audio target.'
+                : 'Offset subtracted from calibrated base audio (${staticCalibratedAudioDb.value.round()} dB) to set the audio target.',
             style: TextStyle(
               color: AppColors.textMuted,
               fontSize: isLandscape ? 8.5.ts(context) : 9.5.ts(context),
@@ -1100,13 +1117,13 @@ class _SessionDetectionSettingsSheetContent extends StatelessWidget {
                       .round(),
               activeColor: AppColors.lime,
               inactiveColor: AppColors.border,
-              label: '+${minAudioPunchSpikeDb.value.round()} dB',
+              label: spikeLabel,
               onChanged: (double value) => onSpikeDbChanged(value),
             ),
           ),
         ],
-      ),
-    );
+      );
+    });
   }
 
   // ─── AUDIO CAPTURE INTERVAL SELECTOR ───
