@@ -1,0 +1,316 @@
+================================================================================
+HYPER HITTER — PUNCH DETECTION SYSTEM & WORKING CONDITIONS ARCHITECTURE
+================================================================================
+File Reference: lib/features/session/presentation/pages/free_session_page.dart
+                lib/features/session/presentation/controllers/free_session_controller.dart
+Last Updated: October 2026
+================================================================================
+
+1. EXECUTIVE SUMMARY & ARCHITECTURE OVERVIEW
+--------------------------------------------------------------------------------
+The Hyper Hitter punch detection system detects, validates, and registers punches
+in real-time during workout sessions using a high-performance multi-sensor fusion
+architecture.
+
+The engine coordinates three distinct sensory inputs:
+  1. Acoustic Onset Detection (Device Microphone — 10ms - 20ms sampling)
+  2. Physical Impact Vibration Detection (Device Accelerometer — 50Hz / 20ms)
+  3. Computer Vision & Pose Kinematics (Google ML Kit Pose Detection — 30 FPS NV21 stream)
+
+The system is orchestrated by:
+  - FreeSessionController (GetxController): Central state machine, sensor lifecycle,
+    telemetry event recording, and master safety gates.
+  - TriSensorMatrixEvaluator: Domain service deciding punch validity based on
+    mounting type, sensor states, and thresholds.
+  - TemporalPunchDetector: 5-State Finite State Machine (FSM) tracking 3D pose,
+    shoulder torque dynamics, and arm trajectory.
+  - AdaptiveAudioBaseline: Rolling ambient noise tracking with instantaneous
+    percussive impulse onset verification.
+  - DeviceVibrationService: Adaptive DC-blocking high-pass filtered accelerometer
+    shockwave detector.
+  - FreeSessionPage: Responsive HUD with live decibels, vibration magnitude,
+    pose skeleton overlay, hit highlight pulses, and live telemetry log.
+
+
+================================================================================
+2. DETECTION MODES (DetectionMode)
+================================================================================
+The app supports 5 strongly-typed detection modes (configured via route arguments
+or dynamically switched during sessions):
+
+1. Tri-Sensor Fusion Mode (DetectionMode.fusion) [DEFAULT]:
+   - Combines Microphone (Audio), Accelerometer (Vibration), and Camera (ML Kit Pose).
+   - Audio is the primary triggering event; Vibration and Vision act as confirmation signals.
+   - Evaluated through TriSensorMatrixEvaluator with Mount Type awareness.
+
+2. Audio Only Mode (DetectionMode.audio):
+   - Uses the microphone only. Camera and vibration sensors are disabled/bypassed.
+   - Any percussive audio impulse exceeding the calibrated Target Audio dB increments
+     the punch counter directly.
+
+3. Audio + Vibration Dual Mode (DetectionMode.audioVibration):
+   - Requires BOTH an audio spike above target dB AND a physical shockwave vibration
+     registered on the phone bracket within a coincident time window (<= 120ms).
+   - Camera is turned off.
+
+4. Vibration Only Mode (DetectionMode.vibration):
+   - Detects purely through physical shockwaves hitting the phone mount (accelerometer).
+   - Audio and Camera are ignored. Useful for noisy gyms with loud background music.
+
+5. Camera Only Mode (DetectionMode.camera):
+   - Tracks punches purely through computer vision (pose landmark kinematics).
+   - Audio and Vibration are ignored. Punch is registered when the Temporal FSM
+     reaches PUNCH_CONFIRMED.
+
+
+================================================================================
+3. MOUNTING TYPES & PHYSICAL COUPLING (MountType)
+================================================================================
+The mounting environment directly changes how physical vibrations are evaluated:
+
+1. Wall Mount (MountType.wall) [Default]:
+   - Phone is mounted directly to the wall bracket or heavy bag frame.
+   - PHYSICAL VIBRATION IS STRICTLY MANDATORY.
+   - Zero or weak vibration (< minVibrationThreshold) causes immediate punch REJECTION.
+   - Protects against clapping, shouting, loud nearby bag strikes, or air punching.
+
+2. Pole Mount / Tripod (MountType.pole):
+   - Phone is mounted on a standalone pole, floor stand, or tripod separate from bag.
+   - Vibration is physically decoupled from the bag, so vibration is BYPASSED/DISABLED.
+   - Detection uses Audio + Vision Fusion. Visual-acoustic coincidence confirms hits.
+
+
+================================================================================
+4. DETAILED SENSOR PIPELINES & DETECTION LOGIC
+================================================================================
+
+--------------------------------------------------------------------------------
+A. AUDIO ACOUSTIC PIPELINE (AdaptiveAudioBaseline & IAudioLevelService)
+--------------------------------------------------------------------------------
+Sampling Rate: Configurable (default: 10ms - 20ms, AppConstants.globalAudioSampleIntervalMs).
+Audio Safety Floor: 60.0 dB (AppConstants.minAudioSafetyFloorDb).
+Direct Target Range: 66.0 dB to 90.0 dB (minCalibratedTargetPunchDb - maxCalibratedTargetPunchDb).
+
+Step 1: Continuous Leaky Baseline Tracking
+  - An adaptive rolling window (default 150 samples) continuously measures ambient room sound.
+  - Attack alpha (0.05) and decay alpha (0.008) allow baseline to adapt to gym chatter
+    while preventing short explosive sounds from raising the baseline.
+
+Step 2: Percussive Impulse Onset Verification
+  - To prevent human voice, shouting, or clapping from counting, the engine measures
+    frame-to-frame derivative and multi-frame rise:
+      * Instantaneous jump: frameJump >= 6.0 dB (in 10-20ms), OR
+      * 4-frame window rise: windowRise >= 10.0 dB (in 40ms), OR
+      * Combined rise: windowRise >= 8.0 dB AND frameJump >= 4.0 dB.
+  - Gradual sound build-ups (speech, music, breathing) ramp up slowly (1-3 dB) and
+    are filtered out immediately.
+
+Step 3: Audio Target dB Threshold Verification
+  - Effective Target = customTargetAudioDb (or calibratedBaseDb + minAudioPunchSpikeDb).
+  - db >= Target dB AND db >= effectiveMinFloor.
+  - If volume is below Target:
+      * Flagged as a "CANDIDATE IMPACT" (Sub-target strike).
+      * Logged to telemetry for Auto-Config tuning, but REJECTED from punch count.
+
+Step 4: Acoustic Refractory Period
+  - 160ms lockout prevents room reverberation and bag rattle echoes from double-counting.
+
+--------------------------------------------------------------------------------
+B. PHYSICAL VIBRATION IMPACT PIPELINE (DeviceVibrationService)
+--------------------------------------------------------------------------------
+Sensor: UserAccelerometerEvent (sensors_plus) sampled at 50Hz (gameInterval, 20ms).
+Threshold: iOS default: 0.18 m/s² | Android default: 0.06 m/s².
+
+Step 1: Adaptive DC-Block High-Pass Filter
+  - Continuously measures and removes static gravity residuals and mounting tilt offsets:
+      dcX = (dcX * 0.95) + (event.x * 0.05)
+      acX = event.x - dcX (dynamic acceleration)
+  - Stationary device output is 0.00 m/s², eliminating sensor drift.
+
+Step 2: Deadband Filter
+  - Values below 0.10 m/s² are clamped to 0.0 to cancel ambient acoustic micro-jitter.
+
+Step 3: Envelope Follower & 600ms Peak Memory
+  - Fast attack + envelope decay (0.70 / 0.30) tracks mechanical shockwaves.
+  - Peak magnitude is held in a sliding 600ms memory window for multi-sensor sync.
+
+Step 4: Temporal Coincidence Matching (<= 120ms)
+  - For clean strike coincidence, the physical vibration peak must align within
+    120ms of the audio onset spike:
+      |spikeTimeMs - peakVibeTime| <= 120ms
+  - Lingering bag sway or post-strike mechanical oscillation (> 120ms) is discarded.
+
+Step 5: Vibration Refractory Lockout
+  - 110ms refractory lockout disarms the vibration sensor until shockwaves die down.
+
+--------------------------------------------------------------------------------
+C. COMPUTER VISION PIPELINE (TemporalPunchDetector & Google ML Kit)
+--------------------------------------------------------------------------------
+Camera: Front-facing camera, NV21 format, low resolution (for maximum FPS and lowest latency).
+Pose Engine: Google ML Kit Pose Detection (stream mode).
+
+Step 1: User-in-Frame & Face/Shoulder Validation
+  - Relaxed Mode (AppConstants.enableExtraFaceRestrictions == false) [DEFAULT]:
+      * User is valid if AT LEAST ONE landmark (nose, eye, ear, mouth, or shoulder)
+        has likelihood >= 0.20.
+      * Allows tight framing, close-up punching, and partial head/body visibility.
+  - Strict Mode (AppConstants.enableExtraFaceRestrictions == true):
+      * Requires both left and right shoulders (likelihood >= 0.35) and facial symmetry.
+
+Step 2: Shoulder Geometry & Anatomical Elbow Inferrer
+  - If elbow landmarks are occluded during fast extension, the Anatomical Elbow Inferrer
+    synthesizes elbow coordinates from shoulder-to-wrist midpoint with anatomical flare.
+  - If shoulders are partially off-camera, virtual shoulders are synthesized relative
+    to facial landmarks (eye span and nose position).
+
+Step 3: Kinetic Feature Scoring Engine (100-Point Model)
+  - Pose Validity (Max 10 pts): Landmark confidence.
+  - Shoulder Movement (Max 65 pts — PRIMARY SIGNAL):
+      * Measured as displacement normalized by shoulder width (SW).
+      * Evaluated through a Sigmoidal S-Curve:
+          k = 85.0 (steepness gain), x0 = 0.018 SW (offset midpoint).
+      * Flat at rest (ignores idle breathing/body sway < 0.010 SW).
+      * Explosively rises to maximum score for active punch rotational torque (>= 0.025 SW).
+  - Temporal Consistency (Max 5 pts): Minimum 4 consecutive tracking frames.
+  - Optional Signals: Head velocity, Arm Extension ratio (toggleable).
+
+Step 4: 5-State Finite State Machine (FSM)
+  - States: IDLE -> PUNCH_CANDIDATE -> PUNCH_CONFIRMED -> COOLDOWN -> ARM_RETRACTED
+  - Transitions:
+      * IDLE -> CANDIDATE: Score >= 50.0 AND shoulderMovement >= minShoulderMovementThreshold (0.035 SW).
+      * CANDIDATE -> CONFIRMED: Score >= 65.0 AND Restriction Guards pass.
+      * CONFIRMED -> COOLDOWN: Alternating Arm Cooldown = 180ms | Same Arm Cooldown = 280ms.
+      * COOLDOWN -> ARM_RETRACTED: Requires arm retraction delta >= 0.06 SW, or arm extension <= 0.50 SW.
+      * RETRACTED -> IDLE: Ready for the next punch.
+
+Step 5: Face / Head Motion Punch Fallback
+  - When boxer throws a close-range punch towards camera where wrists leave frame:
+      * Measures normalized face velocity (normFaceVelocity).
+      * If normFaceVelocity >= 0.55 SW/s with 320ms cooldown:
+        Confirms punch as "Face / Head Motion Confirmed" (75% - 98% confidence).
+
+
+================================================================================
+5. MULTI-SENSOR DECISION MATRIX (TriSensorMatrixEvaluator)
+================================================================================
+Signals are categorized into discrete states:
+  - Audio: Strong (>= strongAudioSpikeDb), Weak (>= weakAudioSpikeDb), None
+  - Vibration: Strong (>= strongVibrationMag), Weak (>= weakVibrationMag), None
+  - Camera: Confirmed (FSM confirmed or recent visual punch <= 900ms), Rejected, Unavailable
+
+--------------------------------------------------------------------------------
+WALL MOUNT DECISION TABLE (Vibration Mandatory)
+--------------------------------------------------------------------------------
+Audio     | Vibration | Camera       | Outcome      | Confidence | Reason / Code
+----------+-----------+--------------+--------------+------------+--------------------------------------------
+Strong    | Strong    | Confirmed    | VALID PUNCH  | 98%        | VALID_HIGH_CONFIDENCE_TRIPLE (Triple Hit)
+Strong    | Strong    | Unavailable  | VALID PUNCH  | 92%        | VALID_AUDIO_VIBE_DUAL (Dual Impact)
+Strong    | Strong    | Rejected     | VALID PUNCH* | 86%        | VALID_AUDIO_VIBE_DUAL_VISUAL_UNCONFIRMED
+Weak      | Strong    | Confirmed    | VALID PUNCH  | 85%        | VALID_VIBE_CAMERA_DUAL (Quiet heavy hit)
+Weak      | Strong    | Unavailable  | CANDIDATE    | 60%        | CANDIDATE_VIBE_WEAK_AUDIO (Physical impact)
+Strong    | Weak/None | Any          | REJECTED     | 10-25%     | REJECTED_NO_VIBRATION_WALL_MOUNT (Air punch)
+Any       | Weak/None | Confirmed    | REJECTED     | 25%        | REJECTED_NO_VIBRATION_WALL_MOUNT (Air punch)
+Any       | Any       | Not Confirmed| REJECTED     | 35%        | If isVisionConfirmationRequired is TRUE
+
+*Note: In Fusion mode, if "Vision Confirmation Required" is ON, Camera must be Confirmed.
+
+--------------------------------------------------------------------------------
+POLE MOUNT DECISION TABLE (Vibration Bypassed)
+--------------------------------------------------------------------------------
+Audio     | Vibration | Camera       | Outcome      | Confidence | Reason / Code
+----------+-----------+--------------+--------------+------------+--------------------------------------------
+Strong    | Ignored   | Confirmed    | VALID PUNCH  | 90%        | VALID_AUDIO_CAMERA_POLE (Acoustic-Visual)
+Strong    | Strong    | Confirmed    | VALID PUNCH  | 98%        | VALID_HIGH_CONFIDENCE_TRIPLE_POLE
+Strong    | Strong    | Any          | VALID PUNCH  | 92%        | VALID_AUDIO_VIBE_POLE
+Weak      | Ignored   | Confirmed    | VALID PUNCH  | 78%        | VALID_WEAK_AUDIO_CAMERA_POLE
+Strong    | Ignored   | Unavailable  | VALID PUNCH  | 86%        | Camera off/hidden fallback
+Strong    | Ignored   | Rejected     | VALID PUNCH  | 80%        | Only when vision confirmation is optional
+None/Weak | None      | None         | REJECTED     | 0%         | REJECTED_INSUFFICIENT_SIGNALS_POLE
+
+
+================================================================================
+6. CURRENT WORKING CONDITIONS & SAFETY GATES
+================================================================================
+
+Below is the complete list of conditions that must be satisfied for a punch to be
+counted in Free Session:
+
+1. Warmup Safety Gate:
+   - Condition: nowMs - sessionStartTimeMs >= warmUpDurationInMiliSeconds (200ms).
+   - Purpose: Ignores screen-tap clicks and camera startup vibration from starting the workout.
+
+2. Master Settings Sheet & Tuning Cooldown Gate:
+   - Condition: openSettingsViewsCount == 0 AND nowMs >= settingsCooldownUntilMs.
+   - Purpose: When user opens the Detection Settings sheet or Auto-Config dialog,
+     punch detection is completely paused. Upon closing, a 1000ms cooldown lockout
+     is applied so phone handling, button taps, and bracket adjustments do NOT count as punches.
+
+3. Audio Target Gate (Unconditional Master Floor):
+   - Condition: peakAudioDb >= customTargetAudioDb AND peakAudioDb >= minPunchAudioDb (60 dB).
+   - If audio fails this check:
+     * Marked as CANDIDATE / REJECTED (AUDIO_BELOW_TARGET).
+     * CANNOT increment punch count under ANY mode.
+
+4. Onset Impulse Rise Gate:
+   - Condition: frameJump >= 6.0 dB OR windowRise >= 10.0 dB OR (windowRise >= 8.0 dB && frameJump >= 4.0 dB).
+   - Purpose: Rejects background talking, gym music, and shouting.
+
+5. Vibration Threshold Gate (Wall Mount):
+   - Condition: effectiveVibeMag >= minVibrationThreshold (iOS: 0.18 m/s², Android: 0.06 m/s²).
+   - Purpose: Rejects shadow boxing / air punches and acoustic noises from other bags.
+
+6. Temporal Coincidence Gate:
+   - Condition: |spikeTimeMs - peakVibeTime| <= 120ms.
+   - Purpose: Rejects slow bag sways from past strikes.
+
+7. Camera Pose Validity Gate:
+   - Condition: At least 1 facial or shoulder landmark with likelihood >= 0.20.
+   - If camera is covered or boxer walks away, live pose is cleared and vision confidence drops to 0%.
+
+8. Kinetic Shoulder Torque Gate:
+   - Condition: shoulderMovement >= minShoulderMovementThreshold (0.035 SW).
+   - Purpose: Distinguishes genuine punches from idle body swaying.
+
+9. Refractory Lockout Gates:
+   - Audio Refractory: 160ms between consecutive audio spikes.
+   - Vibration Refractory: 110ms between consecutive physical impact triggers.
+   - Vision Same-Arm Cooldown: 280ms.
+   - Vision Alternating-Arm Cooldown: 180ms.
+
+10. Device Hardware Stability Gate (Optional):
+    - When enabled (AppConstants.enableDeviceStabilityCheck):
+      Linear acceleration must be <= 0.25 m/s² and Gyroscope <= 0.15 rad/s.
+      Handheld movement triggers 1500ms hysteresis lockout.
+
+
+================================================================================
+7. PUNCH REGISTRATION & SESSION HUD (free_session_page.dart)
+================================================================================
+When all gates pass, FreeSessionController._registerPunch() executes:
+  1. Increments punchCount (and classifies Left vs Right punch via FSM confirmed arm).
+  2. Updates _lastPunchTimestampMs and consumes sensor peaks.
+  3. Inserts structured log into recordedSpikesHistory:
+       "🥊 [CONFIRMED PUNCH #X] Mode: FUSION | Audio: 78.4 dB | Vibe: Peak 0.32 m/s² | Cam: 92% (RIGHT Arm)"
+  4. Triggers UI Hit Pulses:
+       - isAudioHitActive (glows green for 450ms)
+       - isVisionHitActive (glows cyan for 450ms)
+  5. Plays device haptic vibration feedback (if enabled in AppConstants).
+  6. Displays live animated counters and updates telemetry HUD.
+
+
+================================================================================
+8. TUNING & AUTO-CONFIGURATION (Session Settings Sheet)
+================================================================================
+Boxers can tune all detection conditions in real-time without stopping their workout:
+  - Audio Target (dB): Slider from 60 dB to 90 dB.
+  - Audio Spike Threshold (dB): Slider from -15 dB to +50 dB above room noise.
+  - Vibration Threshold (m/s²): Slider from 0.05 to 1.00 m/s².
+  - Vibration Gate Toggle: Turn physical vibration check ON or OFF.
+  - Vision Confirmation Toggle: Strict (camera required) or Optional.
+  - Environment Presets:
+      * Home Sensitivity (+6 dB spike, 0.04 m/s² vibration)
+      * Balanced Gym (+8 dB spike, 0.08 m/s² vibration)
+      * Strict Noisy Gym (+15 dB spike, 0.20 m/s² vibration)
+  - Auto-Configure Button: Analyzes recent strike telemetry and calculates
+    optimal thresholds automatically.
+================================================================================

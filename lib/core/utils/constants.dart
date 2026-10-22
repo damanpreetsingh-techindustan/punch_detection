@@ -17,7 +17,7 @@ class AppConstants {
   static const bool testingNeedToUseUltraWideCamera = true;
   static const bool testingNeedStaticZoom = false;
   static const double testingZoomValue = 1.0;
-  static const bool showAllFeatures = false;
+  static const bool showAllFeatures = true;
   static const bool useAvarageAudioFormate = false;
   static const int globalStaticAudioMsg = 10;
 
