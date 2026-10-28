@@ -1,5 +1,6 @@
 import 'dart:async';
 // import 'package:noise_meter/noise_meter.dart';
+import 'audio_level_sample.dart';
 import 'i_audio_level_service.dart';
 
 /// Commented out implementation of [IAudioLevelService] using `noise_meter`.
@@ -16,6 +17,18 @@ class NoiseMeterAudioLevelService implements IAudioLevelService {
 
   @override
   Stream<double> get decibelStream => _decibelStreamController.stream;
+
+  @override
+  Stream<AudioLevelSample> get sampleStream => _decibelStreamController.stream
+      .map(
+        (double db) => AudioLevelSample(
+          db: db,
+          timestampMs: DateTime.now().millisecondsSinceEpoch,
+        ),
+      );
+
+  @override
+  Map<String, Object?> get diagnostics => const <String, Object?>{};
 
   @override
   double get currentDecibels => _currentDecibels;

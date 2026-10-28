@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'audio_level_sample.dart';
 
 /// Abstract Contract interface for Real-Time Microphone Audio Level (Decibel) Sensing.
 ///
@@ -12,6 +13,15 @@ import 'dart:async';
 abstract class IAudioLevelService {
   /// Stream of real-time decibel (dB) level readings.
   Stream<double> get decibelStream;
+
+  /// Stream of level readings that carry the time the audio actually happened.
+  /// Implementations without finer timing emit the same values as
+  /// [decibelStream], stamped with the time they were delivered.
+  Stream<AudioLevelSample> get sampleStream;
+
+  /// Facts about how the microphone was started (buffer size, measured chunk
+  /// period, fallback used) for the session recording. May be empty.
+  Map<String, Object?> get diagnostics;
 
   /// Current instantaneous decibel reading.
   double get currentDecibels;

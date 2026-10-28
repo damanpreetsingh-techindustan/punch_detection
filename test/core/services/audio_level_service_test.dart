@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:punch_detection_demo/core/services/audio_level/audio_level_sample.dart';
 import 'package:punch_detection_demo/core/services/audio_level/i_audio_level_service.dart';
 import 'package:punch_detection_demo/features/session_precheck/presentation/controllers/session_precheck_controller.dart';
 import 'package:punch_detection_demo/features/session/presentation/controllers/free_session_controller.dart';
@@ -14,6 +15,17 @@ class MockAudioLevelService implements IAudioLevelService {
 
   @override
   Stream<double> get decibelStream => _controller.stream;
+
+  @override
+  Stream<AudioLevelSample> get sampleStream => _controller.stream.map(
+    (double db) => AudioLevelSample(
+      db: db,
+      timestampMs: DateTime.now().millisecondsSinceEpoch,
+    ),
+  );
+
+  @override
+  Map<String, Object?> get diagnostics => const <String, Object?>{};
 
   @override
   double get currentDecibels => _mockDb;

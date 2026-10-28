@@ -45,6 +45,96 @@ class AppConstants {
   /// Averages out transient micro-noises (breath pops, mouth clicks) while keeping punch strike energy intact.
   static const int audioRollingAverageFrames = 2;
 
+  /// Minimum gap between two counted audio spikes, in milliseconds. Used by the
+  /// Free session (the Prompt session still has its own copy of 160).
+  /// Value unchanged; whether to lower it waits for measured punch cadence.
+  static const int audioRefractoryMs = 160;
+
+  /// When true the Free session reads the microphone as 10 ms blocks computed
+  /// from the raw PCM stream, with real timestamps, instead of the plugin's
+  /// whole-chunk amplitude. Flip to false to compare against the old behaviour.
+  static const bool useSubBlockPcmLevels = true;
+
+  /// PCM chunk lengths (milliseconds) to try, smallest first. Converted to a
+  /// buffer size in bytes from the actual sample rate. The Android `AudioRecord`
+  /// is created with that size and fails to start when it is below the device
+  /// minimum, so the service tries each and keeps the first that starts; the
+  /// plugin default (about 80 ms chunks) is tried last.
+  static const List<int> audioStreamChunkCandidatesMs = [20, 40, 80];
+
+  // ─── Impact window (audio + vibration + camera decided once) ────────────────
+  /// Vibration counts for an audio spike if it happened up to this many
+  /// milliseconds BEFORE the spike (audio is delivered later than the sensor).
+  static const int impactVibrationBeforeMs = 100;
+
+  /// ...and up to this many milliseconds AFTER the spike. This is also how long
+  /// the decision waits for late vibration. Must stay below [audioRefractoryMs]
+  /// (the Free session clamps it) so one window closes before the next can open.
+  static const int impactVibrationAfterMs = 150;
+
+  // ─── Camera real-person gate ─────────────────────────────────────────────────
+  // A camera pose only counts as a person when it has at least one FACE point
+  // (nose, eye, ear, mouth) AND at least one SHOULDER, each detected with at
+  // least this confidence (0.0 - 1.0). Face + one shoulder is enough.
+  // Objects such as a bottle can produce a weak "pose"; they rarely reach this
+  // confidence on both a face point and a shoulder.
+  //
+  // How to tune: SESSION TOTALS shows `cam.best_face_conf` and
+  // `cam.best_shoulder_conf` (min / avg / max), and the CSV table at the end of
+  // the log shows them on every camera change. Compare a session with you in
+  // frame against one with only the object in frame.
+
+  /// Master switch. false = old rule (any face point OR any shoulder at >= 0.20).
+  static const bool cameraPersonGateEnabled = true;
+
+  /// Minimum confidence of the best face point.
+  static const double cameraMinFaceConfidence = 0.5;
+
+  /// Minimum confidence of the best shoulder.
+  static const double cameraMinShoulderConfidence = 0.5;
+
+  /// The face must be above the shoulder in the camera image (a real upright
+  /// person). Turn off only if the camera image is mounted sideways.
+  static const bool cameraRequireFaceAboveShoulder = true;
+
+  // ─── Camera distance gate ────────────────────────────────────────────────────
+  // A camera pose only counts as a valid user when the person is close enough.
+  // Distance is measured as a RATIO of the body width to the camera image
+  // diagonal: bigger ratio = closer. Tune these two numbers to scale the
+  // allowed distance; nothing else needs to change.
+  //
+  // How to tune: stand at the farthest spot you still want to count, run a
+  // session, and read `cam.shoulder_ratio` (min / avg / max) in the exported
+  // SESSION TOTALS. Set the minimum a little below that average.
+
+  /// Master switch. false = no distance rule (any visible shoulder or face is valid).
+  static const bool cameraDistanceGateEnabled = true;
+
+  /// Minimum shoulder width as a fraction of the image diagonal. A person
+  /// farther than this (smaller ratio) is NOT a valid user.
+  /// Rough guide for a ~90° front camera: 0.20 ≈ 0.8 m, 0.11 ≈ 1.5 m, 0.08 ≈ 2 m.
+  static const double cameraMinShoulderWidthRatio = 0.09;
+
+  /// Same rule used when both shoulders are not visible but both eyes are.
+  /// Eye span is about 1/6 of shoulder width, so this is ~1/6 of the value above.
+  static const double cameraMinEyeSpanRatio = 0.014;
+
+  /// What to do when the distance cannot be measured (for example only one
+  /// shoulder visible and no eyes): true = treat as valid (never miss a punch).
+  static const bool cameraDistanceUnknownIsValid = true;
+
+  /// A camera observation older than this (milliseconds) no longer counts.
+  static const int cameraObservationStaleMs = 700;
+
+  /// Field-test experiments for microphone clipping. Both default to OFF so the
+  /// recorded baseline is unchanged; flip one at a time and compare the
+  /// `audio.saturated_frames` total.
+  /// Turn off hardware noise suppression and echo cancellation on the mic.
+  static const bool audioExperimentDisableMicProcessing = false;
+
+  /// Use the Android `unprocessed` audio source (no gain or filtering).
+  static const bool audioExperimentUnprocessedSource = false;
+
   /// TESTING CONFIGURATION:
   /// Absolute minimum safety floor for punch audio detection.
   /// Sounds below this dB are never considered punches.

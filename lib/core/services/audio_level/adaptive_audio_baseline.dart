@@ -119,6 +119,13 @@ class AdaptiveAudioBaseline {
   /// Currently pending candidate spike waiting for decay check.
   CandidateSpike? get pendingCandidateSpike => _pendingCandidateSpike;
 
+  /// Ends the post-spike lockout early. Call when a spike was NOT counted as a
+  /// punch (below target, or rejected by the other sensors), so a rejected
+  /// sound cannot block a real punch that follows within the lockout time.
+  void releaseRefractory() {
+    _lastSpikeTimestampMs = 0;
+  }
+
   /// Average of recent samples in the rolling window.
   double get windowAverage {
     if (_recentSamples.isEmpty) return _smoothedBaseline;

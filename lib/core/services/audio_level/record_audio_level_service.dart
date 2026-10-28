@@ -1,19 +1,41 @@
 import 'dart:async';
 import 'dart:developer' as developer;
+import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 import 'package:record/record.dart';
 import '../../utils/constants.dart';
+import 'audio_level_sample.dart';
 import 'i_audio_level_service.dart';
+import 'pcm_level_extractor.dart';
 
 /// Active implementation of [IAudioLevelService] using the `record` package (`^7.1.1` & `^5.x`).
+///
+/// Two modes:
+///  - Legacy (default): the plugin's per-chunk amplitude polled every
+///    `sampleIntervalMs`. Used by the Prompt session and the pre-check screens.
+///  - Sub-block PCM ([enableSubBlockPcm]): the raw PCM stream is split into
+///    10 ms blocks with back-dated timestamps and published on [sampleStream].
+///    Falls back to legacy automatically if the PCM stream cannot start.
 class RecordAudioLevelService implements IAudioLevelService {
+  RecordAudioLevelService({this.enableSubBlockPcm = false});
+
+  /// Whether to use the sub-block PCM pipeline for [sampleStream].
+  final bool enableSubBlockPcm;
+
   static RecordAudioLevelService? _activeGlobalService;
+
+  /// Same rate the legacy Android configuration records at, so a comparison of
+  /// the two modes only differs in chunking, not in sample rate.
+  static final int _pcmSampleRate = Platform.isAndroid ? 16000 : 44100;
 
   AudioRecorder? _audioRecorder;
   StreamSubscription<Amplitude>? _amplitudeSubscription;
   StreamSubscription<Uint8List>? _pcmSubscription;
   final StreamController<double> _decibelStreamController =
       StreamController<double>.broadcast();
+  final StreamController<AudioLevelSample> _sampleStreamController =
+      StreamController<AudioLevelSample>.broadcast();
 
   double _currentDecibels = 0.0;
   bool _isMonitoring = false;
@@ -23,8 +45,43 @@ class RecordAudioLevelService implements IAudioLevelService {
 
   bool _isEarbudsConnected = false;
 
+  // Sub-block PCM state
+  bool _pcmActive = false;
+  PcmLevelExtractor? _extractor;
+  Completer<void>? _firstChunk;
+  int _chunkIndex = 0;
+  int _lastChunkArrivalMs = 0;
+  int _lastChunkBytes = 0;
+  int _chunkIntervalCount = 0;
+  double _chunkIntervalSum = 0.0;
+  int _chunkIntervalMin = 1 << 30;
+  int _chunkIntervalMax = 0;
+  final Map<String, Object?> _startInfo = <String, Object?>{};
+
   @override
   Stream<double> get decibelStream => _decibelStreamController.stream;
+
+  @override
+  Stream<AudioLevelSample> get sampleStream => _sampleStreamController.stream;
+
+  @override
+  Map<String, Object?> get diagnostics => <String, Object?>{
+    ..._startInfo,
+    'pcmActive': _pcmActive,
+    'chunks': _chunkIndex,
+    'lastChunkBytes': _lastChunkBytes,
+    'lastChunkMs': _lastChunkBytes == 0
+        ? null
+        : _lastChunkBytes / 2 * 1000 / _pcmSampleRate,
+    'chunkIntervalMs': _chunkIntervalCount == 0
+        ? null
+        : <String, Object?>{
+            'n': _chunkIntervalCount,
+            'min': _chunkIntervalMin,
+            'avg': (_chunkIntervalSum / _chunkIntervalCount).round(),
+            'max': _chunkIntervalMax,
+          },
+  };
 
   @override
   double get currentDecibels => _currentDecibels;
@@ -86,9 +143,12 @@ class RecordAudioLevelService implements IAudioLevelService {
     // ---------------------------------------------------------------------
 
     // RESTORED PREVIOUS FORMULA:
-    // Dynamic linear SPL scaling: dBFS (-60.0 to 0.0) -> SPL dB (35.0 to 110.0)
-    final double safeDb = ((rawDbFS.clamp(-60.0, 0.0) + 60.0) * 1.25 + 35.0)
-        .clamp(30.0, AppConstants.maxSystemAudioDb);
+    // Dynamic linear SPL scaling: dBFS (-60.0 to 0.0) -> SPL dB (35.0 to 110.0).
+    // Shared with the PCM path so both read on the identical scale.
+    final double safeDb = PcmLevelExtractor.mapDbfsToDb(
+      rawDbFS,
+      maxDb: AppConstants.maxSystemAudioDb,
+    );
 
     // ROLLING MOVING AVERAGE BUFFER (Controlled by AppConstants.useAvarageAudioFormate):
     // When enabled: Averages consecutive frames to eliminate micro-noises.
@@ -114,6 +174,204 @@ class RecordAudioLevelService implements IAudioLevelService {
     if (!_decibelStreamController.isClosed) {
       _decibelStreamController.add(_currentDecibels);
     }
+    // Legacy mode: publish the same value on the timestamped stream, stamped
+    // with the delivery time (there is no finer timing to offer).
+    if (!_pcmActive && !_sampleStreamController.isClosed) {
+      _sampleStreamController.add(
+        AudioLevelSample(
+          db: _currentDecibels,
+          timestampMs: DateTime.now().millisecondsSinceEpoch,
+          clipped: rawDbFS >= -0.5,
+        ),
+      );
+    }
+  }
+
+  /// Handles one raw PCM chunk: splits it into blocks and publishes them with
+  /// timestamps back-dated from the chunk arrival time.
+  void _onPcmChunk(Uint8List bytes) {
+    final int arrivalMs = DateTime.now().millisecondsSinceEpoch;
+    final Completer<void>? first = _firstChunk;
+    if (first != null && !first.isCompleted) first.complete();
+
+    final PcmLevelExtractor? extractor = _extractor;
+    if (extractor == null) return;
+
+    if (_lastChunkArrivalMs > 0) {
+      final int gap = arrivalMs - _lastChunkArrivalMs;
+      _chunkIntervalCount++;
+      _chunkIntervalSum += gap;
+      _chunkIntervalMin = min(_chunkIntervalMin, gap);
+      _chunkIntervalMax = max(_chunkIntervalMax, gap);
+    }
+    _lastChunkArrivalMs = arrivalMs;
+    _lastChunkBytes = bytes.length;
+    _chunkIndex++;
+
+    for (final PcmLevelBlock block in extractor.extract(bytes)) {
+      final int timestampMs =
+          arrivalMs -
+          (block.samplesAfterBlockEnd * 1000 / _pcmSampleRate).round();
+      _currentDecibels = block.db;
+      if (!_sampleStreamController.isClosed) {
+        _sampleStreamController.add(
+          AudioLevelSample(
+            db: block.db,
+            timestampMs: timestampMs,
+            clipped: block.clipped,
+            chunkIndex: _chunkIndex,
+          ),
+        );
+      }
+    }
+  }
+
+  void _attachAmplitudePolling(int intervalMs) {
+    _amplitudeSubscription?.cancel();
+    _amplitudeSubscription = _audioRecorder!
+        .onAmplitudeChanged(Duration(milliseconds: intervalMs))
+        .listen(
+          _onRawAmplitudeReceived,
+          onError: (Object error) {
+            if (!_decibelStreamController.isClosed) {
+              _decibelStreamController.addError(error);
+            }
+          },
+        );
+  }
+
+  /// Buffer size in bytes whose chunk lasts [chunkMs] (`null` = plugin default).
+  /// The plugin reads `bufferSize / 2` samples per chunk.
+  static int _bufferBytesForChunkMs(int chunkMs) =>
+      (chunkMs * _pcmSampleRate / 1000).round() * 2;
+
+  /// Tries the PCM stream with each candidate chunk length (smallest first) and
+  /// keeps the first that starts and delivers data. Returns false if none do.
+  Future<bool> _startSubBlockPcm(InputDevice? device, int blockMs) async {
+    final List<Map<String, Object?>> attempts = <Map<String, Object?>>[];
+    final List<int?> candidatesMs = <int?>[
+      ...AppConstants.audioStreamChunkCandidatesMs,
+      null,
+    ];
+    for (final int? chunkMs in candidatesMs) {
+      final int? bufferBytes = chunkMs == null
+          ? null
+          : _bufferBytesForChunkMs(chunkMs);
+      try {
+        final RecordConfig config = RecordConfig(
+          encoder: AudioEncoder.pcm16bits,
+          sampleRate: _pcmSampleRate,
+          numChannels: 1,
+          device: device,
+          echoCancel: !AppConstants.audioExperimentDisableMicProcessing,
+          autoGain:
+              false, // Disables Automatic Gain Control so quiet background noise isn't boosted
+          noiseSuppress: !AppConstants.audioExperimentDisableMicProcessing,
+          androidConfig: AndroidRecordConfig(
+            audioSource: AppConstants.audioExperimentUnprocessedSource
+                ? AndroidAudioSource.unprocessed
+                : AndroidAudioSource.defaultSource,
+          ),
+          streamBufferSize: bufferBytes,
+        );
+        _extractor = PcmLevelExtractor(
+          sampleRate: _pcmSampleRate,
+          channels: 1,
+          blockMs: blockMs,
+        );
+        _chunkIndex = 0;
+        _lastChunkArrivalMs = 0;
+        _lastChunkBytes = 0;
+        _chunkIntervalCount = 0;
+        _chunkIntervalSum = 0.0;
+        _chunkIntervalMin = 1 << 30;
+        _chunkIntervalMax = 0;
+        _firstChunk = Completer<void>();
+
+        final Stream<Uint8List> pcmStream = await _audioRecorder!.startStream(
+          config,
+        );
+        _pcmSubscription = pcmStream.listen(
+          _onPcmChunk,
+          onError: (Object error) {
+            if (!_decibelStreamController.isClosed) {
+              _decibelStreamController.addError(error);
+            }
+          },
+        );
+        // No data within 1.5 s counts as a failed start.
+        await _firstChunk!.future.timeout(const Duration(milliseconds: 1500));
+
+        _pcmActive = true;
+        attempts.add(<String, Object?>{
+          'requestedChunkMs': chunkMs,
+          'bufferBytes': bufferBytes,
+          'ok': true,
+        });
+        _startInfo
+          ..['mode'] = 'pcm_subblock'
+          ..['requestedChunkMs'] = chunkMs
+          ..['bufferBytes'] = bufferBytes
+          ..['sampleRate'] = _pcmSampleRate
+          ..['blockMs'] = blockMs
+          ..['attempts'] = attempts;
+        return true;
+      } catch (e) {
+        attempts.add(<String, Object?>{
+          'requestedChunkMs': chunkMs,
+          'bufferBytes': bufferBytes,
+          'ok': false,
+          'error': e.toString(),
+        });
+        try {
+          await _pcmSubscription?.cancel();
+        } catch (_) {}
+        _pcmSubscription = null;
+        try {
+          await _audioRecorder?.stop();
+        } catch (_) {}
+      }
+    }
+    _extractor = null;
+    _startInfo
+      ..['mode'] = 'legacy_amplitude'
+      ..['fallback'] = 'pcm_subblock failed'
+      ..['attempts'] = attempts;
+    return false;
+  }
+
+  /// Starts the plugin's PCM stream the way the app always has, so the native
+  /// microphone sampler runs and `getAmplitude` has data.
+  Future<void> _startLegacyStream(InputDevice? builtInMicDevice) async {
+    RecordConfig recordConfig = RecordConfig(
+      device: builtInMicDevice,
+      echoCancel: true,
+
+      autoGain:
+          false, // Disables Automatic Gain Control so quiet background noise isn't boosted
+      noiseSuppress: true, // Enables hardware background noise suppression
+    );
+
+    if (Platform.isAndroid) {
+      recordConfig = RecordConfig(
+        encoder: AudioEncoder.pcm16bits,
+        sampleRate: 16000,
+        numChannels: 1,
+        device: builtInMicDevice,
+        echoCancel: true,
+        noiseSuppress: true,
+        autoGain: false,
+      );
+    }
+
+    // 2. Start streaming recording session to activate native microphone sampler
+    final Stream<Uint8List> pcmStream = await _audioRecorder!.startStream(
+      recordConfig,
+    );
+
+    // Subscribing to pcmStream keeps the native audio pipe flowing
+    _pcmSubscription = pcmStream.listen((_) {});
+    _startInfo.putIfAbsent('mode', () => 'legacy_amplitude');
   }
 
   @override
@@ -142,18 +400,14 @@ class RecordAudioLevelService implements IAudioLevelService {
       }
 
       _rollingSampleBuffer.clear();
+      _pcmActive = false;
+      _startInfo.clear();
 
-      // 1. Listen to native amplitude events (emitted in dBFS from -80 to 0)
-      _amplitudeSubscription = _audioRecorder!
-          .onAmplitudeChanged(Duration(milliseconds: effectiveInterval))
-          .listen(
-            _onRawAmplitudeReceived,
-            onError: (Object error) {
-              if (!_decibelStreamController.isClosed) {
-                _decibelStreamController.addError(error);
-              }
-            },
-          );
+      // 1. Listen to native amplitude events (emitted in dBFS from -80 to 0).
+      // In sub-block PCM mode this is only attached if the PCM start fails.
+      if (!enableSubBlockPcm) {
+        _attachAmplitudePolling(effectiveInterval);
+      }
 
       // Query available input devices to lock onto built-in phone mic (bypassing earbud mic)
       InputDevice? builtInMicDevice;
@@ -198,21 +452,24 @@ class RecordAudioLevelService implements IAudioLevelService {
       }
       _isEarbudsConnected = earbudsDetected;
 
-      final RecordConfig recordConfig = RecordConfig(
-        device: builtInMicDevice,
-        echoCancel: true,
-        autoGain:
-            false, // Disables Automatic Gain Control so quiet background noise isn't boosted
-        noiseSuppress: true, // Enables hardware background noise suppression
-      );
-
-      // 2. Start streaming recording session to activate native microphone sampler
-      final Stream<Uint8List> pcmStream = await _audioRecorder!.startStream(
-        recordConfig,
-      );
-
-      // Subscribing to pcmStream keeps the native audio pipe flowing
-      _pcmSubscription = pcmStream.listen((_) {});
+      bool pcmStarted = false;
+      if (enableSubBlockPcm) {
+        pcmStarted = await _startSubBlockPcm(
+          builtInMicDevice,
+          effectiveInterval,
+        );
+        if (!pcmStarted) {
+          // Fresh recorder, then the legacy pipeline exactly as before.
+          try {
+            await _audioRecorder?.dispose();
+          } catch (_) {}
+          _audioRecorder = AudioRecorder();
+          _attachAmplitudePolling(effectiveInterval);
+        }
+      }
+      if (!pcmStarted) {
+        await _startLegacyStream(builtInMicDevice);
+      }
 
       _isMonitoring = true;
       return true;
@@ -227,6 +484,16 @@ class RecordAudioLevelService implements IAudioLevelService {
   @override
   Future<void> updateSampleInterval(int newIntervalMs) async {
     if (!_isMonitoring || _audioRecorder == null) return;
+    if (_pcmActive) {
+      // Only the block length changes; the PCM stream keeps running.
+      _extractor = PcmLevelExtractor(
+        sampleRate: _pcmSampleRate,
+        channels: 1,
+        blockMs: newIntervalMs,
+      );
+      _startInfo['blockMs'] = newIntervalMs;
+      return;
+    }
     try {
       await _amplitudeSubscription?.cancel();
       _amplitudeSubscription = _audioRecorder!
@@ -245,6 +512,8 @@ class RecordAudioLevelService implements IAudioLevelService {
   @override
   Future<void> stopMonitoring() async {
     _isMonitoring = false;
+    _pcmActive = false;
+    _extractor = null;
     _rollingSampleBuffer.clear();
     if (_activeGlobalService == this) {
       _activeGlobalService = null;
@@ -276,5 +545,6 @@ class RecordAudioLevelService implements IAudioLevelService {
   void dispose() {
     stopMonitoring();
     _decibelStreamController.close();
+    _sampleStreamController.close();
   }
 }

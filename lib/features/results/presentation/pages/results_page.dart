@@ -622,14 +622,25 @@ class ResultsPage extends StatelessWidget {
       buffer.writeln(
         'Vision Confirmation  : ${result.isVisionConfirmationRequired ? "REQUIRED (Strict — must see punching motion)" : "OPTIONAL (Dual audio+vibe fallback enabled)"}',
       );
-      // Extract all confirmed punches
-      final List<String> confirmedPunches = result.recordedSpikesHistory
-          .where((entry) => entry.contains('PUNCH') || entry.startsWith('🥊'))
-          .toList();
+      if (result.sessionTotalsText.isNotEmpty) {
+        buffer.writeln('====================================================');
+        buffer.writeln('                SESSION TOTALS                      ');
+        buffer.writeln('====================================================');
+        buffer.write(result.sessionTotalsText);
+      }
+      // All confirmed punches (never trimmed); falls back to filtering the
+      // spike history for sessions that did not record a dedicated list.
+      final List<String> confirmedPunches = result.confirmedPunchLog.isNotEmpty
+          ? result.confirmedPunchLog
+          : result.recordedSpikesHistory
+                .where(
+                  (entry) => entry.contains('PUNCH') || entry.startsWith('🥊'),
+                )
+                .toList();
 
       buffer.writeln('====================================================');
       buffer.writeln(
-        '       CONFIRMED PUNCHES LOG (${confirmedPunches.length} PUNCHES RECORDED)       ',
+        '       CONFIRMED PUNCHES LOG (${confirmedPunches.length} PUNCHES RECORDED, OLDEST FIRST)       ',
       );
       buffer.writeln('====================================================');
       if (confirmedPunches.isEmpty) {
@@ -643,13 +654,21 @@ class ResultsPage extends StatelessWidget {
       }
       buffer.writeln('====================================================');
       buffer.writeln(
-        'RECORDED SPIKES LOG HISTORY (${result.recordedSpikesHistory.length} ENTRIES):',
+        'RECORDED SPIKES LOG HISTORY (${result.recordedSpikesHistory.length} ENTRIES, NEWEST FIRST):',
       );
       buffer.writeln('====================================================');
       for (int i = 0; i < result.recordedSpikesHistory.length; i++) {
         final int index = i + 1;
         final String numStr = index.toString().padLeft(3, '0');
         buffer.writeln('#$numStr | ${result.recordedSpikesHistory[i]}');
+      }
+      if (result.summaryCsv.isNotEmpty) {
+        buffer.writeln('====================================================');
+        buffer.writeln('DECISION & CAMERA TABLE (CSV, OLDEST FIRST)');
+        buffer.writeln('One row per punch decision (kind=IMPACT) and per camera');
+        buffer.writeln('change (kind=CAMERA). Paste into Excel / Google Sheets.');
+        buffer.writeln('====================================================');
+        buffer.write(result.summaryCsv);
       }
       buffer.writeln('====================================================');
       buffer.writeln('End of Log File.');
@@ -671,9 +690,20 @@ class ResultsPage extends StatelessWidget {
       bool shareSuccess = false;
       try {
         final XFile xFile = XFile(filePath, mimeType: 'text/plain');
+        final List<XFile> shareFiles = <XFile>[xFile];
+        if (result.summaryCsv.isNotEmpty) {
+          final String csvPath =
+              '${tempDir.path}/hyper_hitter_summary_$timestamp.csv';
+          await File(csvPath).writeAsString(result.summaryCsv);
+          shareFiles.add(XFile(csvPath, mimeType: 'text/csv'));
+        }
+        final String? rawPath = result.rawEventFilePath;
+        if (rawPath != null && await File(rawPath).exists()) {
+          shareFiles.add(XFile(rawPath, mimeType: 'application/x-ndjson'));
+        }
         await SharePlus.instance.share(
           ShareParams(
-            files: [xFile],
+            files: shareFiles,
             text:
                 'Hyper Hitter Workout Punch Log Export (.txt) — Total Punches: ${result.totalPunches}',
             subject: 'Hyper Hitter Punch Log Export',

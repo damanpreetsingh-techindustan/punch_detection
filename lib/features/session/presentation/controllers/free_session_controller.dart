@@ -13,8 +13,11 @@ import '../../../vision_detection/data/geometric_rules/pose_validity_gate.dart';
 import '../../../vision_detection/data/geometric_rules/shoulder_stability_tracker.dart';
 import '../../../vision_detection/domain/entities/temporal_punch_detector.dart';
 import '../../../vision_detection/domain/entities/punch_detection_config.dart';
-import '../../../fusion/domain/services/tri_sensor_matrix_evaluator.dart';
+import '../../../fusion/domain/services/impact_gate_evaluator.dart';
+import '../../../vision_detection/domain/services/camera_distance_gate.dart';
+import '../../../vision_detection/domain/services/camera_person_gate.dart';
 import '../../../fusion/domain/services/fast_combo_fusion_synchronizer.dart';
+import '../../../../core/services/audio_level/audio_level_sample.dart';
 import '../../../../core/services/audio_level/i_audio_level_service.dart';
 import '../../../../core/services/audio_level/adaptive_audio_baseline.dart';
 import '../../../../core/services/audio_level/record_audio_level_service.dart';
@@ -23,6 +26,8 @@ import '../../../../core/services/device_stability/device_stability_service.dart
 import '../../../../core/services/device_stability/i_device_stability_service.dart';
 import '../../../../core/services/device_vibration/device_vibration_service.dart';
 import '../../../../core/services/device_vibration/i_device_vibration_service.dart';
+import '../../../../core/services/session_recording/session_event_recorder.dart';
+import '../../../../core/services/session_recording/session_summary_table.dart';
 import '../../domain/entities/punch_telemetry_event.dart';
 import '../../domain/services/auto_config_evaluator.dart';
 import '../widgets/auto_config_dialog.dart';
@@ -35,7 +40,7 @@ class FreeSessionController extends GetxController {
 
   // Real-time Audio Level Sensor Service (DIP: Injected abstract contract)
   final IAudioLevelService _audioLevelService;
-  StreamSubscription<double>? _audioLevelSubscription;
+  StreamSubscription<AudioLevelSample>? _audioLevelSubscription;
 
   // Device Stability & Motion Tracking Service (DIP: Injected abstract contract)
   final IDeviceStabilityService _stabilityService;
@@ -62,6 +67,8 @@ class FreeSessionController extends GetxController {
   final TemporalPunchDetector _temporalPunchDetector;
   final FastComboFusionSynchronizer _fusionSynchronizer;
   final PoseValidityGate _validityGate;
+  final CameraDistanceGate _distanceGate;
+  final CameraPersonGate _personGate;
   final ShoulderStabilityTracker _stabilityTracker;
   final AdaptiveAudioBaseline _adaptiveBaseline;
 
@@ -72,9 +79,17 @@ class FreeSessionController extends GetxController {
     TemporalPunchDetector? temporalPunchDetector,
     FastComboFusionSynchronizer? fusionSynchronizer,
     PoseValidityGate? validityGate,
+    CameraDistanceGate? distanceGate,
+    CameraPersonGate? personGate,
     ShoulderStabilityTracker? stabilityTracker,
     AdaptiveAudioBaseline? adaptiveBaseline,
-  }) : _audioLevelService = audioLevelService ?? RecordAudioLevelService(),
+    SessionEventRecorder? recorder,
+  }) : _recorder = recorder ?? SessionEventRecorder(),
+       _audioLevelService =
+           audioLevelService ??
+           RecordAudioLevelService(
+             enableSubBlockPcm: AppConstants.useSubBlockPcmLevels,
+           ),
        _stabilityService = stabilityService ?? DeviceStabilityService(),
        _vibrationService = vibrationService ?? DeviceVibrationService(),
        _temporalPunchDetector =
@@ -88,6 +103,8 @@ class FreeSessionController extends GetxController {
              minShoulderDriveScore: 35.0,
            ),
        _validityGate = validityGate ?? const PoseValidityGate(),
+       _distanceGate = distanceGate ?? CameraDistanceGate.fromConstants(),
+       _personGate = personGate ?? CameraPersonGate.fromConstants(),
        _stabilityTracker =
            stabilityTracker ?? ShoulderStabilityTracker(windowFrames: 5),
        _adaptiveBaseline = adaptiveBaseline ?? AdaptiveAudioBaseline();
@@ -110,6 +127,9 @@ class FreeSessionController extends GetxController {
   final RxInt rightPunchCount = 0.obs;
 
   void resetPunchCount() {
+    _recorder.record('reset', <String, Object?>{
+      'previousCount': punchCount.value,
+    });
     punchCount.value = 0;
     leftPunchCount.value = 0;
     rightPunchCount.value = 0;
@@ -131,25 +151,197 @@ class FreeSessionController extends GetxController {
   int _lastCandidateLogMs = 0;
   String? _lastLoggedCandidateArm;
 
+  // ─── Session instrumentation (recording only, never feeds detection) ───────
+  final SessionEventRecorder _recorder;
+  SessionEventRecorder get recorder => _recorder;
+
+  /// Short CSV table (one row per punch decision and per camera change) that is
+  /// exported with the log; easier to read and share than the raw JSONL file.
+  final SessionSummaryTable summaryTable = SessionSummaryTable();
+
+  /// Every confirmed punch line of the session, oldest first. Never trimmed, so
+  /// the export keeps all punches even when [recordedSpikesHistory] overflows.
+  final List<String> confirmedPunchLog = <String>[];
+
+  bool _wasVibeAboveThreshold = false;
+  int _lastVibeRiseMs = 0;
+  int _lastVibeSampleMs = 0;
+  int _lastAudioStreamMs = 0;
+  int _lastAudioChunkIndex = 0;
+  int _lastAudioChunkArrivalMs = 0;
+  int _lastAudioValueChangeMs = 0;
+  double _lastAudioStreamDb = -1.0;
+  int _lastCameraTrackMs = 0;
+  int _prevRegisteredPunchMs = 0;
+
+  static const String _punchLogMarker = '🥊 [CONFIRMED PUNCH';
+
   /// Centralized logging into recordedSpikesHistory.
-  /// Prevents buffer overflow and ensures confirmed punches are never evicted.
-  void _insertSpikeLog(String logEntry, {bool isConfirmedPunch = false}) {
-    recordedSpikesHistory.insert(0, logEntry);
-    const int maxCapacity = 500;
-    if (recordedSpikesHistory.length > maxCapacity) {
-      if (isConfirmedPunch) {
-        final int oldestNonPunchIdx = recordedSpikesHistory.lastIndexWhere(
-          (entry) => !entry.contains('🥊 [CONFIRMED PUNCH'),
-        );
-        if (oldestNonPunchIdx != -1) {
-          recordedSpikesHistory.removeAt(oldestNonPunchIdx);
-        } else {
-          recordedSpikesHistory.removeLast();
-        }
-      } else {
-        recordedSpikesHistory.removeLast();
-      }
+  /// Entries get an elapsed-time prefix. Confirmed punch lines are never evicted
+  /// and are also kept in [confirmedPunchLog].
+  void _insertSpikeLog(
+    String logEntry, {
+    bool isConfirmedPunch = false,
+    int? atEpochMs,
+  }) {
+    final String stamped = _recorder.isBegun
+        ? '[${SessionEventRecorder.formatElapsed(_recorder.elapsedForEpoch(atEpochMs ?? DateTime.now().millisecondsSinceEpoch))}] $logEntry'
+        : logEntry;
+    recordedSpikesHistory.insert(0, stamped);
+    if (stamped.contains(_punchLogMarker)) {
+      confirmedPunchLog.add(stamped);
     }
+    const int maxCapacity = 500;
+    while (recordedSpikesHistory.length > maxCapacity) {
+      final int oldestNonPunchIdx = recordedSpikesHistory.lastIndexWhere(
+        (entry) => !entry.contains(_punchLogMarker),
+      );
+      if (oldestNonPunchIdx == -1) {
+        // Only punch lines left: let the list grow rather than drop a punch.
+        break;
+      }
+      recordedSpikesHistory.removeAt(oldestNonPunchIdx);
+    }
+  }
+
+  Map<String, Object?> _configSnapshot() => <String, Object?>{
+    'mode': sessionMode.value.name,
+    'mount': mountType.value.name,
+    'targetDb': customTargetAudioDb.value,
+    'spikeDb': minAudioPunchSpikeDb.value,
+    'calibratedDb': staticCalibratedAudioDb.value,
+    'baselineDb': liveBaselineDb.value,
+    'vibeThreshold': minVibrationThreshold.value,
+    'vibeGate': isVibrationGateEnabled.value,
+    'visionRequired': isVisionConfirmationRequired.value,
+    'extraFaceRestrictions': AppConstants.enableExtraFaceRestrictions,
+    'audioIntervalMs': audioSampleIntervalMs.value,
+    'audioRefractoryMs': AppConstants.audioRefractoryMs,
+    'subBlockPcm': AppConstants.useSubBlockPcmLevels,
+    'warmupMs': AppConstants.warmUpDurationInMiliSeconds.round(),
+  };
+
+  void _recordConfigChange(String reason) {
+    _recorder.record('config_change', <String, Object?>{
+      'reason': reason,
+      ..._configSnapshot(),
+    });
+  }
+
+  /// Records one vibration stream sample and returns true on the rising edge
+  /// (first sample above the threshold after the signal was below it).
+  bool _traceVibrationSample(double mag, int nowMs) {
+    final bool above = mag >= minVibrationThreshold.value;
+    final bool risingEdge = above && !_wasVibeAboveThreshold;
+    _wasVibeAboveThreshold = above;
+    if (risingEdge) {
+      _lastVibeRiseMs = nowMs;
+      _recorder.count('vibe.threshold_crossings');
+    }
+    if (_lastVibeSampleMs > 0) {
+      _recorder.stat(
+        'interval.vibe_stream_ms',
+        (nowMs - _lastVibeSampleMs).toDouble(),
+      );
+    }
+    _lastVibeSampleMs = nowMs;
+    if (nowMs - _lastPunchTimestampMs > 500) {
+      _recorder.stat('level.vibe_mag_idle', mag);
+    }
+    _recorder.record('vibe', <String, Object?>{
+      'mag': mag,
+      'above': above,
+      'rise': risingEdge,
+    }, atEpochMs: nowMs);
+    return risingEdge;
+  }
+
+  /// Records one microphone stream sample: raw level plus arrival statistics.
+  void _traceAudioSample(AudioLevelSample sample) {
+    final double db = sample.db;
+    final int nowMs = DateTime.now().millisecondsSinceEpoch;
+    if (sample.chunkIndex != _lastAudioChunkIndex) {
+      // New plugin chunk: the gap between chunk arrivals is the real audio
+      // delivery period (about 80 ms with the plugin default buffer).
+      if (_lastAudioChunkIndex != 0 && _lastAudioChunkArrivalMs > 0) {
+        _recorder.stat(
+          'interval.audio_chunk_ms',
+          (nowMs - _lastAudioChunkArrivalMs).toDouble(),
+        );
+      }
+      _lastAudioChunkIndex = sample.chunkIndex;
+      _lastAudioChunkArrivalMs = nowMs;
+    }
+    if (_lastAudioStreamMs > 0) {
+      _recorder.stat(
+        'interval.audio_stream_ms',
+        (nowMs - _lastAudioStreamMs).toDouble(),
+      );
+    }
+    _lastAudioStreamMs = nowMs;
+    if (db != _lastAudioStreamDb) {
+      if (_lastAudioValueChangeMs > 0) {
+        _recorder.stat(
+          'interval.audio_value_change_ms',
+          (nowMs - _lastAudioValueChangeMs).toDouble(),
+        );
+      }
+      _lastAudioValueChangeMs = nowMs;
+      _lastAudioStreamDb = db;
+    }
+    _recorder.count('audio.frames');
+    if (sample.clipped || db >= AppConstants.maxSystemAudioDb - 0.5) {
+      _recorder.count('audio.saturated_frames');
+    }
+    if (nowMs - _lastPunchTimestampMs > 500) {
+      _recorder.stat('level.audio_db_idle', db);
+    }
+    _recorder.record('audio', <String, Object?>{
+      'db': db,
+      'chunk': sample.chunkIndex,
+      'clipped': sample.clipped,
+      'lagMs': nowMs - sample.timestampMs,
+    }, atEpochMs: sample.timestampMs);
+  }
+
+  /// Accumulates how long the camera could not see the user.
+  void _trackCameraAvailability(int nowMs) {
+    if (!sessionMode.value.requiresCamera) return;
+    if (_lastCameraTrackMs > 0 && nowMs - _lastCameraTrackMs <= 250) {
+      final int dt = nowMs - _lastCameraTrackMs;
+      _recorder.count('time.camera_tracked_ms', dt);
+      final TemporalPunchEvaluationResult? eval = liveEvaluationResult.value;
+      final bool available =
+          !isCameraUnavailable.value &&
+          isCameraInitialized.value &&
+          eval != null &&
+          eval.confidenceScore > 0.0 &&
+          !eval.debugTelemetry.contains('Pose Invalid');
+      if (!available) _recorder.count('time.camera_unavailable_ms', dt);
+    }
+    _lastCameraTrackMs = nowMs;
+  }
+
+  /// Text block with session totals for the exported log.
+  String buildSessionTotalsText(int durationSec) {
+    final int tracked = _recorder.totals.counter('time.camera_tracked_ms');
+    final int unavailable = _recorder.totals.counter(
+      'time.camera_unavailable_ms',
+    );
+    final StringBuffer buffer = StringBuffer();
+    buffer.writeln(
+      '  Duration (s)                                        : $durationSec',
+    );
+    buffer.writeln(
+      '  Punches registered                                  : ${punchCount.value}',
+    );
+    if (tracked > 0) {
+      buffer.writeln(
+        '  Camera unavailable (% of tracked time)              : ${(unavailable * 100 / tracked).toStringAsFixed(1)}',
+      );
+    }
+    buffer.write(_recorder.totals.toText());
+    return buffer.toString();
   }
 
   /// Records strongly-typed telemetry event and syncs with UI spike log & developer console.
@@ -161,6 +353,7 @@ class FreeSessionController extends GetxController {
     _insertSpikeLog(
       event.toLogString(isPoleMount: mountType.value.isVibrationDisabled),
       isConfirmedPunch: event.isValidPunch,
+      atEpochMs: event.timestampMs,
     );
     developer.log(
       '[PUNCH TELEMETRY] ${event.isValidPunch ? '🟢 VALID' : (event.isCandidate ? '🟡 CANDIDATE' : '🔴 REJECTED')} '
@@ -194,6 +387,10 @@ class FreeSessionController extends GetxController {
 
   void notifySettingsViewOpened() {
     _openSettingsViewsCount++;
+    _recorder.record('settings', <String, Object?>{
+      'open': true,
+      'count': _openSettingsViewsCount,
+    });
     developer.log(
       'Settings view opened (active count: $_openSettingsViewsCount). Punch detection paused.',
       name: 'FreeSessionController',
@@ -203,6 +400,10 @@ class FreeSessionController extends GetxController {
   void notifySettingsViewClosed() {
     if (_openSettingsViewsCount > 0) {
       _openSettingsViewsCount--;
+      _recorder.record('settings', <String, Object?>{
+        'open': false,
+        'count': _openSettingsViewsCount,
+      });
       if (_openSettingsViewsCount == 0) {
         _settingsCooldownUntilMs =
             DateTime.now().millisecondsSinceEpoch +
@@ -293,7 +494,6 @@ class FreeSessionController extends GetxController {
 
   double _prevFrameDb = 48.0; // Decibel level of previous 100ms frame
   int _lastAudioPunchTimestampMs = 0;
-  int _lastPendingAudioSpikeMs = 0;
   double _lastPendingAudioSpikeDb = 0.0;
   int _lastVisionPunchTimestampMs = 0;
   bool _isVibrationArmed = true;
@@ -357,6 +557,10 @@ class FreeSessionController extends GetxController {
     _startElapsedTimer();
     _readRouteArguments();
     _updateDetectorConfig();
+    _recorder.begin(
+      startEpochMs: _sessionStartTimeMs,
+      config: _configSnapshot(),
+    );
     _initPoseDetector();
     initCamera();
     _startMicrophoneStream();
@@ -377,164 +581,73 @@ class FreeSessionController extends GetxController {
     _vibrationService.startMonitoring(
       minVibrationThreshold: minVibrationThreshold.value,
     );
-    _vibrationSubscription = _vibrationService.vibrationMagnitudeStream.listen((
-      mag,
-    ) {
-      liveVibrationMagnitude.value = mag;
+    _vibrationSubscription = _vibrationService.vibrationMagnitudeStream.listen(
+      _handleVibrationSample,
+    );
+  }
 
-      final int nowMs = DateTime.now().millisecondsSinceEpoch;
-      final int vibrationRefractoryMs =
-          sessionMode.value == DetectionMode.vibration ? 110 : 110;
+  /// Handles one vibration stream sample. Every sample is kept in a short
+  /// history so an impact window can look at vibration by timestamp (before and
+  /// after the audio spike), which removes the audio-first / vibration-first race.
+  /// [atEpochMs] lets tests supply the sample time.
+  void _handleVibrationSample(double mag, {int? atEpochMs}) {
+    liveVibrationMagnitude.value = mag;
 
-      // Re-arm vibration detector after refractory window HAS PASSED
-      if (nowMs - _lastPunchTimestampMs >= vibrationRefractoryMs) {
-        _isVibrationArmed = true;
-      }
+    final int nowMs = atEpochMs ?? DateTime.now().millisecondsSinceEpoch;
+    _noteEventClock(nowMs);
+    _appendVibrationHistory(nowMs, mag);
+    final bool vibeRisingEdge = _traceVibrationSample(mag, nowMs);
+    // Audio + vibration (+ camera) modes: a pending impact may now be complete.
+    if (_usesImpactWindow) _evaluatePendingImpact();
+    final int vibrationRefractoryMs =
+        sessionMode.value == DetectionMode.vibration ? 110 : 110;
 
-      if (mag >= minVibrationThreshold.value &&
-          _isVibrationArmed &&
-          nowMs - _lastPunchTimestampMs >= vibrationRefractoryMs) {
-        _isVibrationArmed =
-            false; // Lock out until physical shockwave dies down
+    // Re-arm vibration detector after refractory window HAS PASSED
+    if (nowMs - _lastPunchTimestampMs >= vibrationRefractoryMs) {
+      _isVibrationArmed = true;
+    }
 
-        if (isSettingsViewActive) {
-          final String vibeRejectLog =
-              '🔴 [REJECTED] VIBRATION_IMPACT (Declined: Settings open or client using mobile) | '
-              'Vibe: ${mag.toStringAsFixed(2)} m/s² (Thresh: ${minVibrationThreshold.value.toStringAsFixed(2)} m/s²) | '
-              'Audio: ${liveDecibelLevel.value.toStringAsFixed(1)} dB (Base: ${liveBaselineDb.value.toStringAsFixed(1)} dB)';
-          _insertSpikeLog(vibeRejectLog);
-          detectionStatusText.value =
-              'Impact Rejected (Settings open or client using mobile)';
-          return;
-        }
+    if (mag >= minVibrationThreshold.value &&
+        _isVibrationArmed &&
+        nowMs - _lastPunchTimestampMs >= vibrationRefractoryMs) {
+      _isVibrationArmed = false; // Lock out until physical shockwave dies down
 
-        final String vibeLog =
-            '🟡 [CANDIDATE] VIBRATION_IMPACT | '
+      if (isSettingsViewActive) {
+        final String vibeRejectLog =
+            '🔴 [REJECTED] VIBRATION_IMPACT (Declined: Settings open or client using mobile) | '
             'Vibe: ${mag.toStringAsFixed(2)} m/s² (Thresh: ${minVibrationThreshold.value.toStringAsFixed(2)} m/s²) | '
             'Audio: ${liveDecibelLevel.value.toStringAsFixed(1)} dB (Base: ${liveBaselineDb.value.toStringAsFixed(1)} dB)';
-
-        _insertSpikeLog(vibeLog);
-
-        // VIBRATION ONLY MODE: Increments punch count on vibration impact alone!
-        if (sessionMode.value == DetectionMode.vibration) {
-          _registerPunch(
-            nowMs,
-            '★ PUNCH CONFIRMED! (${mag.toStringAsFixed(2)} m/s² — Vibration Only)',
-            telemetryLog:
-                'Mode: VIBRATION_ONLY | Vibe: ${mag.toStringAsFixed(2)} m/s² (Thresh: ${minVibrationThreshold.value.toStringAsFixed(2)} m/s²) | Audio: ${liveDecibelLevel.value.toStringAsFixed(1)} dB',
-          );
-          _triggerPunchHaptic();
-        }
-
-        // BIDIRECTIONAL SYNC: Check if audio spike occurred slightly before vibration (within 120ms)
-        final double effectiveTargetDb = customTargetAudioDb.value > 0
-            ? customTargetAudioDb.value
-            : (staticCalibratedAudioDb.value + minAudioPunchSpikeDb.value);
-
-        final bool hasRecentAudio =
-            (nowMs - _lastPendingAudioSpikeMs) <= 120 &&
-            _lastPendingAudioSpikeMs > 0 &&
-            _lastPendingAudioSpikeDb >= effectiveTargetDb;
-
-        if (hasRecentAudio) {
-          if (sessionMode.value == DetectionMode.audioVibration) {
-            _registerPunch(
-              nowMs,
-              '★ PUNCH CONFIRMED! (${_lastPendingAudioSpikeDb.round()} dB — Audio + Vibration)',
-              telemetryLog:
-                  'Mode: AUDIO_VIBRATION (Sync) | Audio: ${_lastPendingAudioSpikeDb.toStringAsFixed(1)} dB | Vibe: Peak ${_vibrationService.recentPeakVibrationMagnitude.toStringAsFixed(2)} m/s² (Thresh: ${minVibrationThreshold.value.toStringAsFixed(2)} m/s²)',
-            );
-            _lastPendingAudioSpikeMs = 0;
-            _triggerPunchHaptic();
-          } else if (sessionMode.value == DetectionMode.fusion) {
-            final evalResult = liveEvaluationResult.value;
-            final bool isCamInit =
-                !isCameraUnavailable.value && isCameraInitialized.value;
-            final bool isBodyVisibleInFrame =
-                isCamInit &&
-                evalResult != null &&
-                evalResult.confidenceScore > 0.0 &&
-                !evalResult.debugTelemetry.contains('Pose Invalid');
-            final bool isCamAvailable = isCamInit && isBodyVisibleInFrame;
-            final bool hasRecentCameraPunch =
-                (nowMs - _lastVisionPunchTimestampMs) <= 900;
-            final bool isCamConfirmed =
-                isCamAvailable &&
-                (hasRecentCameraPunch || evalResult.isPunchConfirmed);
-            final bool isCamRejected = isCamAvailable && !isCamConfirmed;
-
-            final matrixEvaluator = TriSensorMatrixEvaluator(
-              strongAudioSpikeDb: minAudioPunchSpikeDb.value,
-              strongVibrationMag: minVibrationThreshold.value,
-              requireVisionConfirmation: isVisionConfirmationRequired.value,
-              isVibrationDisabled: isVibrationEffectivelyDisabled,
-              isPoleMount: mountType.value.isVibrationDisabled,
-            );
-            final matrixResult = matrixEvaluator.evaluate(
-              audioSpikeDb: max(
-                minAudioPunchSpikeDb.value,
-                _lastPendingAudioSpikeDb > 0
-                    ? _lastPendingAudioSpikeDb - liveBaselineDb.value
-                    : minAudioPunchSpikeDb.value,
-              ),
-              vibrationMag: mag,
-              isCameraAvailable: isCamAvailable,
-              isCameraConfirmed: isCamConfirmed,
-              isCameraRejected: isCamRejected,
-              timestampMs: nowMs,
-            );
-
-            if (matrixResult.isValidPunch) {
-              final String activeArm = evalResult?.confirmedArm ?? 'right';
-              final syncEvent = PunchTelemetryEvent(
-                timestampMs: nowMs,
-                peakAudioDb: _lastPendingAudioSpikeDb,
-                baselineAudioDb: liveBaselineDb.value,
-                audioRiseDb: max(
-                  minAudioPunchSpikeDb.value,
-                  _lastPendingAudioSpikeDb - liveBaselineDb.value,
-                ),
-                targetAudioDb: customTargetAudioDb.value,
-                vibrationPeakMag: mag,
-                vibrationLiveMag: liveVibrationMagnitude.value,
-                vibrationThreshold: minVibrationThreshold.value,
-                cameraConfidence: evalResult?.confidenceScore.round() ?? 0,
-                cameraArm: activeArm.toUpperCase(),
-                isCameraConfirmed: isCamConfirmed,
-                isCameraAvailable: isCamAvailable,
-                isValidPunch: true,
-                decisionCode: 'FUSION_VIBE_SYNC',
-                reasonLabel: matrixResult.reasonLabel,
-                sessionMode: sessionMode.value.name,
-                mountType: mountType.value.name,
-                isVibrationGateEnabled: isVibrationGateEnabled.value,
-                isVisionConfirmationRequired:
-                    isVisionConfirmationRequired.value,
-                refractoryElapsedMs: (nowMs - _lastPunchTimestampMs).clamp(
-                  0,
-                  99999,
-                ),
-              );
-              _recordTelemetryEvent(syncEvent);
-
-              _registerPunch(
-                nowMs,
-                '★ PUNCH CONFIRMED! (${matrixResult.reasonLabel})',
-                arm: activeArm,
-                telemetryLog:
-                    'Mode: FUSION (Sync) | Code: ${matrixResult.combinationCode} (${matrixResult.reasonLabel}) | Audio: ${_lastPendingAudioSpikeDb.toStringAsFixed(1)} dB | Vibe: Peak ${_vibrationService.recentPeakVibrationMagnitude.toStringAsFixed(2)} m/s² | Cam: ${evalResult?.confidenceScore.round() ?? 0}% ($activeArm)',
-              );
-              _lastPendingAudioSpikeMs = 0;
-              _triggerPunchHaptic();
-            }
-          }
-        }
+        if (vibeRisingEdge) _insertSpikeLog(vibeRejectLog, atEpochMs: nowMs);
+        detectionStatusText.value =
+            'Impact Rejected (Settings open or client using mobile)';
+        return;
       }
-    });
+
+      final String vibeLog =
+          '🟡 [CANDIDATE] VIBRATION_IMPACT | '
+          'Vibe: ${mag.toStringAsFixed(2)} m/s² (Thresh: ${minVibrationThreshold.value.toStringAsFixed(2)} m/s²) | '
+          'Audio: ${liveDecibelLevel.value.toStringAsFixed(1)} dB (Base: ${liveBaselineDb.value.toStringAsFixed(1)} dB)';
+
+      // Only the first sample of each vibration burst is logged as text; the raw
+      // event file keeps every sample.
+      if (vibeRisingEdge) _insertSpikeLog(vibeLog, atEpochMs: nowMs);
+
+      // VIBRATION ONLY MODE: Increments punch count on vibration impact alone!
+      if (sessionMode.value == DetectionMode.vibration) {
+        _registerPunch(
+          nowMs,
+          '★ PUNCH CONFIRMED! (${mag.toStringAsFixed(2)} m/s² — Vibration Only)',
+          telemetryLog:
+              'Mode: VIBRATION_ONLY | Vibe: ${mag.toStringAsFixed(2)} m/s² (Thresh: ${minVibrationThreshold.value.toStringAsFixed(2)} m/s²) | Audio: ${liveDecibelLevel.value.toStringAsFixed(1)} dB',
+        );
+        _triggerPunchHaptic();
+      }
+    }
   }
 
   void toggleVibrationGate(bool enable) {
     isVibrationGateEnabled.value = enable;
+    _recordConfigChange('vibration_gate=$enable');
     if (enable) {
       _startDeviceVibrationMonitor();
     } else {
@@ -546,6 +659,7 @@ class FreeSessionController extends GetxController {
 
   void updateVibrationThreshold(double value) {
     minVibrationThreshold.value = value;
+    _recordConfigChange('vibration_threshold');
     if (isVibrationGateEnabled.value) {
       _vibrationService.startMonitoring(minVibrationThreshold: value);
     }
@@ -561,6 +675,7 @@ class FreeSessionController extends GetxController {
     );
     customTargetAudioDb.value = newTarget.roundToDouble();
     _adaptiveBaseline.fixedAudioTargetDb = newTarget.roundToDouble();
+    _recordConfigChange('environment_preset');
 
     if (vibrationMag != null) {
       updateVibrationThreshold(
@@ -648,6 +763,7 @@ class FreeSessionController extends GetxController {
         ? mode
         : DetectionMode.fromString(mode.toString());
     sessionMode.value = resolved;
+    _recordConfigChange('mode=${resolved.name}');
     final bool isCameraModeNeeded = resolved.requiresCamera;
     if (!isCameraModeNeeded) {
       isCameraUnavailable.value = true;
@@ -719,8 +835,14 @@ class FreeSessionController extends GetxController {
       return;
     }
 
-    _audioLevelSubscription = _audioLevelService.decibelStream.listen(
-      (double db) {
+    _recorder.record('audio_service', <String, Object?>{
+      ..._audioLevelService.diagnostics,
+    });
+
+    _audioLevelSubscription = _audioLevelService.sampleStream.listen(
+      (AudioLevelSample sample) {
+        final double db = sample.db;
+        _traceAudioSample(sample);
         liveDecibelLevel.value = db;
         decibelHistory.add(db);
         if (decibelHistory.length > 50) {
@@ -746,7 +868,7 @@ class FreeSessionController extends GetxController {
                   .round();
         }
 
-        _checkPunchDetection();
+        _checkPunchDetection(frameTimestampMs: sample.timestampMs);
 
         // Update previous frame decibels for instantaneous derivative calculation
         _prevFrameDb = db;
@@ -769,14 +891,18 @@ class FreeSessionController extends GetxController {
 
   /// Returns true when current audio frame represents a sudden volume onset
   /// (spike above the adaptive rolling baseline by at least spikeThresholdDb).
-  bool _isAudioTransient() {
+  ///
+  /// [frameTimestampMs] is the time the audio frame actually happened (from the
+  /// timestamped microphone stream). It drives onset timing, the lockout and the
+  /// audio-vs-vibration coincidence check. Defaults to "now".
+  bool _isAudioTransient({int? frameTimestampMs}) {
     final double db = liveDecibelLevel.value;
-    final int nowMs = DateTime.now().millisecondsSinceEpoch;
+    final int nowMs = frameTimestampMs ?? DateTime.now().millisecondsSinceEpoch;
 
     // Sync parameters with live settings
     _adaptiveBaseline.spikeThresholdDb = minAudioPunchSpikeDb.value;
     _adaptiveBaseline.absoluteMinFloorDb = minPunchAudioDb.value;
-    _adaptiveBaseline.refractoryMs = 160;
+    _adaptiveBaseline.refractoryMs = AppConstants.audioRefractoryMs;
     _adaptiveBaseline.fixedAudioTargetDb = customTargetAudioDb.value > 0
         ? customTargetAudioDb.value
         : null;
@@ -798,7 +924,7 @@ class FreeSessionController extends GetxController {
     final double spikeIntensity = confirmedSpike.spikeHeight;
     final int spikeTimeMs = confirmedSpike.timestampMs;
 
-    final int audioRefractoryMs = 160;
+    final int audioRefractoryMs = AppConstants.audioRefractoryMs;
     final bool isAudioInRefractory =
         (nowMs - _lastAudioPunchTimestampMs < audioRefractoryMs);
 
@@ -811,28 +937,36 @@ class FreeSessionController extends GetxController {
         confirmedSpike.isTargetMet &&
         confirmedSpike.peakDb >= effectiveTargetDb;
 
+    _recorder.count('audio.spikes_seen');
+    if (isAudioTargetReached) {
+      _recorder.count('audio.spikes_target_met');
+      if (isAudioInRefractory) _recorder.count('audio.refractory_blocks');
+    }
+
+    // Audio + vibration (+ camera) modes: one impact window gathers all three
+    // sensors and decides once. See _handleSpikeForImpactWindow.
+    if (_usesImpactWindow) {
+      _handleSpikeForImpactWindow(
+        spike: confirmedSpike,
+        isAudioInRefractory: isAudioInRefractory,
+        isAudioTargetReached: isAudioTargetReached,
+        effectiveTargetDb: effectiveTargetDb,
+      );
+      return false;
+    }
+
+    if (!isAudioTargetReached) {
+      // A sound that is not counted must not lock out the next real punch.
+      _adaptiveBaseline.releaseRefractory();
+    }
+
     if (!isAudioInRefractory && isAudioTargetReached) {
       _lastAudioPunchTimestampMs = spikeTimeMs;
-      _lastPendingAudioSpikeMs = spikeTimeMs;
       _lastPendingAudioSpikeDb = confirmedSpike.peakDb;
     } else {
-      _lastPendingAudioSpikeMs = 0;
       _lastPendingAudioSpikeDb = 0.0;
     }
 
-    final bool hasRecentVibe = _vibrationService.hasRecentVibration(
-      nowMs,
-      maxAgeMs: 600,
-    );
-    final bool isVibeDisabled = isVibrationEffectivelyDisabled;
-
-    final matrixEvaluator = TriSensorMatrixEvaluator(
-      strongAudioSpikeDb: minAudioPunchSpikeDb.value,
-      strongVibrationMag: minVibrationThreshold.value,
-      requireVisionConfirmation: isVisionConfirmationRequired.value,
-      isVibrationDisabled: isVibeDisabled,
-      isPoleMount: mountType.value.isVibrationDisabled,
-    );
     final evalResult = liveEvaluationResult.value;
     final bool isCamInit =
         !isCameraUnavailable.value && isCameraInitialized.value;
@@ -867,34 +1001,11 @@ class FreeSessionController extends GetxController {
       liveVibrationMagnitude.value,
     );
 
-    final matrixResult = matrixEvaluator.evaluate(
-      audioSpikeDb: isAudioTargetReached ? spikeIntensity : 0.0,
-      vibrationMag: effectiveVibeMag,
-      isCameraAvailable: isCamAvailable,
-      isCameraConfirmed: isCamConfirmed,
-      isCameraRejected: isCamRejected,
-      timestampMs: spikeTimeMs,
-    );
-
-    // Unconditionally log EVERY detected audio spike into recordedSpikesHistory with rich telemetry
-    final String vibeDetail = isVibeDisabled
-        ? 'Vibe: Disabled (${mountType.value.isVibrationDisabled ? "Pole Mount" : "Vibe Gate OFF"})'
-        : (hasRecentVibe || effectiveVibeMag >= minVibrationThreshold.value
-              ? 'Vibe: Peak ${effectiveVibeMag.toStringAsFixed(2)} m/s² (Current: ${liveVibrationMagnitude.value.toStringAsFixed(2)} m/s², Thresh: ${minVibrationThreshold.value.toStringAsFixed(2)} m/s²)'
-              : 'Vibe: Peak ${effectiveVibeMag.toStringAsFixed(2)} m/s² (Below ${minVibrationThreshold.value.toStringAsFixed(2)} m/s², Current: ${liveVibrationMagnitude.value.toStringAsFixed(2)} m/s²)');
-
     final String audioDetail =
         'Audio: ${confirmedSpike.peakDb.toStringAsFixed(1)} dB '
         '(Base: ${confirmedSpike.baselineDb.toStringAsFixed(1)} dB, '
         'Rise: +${spikeIntensity.toStringAsFixed(1)} dB, '
         'Target: ${effectiveTargetDb.round()} dB)';
-
-    String visionDetail = '';
-    if (sessionMode.value.requiresCamera) {
-      final int conf = evalResult?.confidenceScore.round() ?? 0;
-      final String arm = (evalResult?.confirmedArm ?? 'none').toUpperCase();
-      visionDetail = ' | Cam: $conf% ($arm Arm, Confirmed: $isCamConfirmed)';
-    }
 
     // Determine definitive classification based on active DetectionMode
     bool isValidPunch = false;
@@ -927,39 +1038,6 @@ class FreeSessionController extends GetxController {
         isValidPunch = true;
         decisionCode = 'AUDIO_ONLY';
         reasonLabel = 'Audio spike exceeded target';
-      }
-    } else if (sessionMode.value == DetectionMode.audioVibration) {
-      final bool isVibeValid =
-          isVibeDisabled ||
-          hasRecentVibe ||
-          effectiveVibeMag >= minVibrationThreshold.value;
-      if (isAudioInRefractory) {
-        isRejected = true;
-        decisionCode = 'VIBE_REFRACTORY';
-        reasonLabel = 'Cooldown refractory period';
-      } else if (isVibeValid) {
-        isValidPunch = true;
-        decisionCode = isVibeDisabled ? 'AUDIO_POLE_DUAL' : 'AUDIO_VIBE_DUAL';
-        reasonLabel = isVibeDisabled
-            ? 'Vibration Bypass'
-            : 'Audio + Vibration confirmed';
-      } else {
-        isRejected = true;
-        decisionCode = 'VIBE_BELOW_THRESHOLD';
-        reasonLabel =
-            'Vibration below ${minVibrationThreshold.value.toStringAsFixed(2)} m/s²';
-      }
-    } else if (sessionMode.value == DetectionMode.fusion) {
-      if (isAudioInRefractory) {
-        isRejected = true;
-        decisionCode = 'FUSION_REFRACTORY';
-        reasonLabel = 'Cooldown refractory period';
-      } else {
-        isValidPunch = matrixResult.isValidPunch;
-        isCandidate = matrixResult.isCandidate;
-        isRejected = matrixResult.isRejected;
-        decisionCode = matrixResult.combinationCode;
-        reasonLabel = matrixResult.reasonLabel;
       }
     } else {
       // Camera only or other
@@ -1008,6 +1086,53 @@ class FreeSessionController extends GetxController {
     );
     _recordTelemetryEvent(telemetryEvent);
 
+    // Instrumentation only: raw decision record with sensor arrival lags.
+    final int? vibeRiseToSpikeMs = _lastVibeRiseMs > 0
+        ? spikeTimeMs - _lastVibeRiseMs
+        : null;
+    if (isAudioTargetReached &&
+        vibeRiseToSpikeMs != null &&
+        vibeRiseToSpikeMs.abs() <= 1000) {
+      _recorder.stat('lag.audio_minus_vibe_ms', vibeRiseToSpikeMs.toDouble());
+    }
+    _recorder.count('decision.AUDIO.$decisionCode');
+    _recorder.count(
+      isValidPunch
+          ? 'audio_path.valid'
+          : (isCandidate ? 'audio_path.candidate' : 'audio_path.rejected'),
+    );
+    _recorder.record('decision', <String, Object?>{
+      'path': 'AUDIO',
+      'code': decisionCode,
+      'valid': isValidPunch,
+      'candidate': isCandidate,
+      'peakDb': confirmedSpike.peakDb,
+      'baselineDb': confirmedSpike.baselineDb,
+      'liveBaselineDb': liveBaselineDb.value,
+      'riseDb': spikeIntensity,
+      'targetDb': effectiveTargetDb,
+      'targetMet': isAudioTargetReached,
+      'refractory': isAudioInRefractory,
+      'processingLagMs': DateTime.now().millisecondsSinceEpoch - spikeTimeMs,
+      'vibeEffectiveMag': effectiveVibeMag,
+      'vibeLiveMag': liveVibrationMagnitude.value,
+      'vibePeakAgeMs': peakVibeTime > 0 ? spikeTimeMs - peakVibeTime : null,
+      'vibeCoincident': isVibeCoincident,
+      'vibeRiseToSpikeMs': vibeRiseToSpikeMs,
+      'camAvailable': isCamAvailable,
+      'camConfirmed': isCamConfirmed,
+      'camRejected': isCamRejected,
+      'camBodyVisible': isBodyVisibleInFrame,
+      'camEvalPunch': evalResult?.isPunchConfirmed ?? false,
+      'camRecentPunch': hasRecentCameraPunch,
+      'camPunchAgeMs': _lastVisionPunchTimestampMs > 0
+          ? nowMs - _lastVisionPunchTimestampMs
+          : null,
+      'msSinceLastPunch': _lastPunchTimestampMs > 0
+          ? spikeTimeMs - _lastPunchTimestampMs
+          : null,
+    }, atEpochMs: spikeTimeMs);
+
     // UNCONDITIONAL MASTER GUARD:
     // If the impact volume does not reach the Audio Target (or failed valid punch requirements),
     // it MUST NEVER be registered as a punch under ANY mode (Audio, Audio+Vibration, Fusion, Camera).
@@ -1022,66 +1147,15 @@ class FreeSessionController extends GetxController {
 
     triggerAudioHit();
 
-    // MODE 1: Audio Only Mode -> Increments punch count on valid audio spike alone!
+    // Audio Only Mode -> Increments punch count on valid audio spike alone!
     if (sessionMode.value == DetectionMode.audio) {
       _registerPunch(
         spikeTimeMs,
         '★ PUNCH CONFIRMED! (${confirmedSpike.peakDb.round()} dB — Audio Only)',
         telemetryLog: 'Mode: AUDIO_ONLY | $audioDetail',
       );
-      _lastPendingAudioSpikeMs = 0;
       _triggerPunchHaptic();
       return true;
-    }
-
-    // MODE 2: Audio + Vibration Dual Mode -> Requires BOTH Audio AND Physical Phone Vibration!
-    if (sessionMode.value == DetectionMode.audioVibration) {
-      _registerPunch(
-        spikeTimeMs,
-        '★ PUNCH CONFIRMED! (${confirmedSpike.peakDb.round()} dB — Audio + Vibration)',
-        telemetryLog: 'Mode: AUDIO_VIBRATION | $audioDetail | $vibeDetail',
-      );
-      _lastPendingAudioSpikeMs = 0;
-      _triggerPunchHaptic();
-      return true;
-    }
-
-    // MODE 3: Tri-Sensor Fusion Mode -> Evaluated by TriSensorMatrixEvaluator
-    if (sessionMode.value == DetectionMode.fusion) {
-      if (!isValidPunch || isAudioInRefractory || !matrixResult.isValidPunch) {
-        if (matrixResult.isCandidate) {
-          detectionStatusText.value =
-              'Candidate Impact (${matrixResult.reasonLabel})';
-          developer.log(
-            '[TRI-SENSOR MATRIX LOG] 🟡 CANDIDATE — Code: ${matrixResult.combinationCode} | Reason: ${matrixResult.reasonLabel} | Audio:${matrixResult.audioState.name}, Vibe:${matrixResult.vibrationState.name}, Cam:${matrixResult.cameraState.name}',
-            name: 'FreeSessionController',
-          );
-        } else if (matrixResult.isRejected) {
-          detectionStatusText.value =
-              'Impact Rejected (${matrixResult.reasonLabel})';
-          developer.log(
-            '[TRI-SENSOR MATRIX LOG] 🔴 REJECTED — Code: ${matrixResult.combinationCode} | Reason: ${matrixResult.reasonLabel} | Audio:${matrixResult.audioState.name}, Vibe:${matrixResult.vibrationState.name}, Cam:${matrixResult.cameraState.name}',
-            name: 'FreeSessionController',
-          );
-        }
-        return false;
-      }
-
-      final String activeArm =
-          liveEvaluationResult.value?.confirmedArm ?? 'right';
-      _registerPunch(
-        spikeTimeMs,
-        '★ PUNCH CONFIRMED! (${matrixResult.reasonLabel})',
-        arm: activeArm,
-        telemetryLog:
-            'Mode: FUSION (${matrixResult.reasonLabel}) | $audioDetail | $vibeDetail$visionDetail',
-      );
-      _lastPendingAudioSpikeMs = 0;
-      _triggerPunchHaptic();
-      developer.log(
-        '[TRI-SENSOR MATRIX LOG] 🟢 VALID PUNCH REGISTERED — Code: ${matrixResult.combinationCode} | Reason: ${matrixResult.reasonLabel} | Audio:${matrixResult.audioState.name}, Vibe:${matrixResult.vibrationState.name}, Cam:${matrixResult.cameraState.name}',
-        name: 'FreeSessionController',
-      );
     }
 
     if (AppConstants.testingFreeSessionLogs) {
@@ -1093,10 +1167,405 @@ class FreeSessionController extends GetxController {
     return true;
   }
 
-  void checkPunchDetectionForTesting() => _checkPunchDetection();
+  // ─── Impact window: audio + vibration + camera decided once ────────────────
+  //
+  // Used by DetectionMode.fusion and DetectionMode.audioVibration. An audio spike
+  // that reached its target opens a short window. Vibration is looked up BY
+  // TIMESTAMP in a short history (from `impactVibrationBeforeMs` before the spike
+  // to `impactVibrationAfterMs` after it) and the camera state is read when the
+  // decision is made, so it no longer matters which sensor reports first.
+  // The punch counts only when every gate that is in use confirms it:
+  //   audio + vibration + camera, or audio + vibration when the camera is
+  //   disabled, or audio + camera when vibration is disabled (pole mount).
+  // Decided as soon as all required gates pass, otherwise when the window closes.
 
-  void _checkPunchDetection() {
+  static const ImpactGateEvaluator _impactGates = ImpactGateEvaluator();
+  _PendingImpact? _pendingImpact;
+  int _eventClockMs = 0;
+  final List<_VibeSample> _vibeHistory = <_VibeSample>[];
+  _CameraObservation? _cameraObservation;
+
+  bool get _usesImpactWindow =>
+      sessionMode.value == DetectionMode.fusion ||
+      sessionMode.value == DetectionMode.audioVibration;
+
+  /// Window after the spike. Kept below the lockout so one window always closes
+  /// before the next spike can open another.
+  int get _impactAfterMs => min(
+    AppConstants.impactVibrationAfterMs,
+    AppConstants.audioRefractoryMs - 10,
+  );
+
+  /// Latest time seen on any sensor (audio frame, vibration sample). In the app
+  /// this follows the real clock; it also lets tests drive time deterministically.
+  void _noteEventClock(int tMs) {
+    if (tMs > _eventClockMs) _eventClockMs = tMs;
+  }
+
+  void _appendVibrationHistory(int tMs, double mag) {
+    _vibeHistory.add(_VibeSample(tMs, mag));
+    final int cutoff = _eventClockMs - 2000;
+    while (_vibeHistory.isNotEmpty && _vibeHistory.first.tMs < cutoff) {
+      _vibeHistory.removeAt(0);
+    }
+  }
+
+  /// Largest vibration magnitude seen between [fromMs] and [toMs] (0 if none).
+  double _vibrationWindowPeak(int fromMs, int toMs) {
+    double peak = 0.0;
+    for (final _VibeSample sample in _vibeHistory) {
+      if (sample.tMs >= fromMs && sample.tMs <= toMs && sample.mag > peak) {
+        peak = sample.mag;
+      }
+    }
+    return peak;
+  }
+
+  /// True when the camera takes part in the decision: the mode uses a camera,
+  /// vision confirmation is on, and the camera did not fail to start (when it
+  /// failed the screen already says "Camera Offline - Audio Only").
+  bool get _isCameraGateRequired =>
+      sessionMode.value.requiresCamera &&
+      isVisionConfirmationRequired.value &&
+      !isCameraUnavailable.value;
+
+  void _noteCameraObservation(
+    CameraGateState state, {
+    double? ratio,
+    String detail = '',
+    double? faceConf,
+    double? shoulderConf,
+    int? atMs,
+  }) {
+    final int at = atMs ?? DateTime.now().millisecondsSinceEpoch;
+    final CameraGateState? previous = _cameraObservation?.state;
+    _cameraObservation = _CameraObservation(
+      state,
+      at,
+      ratio,
+      detail,
+      faceConf,
+      shoulderConf,
+    );
+    if (state != previous) {
+      summaryTable.addRow(<String, Object?>{
+        'time': SessionEventRecorder.formatElapsed(
+          _recorder.elapsedForEpoch(at),
+        ),
+        'kind': 'CAMERA',
+        'code': 'CAMERA_${state.name.toUpperCase()}',
+        'camera_state': state.name,
+        'face_conf': faceConf,
+        'shoulder_conf': shoulderConf,
+        'distance_ratio': ratio,
+        'detail': detail,
+      });
+    }
+  }
+
+  CameraGateState _cameraGateState() {
+    if (!_isCameraGateRequired) return CameraGateState.notRequired;
+    if (!isCameraInitialized.value) return CameraGateState.notReady;
+    final _CameraObservation? observation = _cameraObservation;
+    if (observation == null) return CameraGateState.noPerson;
+    if (_eventClockMs - observation.atMs >
+        AppConstants.cameraObservationStaleMs) {
+      return CameraGateState.noPerson;
+    }
+    return observation.state;
+  }
+
+  void _handleSpikeForImpactWindow({
+    required CandidateSpike spike,
+    required bool isAudioInRefractory,
+    required bool isAudioTargetReached,
+    required double effectiveTargetDb,
+  }) {
+    final _PendingImpact impact = _PendingImpact(
+      audioTsMs: spike.timestampMs,
+      peakDb: spike.peakDb,
+      baselineDb: spike.baselineDb,
+      riseDb: spike.spikeHeight,
+      targetDb: effectiveTargetDb,
+    );
+
+    String? rejectCode;
+    String rejectReason = '';
+    bool candidate = false;
+    if (isSettingsViewActive) {
+      rejectCode = 'SETTINGS_OPEN_GATE';
+      rejectReason = 'Declined: Settings open or client using mobile';
+    } else if (!isAudioTargetReached) {
+      rejectCode = 'AUDIO_BELOW_TARGET';
+      candidate = true;
+      rejectReason =
+          'Spike (${spike.peakDb.round()} dB) below target (${effectiveTargetDb.round()} dB)';
+      // A sound that is not counted must not lock out the next real punch.
+      _adaptiveBaseline.releaseRefractory();
+    } else if (isAudioInRefractory) {
+      rejectCode = 'IMPACT_REFRACTORY';
+      rejectReason = 'Cooldown refractory period';
+    } else if (_pendingImpact != null) {
+      rejectCode = 'IMPACT_ALREADY_PENDING';
+      rejectReason = 'Another impact is still being decided';
+    }
+
+    if (rejectCode != null) {
+      _recordImpactDecision(
+        impact: impact,
+        code: rejectCode,
+        reason: rejectReason,
+        valid: false,
+        candidate: candidate,
+      );
+      return;
+    }
+
+    _pendingImpact = impact;
+    _lastPendingAudioSpikeDb = spike.peakDb;
+    _recorder.count('impact.opened');
+    _evaluatePendingImpact();
+  }
+
+  /// Re-checks the open impact (if any) against the latest vibration history and
+  /// camera state. Called on every vibration sample and audio frame.
+  void _evaluatePendingImpact() {
+    final _PendingImpact? impact = _pendingImpact;
+    if (impact == null) return;
+
+    final bool windowClosed =
+        _eventClockMs >= impact.audioTsMs + _impactAfterMs;
+
+    if (isSettingsViewActive) {
+      _pendingImpact = null;
+      _recordImpactDecision(
+        impact: impact,
+        code: 'SETTINGS_OPEN_GATE',
+        reason: 'Declined: Settings open or client using mobile',
+        valid: false,
+      );
+      return;
+    }
+
+    final bool vibeRequired = !isVibrationEffectivelyDisabled;
+    final double vibePeak = _vibrationWindowPeak(
+      impact.audioTsMs - AppConstants.impactVibrationBeforeMs,
+      impact.audioTsMs + _impactAfterMs,
+    );
+    final VibrationGateState vibeState = !vibeRequired
+        ? VibrationGateState.notRequired
+        : (vibePeak >= minVibrationThreshold.value
+              ? VibrationGateState.present
+              : VibrationGateState.missing);
+    final CameraGateState cameraState = _cameraGateState();
+
+    final ImpactGateResult result = _impactGates.evaluate(
+      vibration: vibeState,
+      camera: cameraState,
+      windowClosed: windowClosed,
+    );
+    if (result.isPending) return;
+
+    _pendingImpact = null;
+    _recordImpactDecision(
+      impact: impact,
+      code: result.code,
+      reason: result.reasonLabel,
+      valid: result.isValid,
+      vibration: vibeState,
+      camera: cameraState,
+      vibePeak: vibePeak,
+    );
+  }
+
+  /// Logs the final decision of one impact and, when valid, registers the punch.
+  void _recordImpactDecision({
+    required _PendingImpact impact,
+    required String code,
+    required String reason,
+    required bool valid,
+    bool candidate = false,
+    VibrationGateState? vibration,
+    CameraGateState? camera,
+    double vibePeak = 0.0,
+  }) {
+    final TemporalPunchEvaluationResult? evalResult =
+        liveEvaluationResult.value;
+    final _CameraObservation? observation = _cameraObservation;
+    final String cameraDetail = camera == null
+        ? ''
+        : switch (camera) {
+            CameraGateState.notRequired => 'Cam: not used',
+            CameraGateState.notReady => 'Cam: not ready',
+            CameraGateState.noPerson => 'Cam: no user visible',
+            CameraGateState.tooFar =>
+              'Cam: too far (${observation?.detail ?? ''})',
+            CameraGateState.valid =>
+              'Cam: valid user (${observation?.detail ?? ''})',
+          };
+    final String vibeDetail = vibration == null
+        ? ''
+        : switch (vibration) {
+            VibrationGateState.notRequired =>
+              'Vibe: not used (${mountType.value.isVibrationDisabled ? "Pole Mount" : "gate off"})',
+            VibrationGateState.missing =>
+              'Vibe: none in window (peak ${vibePeak.toStringAsFixed(2)} < ${minVibrationThreshold.value.toStringAsFixed(2)} m/s²)',
+            VibrationGateState.present =>
+              'Vibe: Peak ${vibePeak.toStringAsFixed(2)} m/s² (Thresh: ${minVibrationThreshold.value.toStringAsFixed(2)} m/s²)',
+          };
+
+    final PunchTelemetryEvent telemetryEvent = PunchTelemetryEvent(
+      timestampMs: impact.audioTsMs,
+      peakAudioDb: impact.peakDb,
+      baselineAudioDb: impact.baselineDb,
+      audioRiseDb: impact.riseDb,
+      targetAudioDb: impact.targetDb,
+      vibrationPeakMag: vibePeak,
+      vibrationLiveMag: liveVibrationMagnitude.value,
+      vibrationThreshold: minVibrationThreshold.value,
+      cameraConfidence: evalResult?.confidenceScore.round() ?? 0,
+      cameraArm: (evalResult?.confirmedArm ?? 'none').toUpperCase(),
+      isCameraConfirmed: camera == CameraGateState.valid,
+      isCameraAvailable:
+          camera == CameraGateState.valid || camera == CameraGateState.tooFar,
+      isValidPunch: valid,
+      isCandidate: candidate,
+      isRejected: !valid,
+      decisionCode: code,
+      reasonLabel: <String>[
+        reason,
+        if (cameraDetail.isNotEmpty) cameraDetail,
+      ].join(' | '),
+      sessionMode: sessionMode.value.name,
+      mountType: mountType.value.name,
+      isVibrationGateEnabled: isVibrationGateEnabled.value,
+      isVisionConfirmationRequired: isVisionConfirmationRequired.value,
+      refractoryElapsedMs: (impact.audioTsMs - _lastPunchTimestampMs).clamp(
+        0,
+        99999,
+      ),
+    );
+    _recordTelemetryEvent(telemetryEvent);
+
+    final int decidedAfterMs = _eventClockMs - impact.audioTsMs;
+    _recorder.count('decision.IMPACT.$code');
+    _recorder.count(
+      valid
+          ? 'impact.valid'
+          : (candidate ? 'impact.candidate' : 'impact.rejected'),
+    );
+    if (vibration == VibrationGateState.present) {
+      // Where the vibration sat relative to the audio spike (negative = before).
+      _recorder.stat('lag.impact_decided_after_ms', decidedAfterMs.toDouble());
+    }
+    _recorder.record('decision', <String, Object?>{
+      'path': 'IMPACT',
+      'code': code,
+      'valid': valid,
+      'candidate': candidate,
+      'peakDb': impact.peakDb,
+      'baselineDb': impact.baselineDb,
+      'riseDb': impact.riseDb,
+      'targetDb': impact.targetDb,
+      'vibeState': vibration?.name,
+      'vibeWindowPeak': vibePeak,
+      'vibeThreshold': minVibrationThreshold.value,
+      'cameraState': camera?.name,
+      'cameraRatio': observation?.ratio,
+      'cameraDetail': observation?.detail,
+      'decidedAfterMs': decidedAfterMs,
+      'processingLagMs':
+          DateTime.now().millisecondsSinceEpoch - impact.audioTsMs,
+      'msSinceLastPunch': _lastPunchTimestampMs > 0
+          ? impact.audioTsMs - _lastPunchTimestampMs
+          : null,
+    }, atEpochMs: impact.audioTsMs);
+
+    void addSummaryRow({int? punchNo}) => summaryTable.addRow(<String, Object?>{
+      'time': SessionEventRecorder.formatElapsed(
+        _recorder.elapsedForEpoch(impact.audioTsMs),
+      ),
+      'kind': 'IMPACT',
+      'code': code,
+      'valid': valid,
+      'punch_no': punchNo,
+      'audio_db': impact.peakDb,
+      'target_db': impact.targetDb,
+      'vibe_peak': vibration == null ? null : vibePeak,
+      'vibe_threshold': minVibrationThreshold.value,
+      'camera_state': camera?.name,
+      'face_conf': camera == null ? null : observation?.faceConf,
+      'shoulder_conf': camera == null ? null : observation?.shoulderConf,
+      'distance_ratio': camera == null ? null : observation?.ratio,
+      'decided_after_ms': decidedAfterMs,
+      'detail': reason,
+    });
+
+    if (!valid) {
+      addSummaryRow();
+      if (candidate) {
+        detectionStatusText.value = 'Candidate Impact ($reason)';
+      } else {
+        detectionStatusText.value = 'Impact Rejected ($reason)';
+      }
+      // A rejected impact must not lock out the next real punch.
+      if (code != 'IMPACT_REFRACTORY' && code != 'IMPACT_ALREADY_PENDING') {
+        _adaptiveBaseline.releaseRefractory();
+      }
+      return;
+    }
+
+    triggerAudioHit();
+    final String activeArm = evalResult?.confirmedArm ?? 'right';
+    _registerPunch(
+      impact.audioTsMs,
+      '★ PUNCH CONFIRMED! ($reason)',
+      arm: activeArm,
+      telemetryLog:
+          'Mode: ${sessionMode.value.name.toUpperCase()} ($reason) | Audio: ${impact.peakDb.toStringAsFixed(1)} dB (Base: ${impact.baselineDb.toStringAsFixed(1)} dB, Rise: +${impact.riseDb.toStringAsFixed(1)} dB, Target: ${impact.targetDb.round()} dB) | $vibeDetail | $cameraDetail',
+    );
+    addSummaryRow(punchNo: punchCount.value);
+    _triggerPunchHaptic();
+  }
+
+  /// Test hook: feed a vibration sample with an explicit time.
+  void ingestVibrationSampleForTesting(double mag, {required int atEpochMs}) =>
+      _handleVibrationSample(mag, atEpochMs: atEpochMs);
+
+  /// Test hook: run the camera checks on a pose as if the camera produced it.
+  void analyzePoseForTesting(Pose pose) => _analyzeLivePose(pose);
+
+  static DistanceLandmark? _toDistanceLandmark(PoseLandmark? landmark) =>
+      landmark == null
+      ? null
+      : DistanceLandmark(
+          x: landmark.x,
+          y: landmark.y,
+          likelihood: landmark.likelihood,
+        );
+
+  /// Test hook: set what the camera currently sees.
+  void setCameraObservationForTesting(
+    CameraGateState state, {
+    required int atMs,
+  }) => _noteCameraObservation(state, atMs: atMs);
+
+  void checkPunchDetectionForTesting({int? frameTimestampMs}) =>
+      _checkPunchDetection(frameTimestampMs: frameTimestampMs);
+
+  void insertSpikeLogForTesting(
+    String logEntry, {
+    bool isConfirmedPunch = false,
+    int? atEpochMs,
+  }) => _insertSpikeLog(
+    logEntry,
+    isConfirmedPunch: isConfirmedPunch,
+    atEpochMs: atEpochMs,
+  );
+
+  void _checkPunchDetection({int? frameTimestampMs}) {
     final int nowMs = DateTime.now().millisecondsSinceEpoch;
+    _noteEventClock(frameTimestampMs ?? nowMs);
 
     // Dynamic Session Start Warmup: ignore audio & vision spikes from screen transition / tap sound
     final int warmupMs = AppConstants.warmUpDurationInMiliSeconds.round();
@@ -1105,9 +1574,14 @@ class FreeSessionController extends GetxController {
       return;
     }
 
+    _trackCameraAvailability(nowMs);
+
+    // Close an open impact window whose time is up before looking at a new spike.
+    if (_usesImpactWindow) _evaluatePendingImpact();
+
     if (isSettingsViewActive) {
       if (sessionMode.value.requiresMicrophone) {
-        _isAudioTransient();
+        _isAudioTransient(frameTimestampMs: frameTimestampMs);
       }
       if (!detectionStatusText.value.startsWith('Impact Rejected')) {
         detectionStatusText.value = 'Punch Detection Disabled (Settings Open)';
@@ -1116,7 +1590,7 @@ class FreeSessionController extends GetxController {
     }
 
     if (sessionMode.value.requiresMicrophone) {
-      _isAudioTransient();
+      _isAudioTransient(frameTimestampMs: frameTimestampMs);
     }
 
     if (sessionMode.value == DetectionMode.audio) {
@@ -1174,6 +1648,7 @@ class FreeSessionController extends GetxController {
         );
         customTargetAudioDb.value = newTarget.roundToDouble();
         _adaptiveBaseline.fixedAudioTargetDb = newTarget.roundToDouble();
+        _recordConfigChange('audio_spike_db');
       },
       isVibrationDisabled: isVibrationEffectivelyDisabled.obs,
       isVibrationGateEnabled: isVibrationGateEnabled,
@@ -1241,6 +1716,7 @@ class FreeSessionController extends GetxController {
         '(Gate: ${result.recommendedVibrationGateEnabled ? "ON" : "OFF"}) | '
         'Vision: ${result.recommendedVisionRequired ? "REQUIRED" : "OPTIONAL"}';
     _insertSpikeLog(logMsg);
+    _recordConfigChange('auto_config');
 
     developer.log(logMsg, name: 'FreeSessionController');
   }
@@ -1268,8 +1744,35 @@ class FreeSessionController extends GetxController {
         'Punch rejected by master safety gate: settings view or cooldown active',
         name: 'FreeSessionController',
       );
+      _recorder.count('punch.blocked_by_settings_gate');
       return;
     }
+
+    // Instrumentation only: read the sensor peak before it is consumed below.
+    final int interPunchMs = _prevRegisteredPunchMs > 0
+        ? nowMs - _prevRegisteredPunchMs
+        : -1;
+    final double vibePeakAtPunch =
+        _vibrationService.recentPeakVibrationMagnitude;
+    final double audioAtPunch = _lastPendingAudioSpikeDb > 0
+        ? _lastPendingAudioSpikeDb
+        : liveDecibelLevel.value;
+    _recorder.count('punch.registered');
+    _recorder.stat('level.vibe_peak_at_punch', vibePeakAtPunch);
+    _recorder.stat('level.audio_db_at_punch', audioAtPunch);
+    if (interPunchMs > 0) {
+      _recorder.stat('interval.inter_punch_ms', interPunchMs.toDouble());
+    }
+    _recorder.record('punch', <String, Object?>{
+      'n': punchCount.value + 1,
+      'status': status,
+      'arm': arm,
+      'interPunchMs': interPunchMs > 0 ? interPunchMs : null,
+      'vibePeak': vibePeakAtPunch,
+      'audioDb': audioAtPunch,
+    }, atEpochMs: nowMs);
+    _prevRegisteredPunchMs = nowMs;
+
     punchCount.value++;
     final String armUpper = (arm ?? status).toUpperCase();
     if (armUpper.contains('LEFT')) {
@@ -1286,7 +1789,6 @@ class FreeSessionController extends GetxController {
     _lastPunchTimestampMs = nowMs;
     // Reset audio & vibration state so the exact same strike cannot re-trigger a second punch
     _lastAudioPunchTimestampMs = nowMs;
-    _lastPendingAudioSpikeMs = 0;
     _vibrationService.consumeRecentPeak();
     liveVibrationMagnitude.value = 0.0;
     // _lastVisionPunchTimestampMs = 0;
@@ -1467,6 +1969,10 @@ class FreeSessionController extends GetxController {
                 _analyzeLivePose(poses.first);
               } else {
                 // Camera covered or no body visible -> Reset pose & evaluation scores to 0!
+                _noteCameraObservation(
+                  CameraGateState.noPerson,
+                  detail: 'no pose detected',
+                );
                 livePose.value = null;
                 visionConfidence.value = 0;
                 liveEvaluationResult.value =
@@ -1563,6 +2069,26 @@ class FreeSessionController extends GetxController {
     final lEar = pose.landmarks[PoseLandmarkType.leftEar];
     final rEar = pose.landmarks[PoseLandmarkType.rightEar];
 
+    // How confident ML Kit is about a face point and a shoulder (logged for
+    // tuning; used by the real-person check below).
+    final CameraPersonResult person = _personGate.evaluate(
+      facePoints: <PoseLandmark?>[
+        nose,
+        lEye,
+        rEye,
+        lEar,
+        rEar,
+        pose.landmarks[PoseLandmarkType.leftEyeInner],
+        pose.landmarks[PoseLandmarkType.rightEyeInner],
+        pose.landmarks[PoseLandmarkType.leftMouth],
+        pose.landmarks[PoseLandmarkType.rightMouth],
+      ].map(_toDistanceLandmark).toList(),
+      leftShoulder: _toDistanceLandmark(lShoulder),
+      rightShoulder: _toDistanceLandmark(rShoulder),
+    );
+    _recorder.stat('cam.best_face_conf', person.bestFaceConfidence);
+    _recorder.stat('cam.best_shoulder_conf', person.bestShoulderConfidence);
+
     // ─── USER IN FRAME & FACE / SHOULDER VALIDATION ───────────────────────
     if (AppConstants.enableExtraFaceRestrictions) {
       // Basic Shoulder Guard: Left & Right Shoulders must be present (likelihood >= 0.35)
@@ -1611,34 +2137,80 @@ class FreeSessionController extends GetxController {
         return;
       }
     } else {
-      // Relaxed Single-Point Validation:
-      // Validates user in frame if AT LEAST ONE landmark of face (nose, eye, ear, mouth)
-      // OR shoulder (left or right) is detected in frame with likelihood >= 0.20.
-      final bool hasShoulder =
-          (lShoulder != null && lShoulder.likelihood >= 0.20) ||
-          (rShoulder != null && rShoulder.likelihood >= 0.20);
-      final bool hasFace =
-          (nose != null && nose.likelihood >= 0.20) ||
-          (lEye != null && lEye.likelihood >= 0.20) ||
-          (rEye != null && rEye.likelihood >= 0.20) ||
-          (lEar != null && lEar.likelihood >= 0.20) ||
-          (rEar != null && rEar.likelihood >= 0.20) ||
-          (pose.landmarks[PoseLandmarkType.leftEyeInner]?.likelihood ?? 0) >=
-              0.20 ||
-          (pose.landmarks[PoseLandmarkType.rightEyeInner]?.likelihood ?? 0) >=
-              0.20 ||
-          (pose.landmarks[PoseLandmarkType.leftMouth]?.likelihood ?? 0) >=
-              0.20 ||
-          (pose.landmarks[PoseLandmarkType.rightMouth]?.likelihood ?? 0) >=
-              0.20;
-
-      if (!hasShoulder && !hasFace) {
+      // Real-person check: at least one face point AND one shoulder, each with
+      // enough confidence, face above shoulder (AppConstants.cameraMin*Confidence).
+      // Objects such as a bottle can create a weak pose; they fail here.
+      if (!person.isPerson) {
+        _recorder.count('cam.not_person_frames');
         _setInvalidEvaluationResult(
-          'User not in frame: No face or shoulder landmark detected',
+          'Not a person: ${person.description}',
+          noteCamera: false,
+        );
+        _noteCameraObservation(
+          CameraGateState.noPerson,
+          detail: 'not a person: ${person.description}',
+          faceConf: person.bestFaceConfidence,
+          shoulderConf: person.bestShoulderConfidence,
         );
         return;
       }
     }
+
+    // ─── DISTANCE GATE ─────────────────────────────────────────────────────
+    // A user farther than the allowed distance (AppConstants.cameraMin*Ratio)
+    // is not a valid user, so a background person cannot confirm a punch.
+    final CameraDistanceResult distance = _distanceGate.evaluate(
+      leftShoulder: lShoulder == null
+          ? null
+          : DistanceLandmark(
+              x: lShoulder.x,
+              y: lShoulder.y,
+              likelihood: lShoulder.likelihood,
+            ),
+      rightShoulder: rShoulder == null
+          ? null
+          : DistanceLandmark(
+              x: rShoulder.x,
+              y: rShoulder.y,
+              likelihood: rShoulder.likelihood,
+            ),
+      leftEye: lEye == null
+          ? null
+          : DistanceLandmark(x: lEye.x, y: lEye.y, likelihood: lEye.likelihood),
+      rightEye: rEye == null
+          ? null
+          : DistanceLandmark(x: rEye.x, y: rEye.y, likelihood: rEye.likelihood),
+      imageWidth: _cameraImageSize.width,
+      imageHeight: _cameraImageSize.height,
+    );
+    if (distance.ratio != null) {
+      _recorder.stat(
+        distance.source == 'shoulders' ? 'cam.shoulder_ratio' : 'cam.eye_ratio',
+        distance.ratio!,
+      );
+    }
+    if (!distance.withinRange) {
+      _recorder.count('cam.too_far_frames');
+      _setInvalidEvaluationResult(
+        'Too far from camera (${distance.description})',
+        noteCamera: false,
+      );
+      _noteCameraObservation(
+        CameraGateState.tooFar,
+        ratio: distance.ratio,
+        detail: distance.description,
+        faceConf: person.bestFaceConfidence,
+        shoulderConf: person.bestShoulderConfidence,
+      );
+      return;
+    }
+    _noteCameraObservation(
+      CameraGateState.valid,
+      ratio: distance.ratio,
+      detail: distance.description,
+      faceConf: person.bestFaceConfidence,
+      shoulderConf: person.bestShoulderConfidence,
+    );
 
     // ─── STABILITY CHECK ───────────────────────────────────────────────────
     final double cx;
@@ -1687,6 +2259,14 @@ class FreeSessionController extends GetxController {
     }
 
     liveEvaluationResult.value = tempResult;
+    _recorder.record('cam', <String, Object?>{
+      'conf': tempResult.confidenceScore,
+      'punch': tempResult.isPunchConfirmed,
+      'arm': tempResult.confirmedArm,
+      'fsm': tempResult.fsmState.name,
+      'distRatio': distance.ratio,
+      'distSrc': distance.source,
+    });
     if (AppConstants.testingFreeSessionLogs) {
       developer.log(tempResult.debugTelemetry);
     }
@@ -1701,6 +2281,11 @@ class FreeSessionController extends GetxController {
     }
 
     if (tempResult.isPunchConfirmed) {
+      _recorder.count(
+        tempResult.confirmedArm == 'face'
+            ? 'cam.face_motion_confirmed'
+            : 'cam.arm_punch_confirmed',
+      );
       _lastVisionPunchTimestampMs = nowMs;
       triggerVisionHit();
 
@@ -1764,7 +2349,14 @@ class FreeSessionController extends GetxController {
     }
   }
 
-  void _setInvalidEvaluationResult(String reason) {
+  /// [noteCamera] false lets the caller record a more specific camera state
+  /// (too far, not a person) with its numbers instead of a plain "no person".
+  void _setInvalidEvaluationResult(String reason, {bool noteCamera = true}) {
+    _recorder.count('cam.invalid_frames');
+    _recorder.record('cam_invalid', <String, Object?>{'reason': reason});
+    if (noteCamera) {
+      _noteCameraObservation(CameraGateState.noPerson, detail: reason);
+    }
     _stabilityTracker.update(cx: 0, cy: 0, isValidPose: false);
     visionConfidence.value = 0;
     liveEvaluationResult.value = TemporalPunchEvaluationResult(
@@ -1860,7 +2452,21 @@ class FreeSessionController extends GetxController {
       1,
       ((nowMs - _sessionStartTimeMs) / 1000).round(),
     );
+    final String totalsText = buildSessionTotalsText(durationSec);
+    unawaited(
+      _recorder.finish(
+        extra: <String, Object?>{
+          'punches': punchCount.value,
+          'durationSec': durationSec,
+          'audioService': _audioLevelService.diagnostics,
+        },
+      ),
+    );
     final result = SessionResultModel(
+      confirmedPunchLog: List<String>.from(confirmedPunchLog),
+      summaryCsv: summaryTable.toCsv(),
+      sessionTotalsText: totalsText,
+      rawEventFilePath: _recorder.filePath,
       totalPunches: punchCount.value,
       leftPunches: leftPunchCount.value,
       rightPunches: rightPunchCount.value,
@@ -1887,6 +2493,7 @@ class FreeSessionController extends GetxController {
   @override
   void onClose() {
     resetSettingsGate();
+    unawaited(_recorder.dispose());
     _elapsedTimer?.cancel();
     _audioLevelSubscription?.cancel();
     _audioLevelService.dispose();
@@ -1896,4 +2503,49 @@ class FreeSessionController extends GetxController {
     _stopAndDisposeCamera();
     super.onClose();
   }
+}
+
+/// One impact (audio spike that reached its target) waiting for the other
+/// sensors to confirm it.
+class _PendingImpact {
+  final int audioTsMs;
+  final double peakDb;
+  final double baselineDb;
+  final double riseDb;
+  final double targetDb;
+
+  const _PendingImpact({
+    required this.audioTsMs,
+    required this.peakDb,
+    required this.baselineDb,
+    required this.riseDb,
+    required this.targetDb,
+  });
+}
+
+/// One vibration stream sample kept for timestamp lookups.
+class _VibeSample {
+  final int tMs;
+  final double mag;
+
+  const _VibeSample(this.tMs, this.mag);
+}
+
+/// What the camera last saw, with the time it was seen.
+class _CameraObservation {
+  final CameraGateState state;
+  final int atMs;
+  final double? ratio;
+  final String detail;
+  final double? faceConf;
+  final double? shoulderConf;
+
+  const _CameraObservation(
+    this.state,
+    this.atMs,
+    this.ratio,
+    this.detail,
+    this.faceConf,
+    this.shoulderConf,
+  );
 }

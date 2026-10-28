@@ -25,6 +25,19 @@ class SessionResultModel {
   final bool isVisionConfirmationRequired;
   final bool isVibrationGateEnabled;
 
+  // Session instrumentation (empty when the session did not record it)
+  /// Every confirmed punch log line of the session, oldest first, never trimmed.
+  final List<String> confirmedPunchLog;
+
+  /// Pre-formatted per-session totals block for the exported text log.
+  final String sessionTotalsText;
+
+  /// Path of the raw event file (JSONL) written during the session, if any.
+  final String? rawEventFilePath;
+
+  /// Short CSV table: one row per punch decision and per camera change.
+  final String summaryCsv;
+
   SessionResultModel({
     required this.totalPunches,
     this.leftPunches = 0,
@@ -45,6 +58,10 @@ class SessionResultModel {
     this.vibrationThreshold = 0.25,
     this.isVisionConfirmationRequired = true,
     this.isVibrationGateEnabled = true,
+    this.confirmedPunchLog = const [],
+    this.sessionTotalsText = '',
+    this.rawEventFilePath,
+    this.summaryCsv = '',
     DateTime? completedAt,
   }) : audioSampleIntervalMs =
            audioSampleIntervalMs ?? AppConstants.globalAudioSampleIntervalMs,
