@@ -10,6 +10,7 @@ import 'audio_level_sample.dart';
 import 'audio_session_channel.dart';
 import 'i_audio_level_service.dart';
 import 'pcm_level_extractor.dart';
+import 'raw_pcm_source.dart';
 
 /// Active implementation of [IAudioLevelService] using the `record` package (`^7.1.1` & `^5.x`).
 ///
@@ -19,8 +20,17 @@ import 'pcm_level_extractor.dart';
 ///  - Sub-block PCM ([enableSubBlockPcm]): the raw PCM stream is split into
 ///    10 ms blocks with back-dated timestamps and published on [sampleStream].
 ///    Falls back to legacy automatically if the PCM stream cannot start.
-class RecordAudioLevelService implements IAudioLevelService {
+class RecordAudioLevelService implements IAudioLevelService, IRawPcmSource {
   RecordAudioLevelService({this.enableSubBlockPcm = false});
+
+  final StreamController<RawPcmChunk> _rawPcmController =
+      StreamController<RawPcmChunk>.broadcast();
+
+  @override
+  Stream<RawPcmChunk> get rawPcmStream => _rawPcmController.stream;
+
+  /// Sample rate of the PCM capture (16 kHz Android, 44.1 kHz iOS).
+  static int get pcmSampleRate => _pcmSampleRate;
 
   /// Whether to use the sub-block PCM pipeline for [sampleStream].
   final bool enableSubBlockPcm;
@@ -192,7 +202,8 @@ class RecordAudioLevelService implements IAudioLevelService {
   /// Handles one raw PCM chunk: splits it into blocks and publishes them with
   /// timestamps back-dated from the chunk arrival time.
   void _onPcmChunk(Uint8List bytes) {
-    final int arrivalMs = MonotonicClock.epochMs();
+    final int arrivalUs = MonotonicClock.epochUs();
+    final int arrivalMs = arrivalUs ~/ 1000;
     final Completer<void>? first = _firstChunk;
     if (first != null && !first.isCompleted) first.complete();
 
@@ -209,6 +220,17 @@ class RecordAudioLevelService implements IAudioLevelService {
     _lastChunkArrivalMs = arrivalMs;
     _lastChunkBytes = bytes.length;
     _chunkIndex++;
+    if (_rawPcmController.hasListener) {
+      _rawPcmController.add(
+        RawPcmChunk(
+          bytes: bytes,
+          sampleRate: _pcmSampleRate,
+          channels: 1,
+          arrivalUs: arrivalUs,
+          chunkIndex: _chunkIndex,
+        ),
+      );
+    }
 
     for (final PcmLevelBlock block in extractor.extract(bytes)) {
       final int timestampMs =
@@ -588,5 +610,6 @@ class RecordAudioLevelService implements IAudioLevelService {
     stopMonitoring();
     _decibelStreamController.close();
     _sampleStreamController.close();
+    _rawPcmController.close();
   }
 }

@@ -569,6 +569,41 @@ class ResultsPage extends StatelessWidget {
     );
   }
 
+  /// Shares every file of the raw session folder (WAV, accel.csv, events,
+  /// session_meta.json; format in docs/raw-logging.md).
+  Future<void> _shareRawSessionFolder(SessionResultModel result) async {
+    final String? folderPath = result.rawSessionFolderPath;
+    if (folderPath == null) return;
+    try {
+      final Directory folder = Directory(folderPath);
+      if (!await folder.exists()) {
+        throw FileSystemException('Raw session folder not found', folderPath);
+      }
+      final List<XFile> files = <XFile>[
+        await for (final FileSystemEntity entity in folder.list())
+          if (entity is File) XFile(entity.path),
+      ];
+      if (files.isEmpty) {
+        throw FileSystemException('Raw session folder is empty', folderPath);
+      }
+      await SharePlus.instance.share(
+        ShareParams(
+          files: files,
+          subject: 'Hyper Hitter raw session data',
+          text: 'Raw session folder: ${folder.uri.pathSegments.where((s) => s.isNotEmpty).last}',
+        ),
+      );
+    } catch (e) {
+      Get.snackbar(
+        'Raw Data Share Error',
+        'Could not share the raw session folder: $e',
+        snackPosition: SnackPosition.BOTTOM,
+        backgroundColor: AppColors.red,
+        colorText: Colors.white,
+      );
+    }
+  }
+
   Future<void> _exportAndShareSessionLogs(
     BuildContext context,
     SessionResultModel result,
@@ -798,6 +833,32 @@ class ResultsPage extends StatelessWidget {
               ),
             ],
           ),
+          if (result.rawSessionFolderPath != null) ...[
+            6.height,
+            Align(
+              alignment: Alignment.centerRight,
+              child: OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  padding: EdgeInsets.symmetric(horizontal: 8.w, vertical: 4.h),
+                  side: const BorderSide(color: AppColors.amber),
+                  backgroundColor: AppColors.surface,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8.r),
+                  ),
+                ),
+                onPressed: () => _shareRawSessionFolder(result),
+                icon: Icon(Icons.folder_zip, color: AppColors.amber, size: 14.w),
+                label: Text(
+                  'SHARE RAW DATA',
+                  style: TextStyle(
+                    color: AppColors.amber,
+                    fontSize: 10.ts(context),
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
+          ],
           8.height,
 
           // Configuration summary strip

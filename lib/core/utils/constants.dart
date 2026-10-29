@@ -170,6 +170,13 @@ class AppConstants {
   static const double micScaleFloorDb = 35.0;
   static const int micFloorWarningMs = 1000;
 
+  // ─── Phase 2: full-rate raw logging (debug) ─────────────────────────────────
+  /// When true, each Free session also writes its raw sensor data (16 kHz WAV,
+  /// full-rate 3-axis accelerometer, events, session_meta.json) to
+  /// `<documents>/raw_sessions/session_<startMs>/`. Toggle in Settings → Debug
+  /// or the session settings sheet. Format: docs/raw-logging.md.
+  static bool recordRawSessionData = false;
+
   /// TESTING CONFIGURATION:
   /// Absolute minimum safety floor for punch audio detection.
   /// Sounds below this dB are never considered punches.

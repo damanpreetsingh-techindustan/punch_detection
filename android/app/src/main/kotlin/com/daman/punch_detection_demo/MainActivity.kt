@@ -4,18 +4,26 @@ import android.content.Context
 import android.media.AudioManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, AUDIO_SESSION_CHANNEL)
-            .setMethodCallHandler { call, result ->
-                when (call.method) {
-                    "capabilities" -> result.success(audioCapabilities())
-                    else -> result.notImplemented()
-                }
+        val messenger = flutterEngine.dartExecutor.binaryMessenger
+        MethodChannel(messenger, AUDIO_SESSION_CHANNEL).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "capabilities" -> result.success(audioCapabilities())
+                else -> result.notImplemented()
             }
+        }
+        MethodChannel(messenger, DEVICE_CHANNEL).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "info" -> result.success(deviceInfo())
+                else -> result.notImplemented()
+            }
+        }
+        EventChannel(messenger, RAW_ACCEL_CHANNEL).setStreamHandler(RawAccelStreamHandler(this))
     }
 
     /** What the microphone stack supports; read before choosing an audio source. */
@@ -32,5 +40,7 @@ class MainActivity : FlutterActivity() {
 
     companion object {
         private const val AUDIO_SESSION_CHANNEL = "hyper_hitter/audio_session"
+        private const val DEVICE_CHANNEL = "hyper_hitter/device"
+        private const val RAW_ACCEL_CHANNEL = "hyper_hitter/raw_accel"
     }
 }

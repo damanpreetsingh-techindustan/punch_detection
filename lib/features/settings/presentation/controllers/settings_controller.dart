@@ -1,8 +1,17 @@
 import 'package:get/get.dart';
 import '../../../../core/services/config_service.dart';
+import '../../../../core/utils/constants.dart';
 
 class SettingsController extends GetxController {
   final ConfigService configService = Get.find<ConfigService>();
+
+  /// Debug: record raw sensor data for the next Free sessions.
+  final RxBool recordRawData = AppConstants.recordRawSessionData.obs;
+
+  void setRecordRawData(bool enabled) {
+    AppConstants.recordRawSessionData = enabled;
+    recordRawData.value = enabled;
+  }
 
   final RxDouble audioEnergyThreshold = 0.45.obs;
   final RxDouble visionMotionThreshold = 0.35.obs;

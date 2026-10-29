@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:developer' as developer;
+import 'dart:io' show Platform;
 import 'dart:math';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
@@ -29,6 +30,10 @@ import '../../../../core/services/device_stability/device_stability_service.dart
 import '../../../../core/services/device_stability/i_device_stability_service.dart';
 import '../../../../core/services/device_vibration/device_vibration_service.dart';
 import '../../../../core/services/device_vibration/i_device_vibration_service.dart';
+import '../../../../core/services/audio_level/raw_pcm_source.dart';
+import '../../../../core/services/raw_sensors/device_info_channel.dart';
+import '../../../../core/services/raw_sensors/raw_accelerometer_service.dart';
+import '../../../../core/services/session_recording/raw_sensor_recorder.dart';
 import '../../../../core/services/session_recording/session_event_recorder.dart';
 import '../../../../core/services/session_recording/session_summary_table.dart';
 import '../../domain/entities/punch_telemetry_event.dart';
@@ -37,7 +42,7 @@ import '../widgets/auto_config_dialog.dart';
 import '../widgets/live_telemetry_sheet.dart';
 import '../widgets/session_detection_settings_sheet.dart';
 
-class FreeSessionController extends GetxController {
+class FreeSessionController extends GetxController with WidgetsBindingObserver {
   CameraController? cameraController;
   PoseDetector? _poseDetector;
 
@@ -88,7 +93,11 @@ class FreeSessionController extends GetxController {
     AdaptiveAudioBaseline? adaptiveBaseline,
     SessionEventRecorder? recorder,
     int Function()? clock,
+    RawSensorRecorder? rawRecorder,
+    RawAccelerometerService? rawAccelerometer,
   }) : _clock = clock ?? MonotonicClock.epochMs,
+       _rawRecorder = rawRecorder ?? RawSensorRecorder(),
+       _rawAccel = rawAccelerometer ?? RawAccelerometerService(),
        _recorder = recorder ?? SessionEventRecorder(),
        _audioLevelService =
            audioLevelService ??
@@ -136,6 +145,144 @@ class FreeSessionController extends GetxController {
 
   /// Touch lockout on/off (tests and debugging).
   bool touchLockoutEnabled = AppConstants.touchLockoutEnabled;
+
+  // ─── Raw full-rate recording (Phase 2, debug) ──────────────────────────────
+  final RawSensorRecorder _rawRecorder;
+  final RawAccelerometerService _rawAccel;
+  StreamSubscription<RawPcmChunk>? _rawPcmSubscription;
+  StreamSubscription<RawAccelSample>? _rawAccelSubscription;
+  final RxBool rawRecordingToggle = AppConstants.recordRawSessionData.obs;
+
+  /// True while raw sensor data is being written for this session.
+  bool get isRawRecording => _rawRecorder.isActive;
+  RawSensorRecorder get rawRecorder => _rawRecorder;
+
+  /// Camera frame counters (frame rate actually achieved, for session_meta).
+  int _cameraFramesDelivered = 0;
+  int _cameraFramesAnalyzed = 0;
+  int? _firstCameraFrameMs;
+  int? _lastCameraFrameMs;
+
+  Future<void> _startRawRecording() async {
+    if (_rawRecorder.isActive) return;
+    final bool ok = await _rawRecorder.begin(
+      sessionStartMs: _sessionStartTimeMs,
+    );
+    _recorder.record('ui', <String, Object?>{
+      'rawRecording': ok,
+      'folder': _rawRecorder.folderPath,
+    });
+    if (!ok) return;
+    final Object audio = _audioLevelService;
+    if (audio is IRawPcmSource) {
+      _rawPcmSubscription = audio.rawPcmStream.listen(_rawRecorder.addPcmChunk);
+    }
+    _rawAccelSubscription = _rawAccel.samples.listen(_rawRecorder.addAccel);
+    await _rawAccel.start();
+  }
+
+  /// Stops the raw streams; the folder is finalized by [_finishRawRecording].
+  Future<void> _stopRawStreams() async {
+    await _rawPcmSubscription?.cancel();
+    _rawPcmSubscription = null;
+    await _rawAccelSubscription?.cancel();
+    _rawAccelSubscription = null;
+    await _rawAccel.stop();
+  }
+
+  /// Closes the raw files and writes session_meta.json (after the event file
+  /// is complete, so it can be copied into the folder).
+  Future<String?> _finishRawRecording({String? eventsFilePath}) async {
+    if (!_rawRecorder.isActive) return _rawRecorder.folderPath;
+    await _stopRawStreams();
+    final int nowMs = _clock();
+    return _rawRecorder.finish(
+      eventsFilePath: eventsFilePath,
+      meta: <String, Object?>{
+        'sessionStartMs': _sessionStartTimeMs,
+        'sessionEndMs': nowMs,
+        'sessionType': 'free',
+        'timeBase': 'detection clock = MonotonicClock.epochUs (monotonic, '
+            'epoch-anchored microseconds)',
+        'device': await DeviceInfoChannel.info(),
+        'os': Platform.operatingSystem,
+        'osVersion': Platform.operatingSystemVersion,
+        'mountType': mountType.value.name,
+        'detectionMode': sessionMode.value.name,
+        'engine': 'legacy',
+        'flags': _configSnapshot(),
+        'audio': <String, Object?>{'service': _audioLevelService.diagnostics},
+        'accel': <String, Object?>{'service': _rawAccel.diagnostics},
+        'camera': _cameraRateStats(),
+        // Includes interval.vibe_stream_ms (legacy 50 Hz vibration stream) etc.
+        'sessionTotals': _recorder.totals.toMap(),
+      },
+    );
+  }
+
+  Map<String, Object?> _cameraRateStats() {
+    final int? first = _firstCameraFrameMs;
+    final int? last = _lastCameraFrameMs;
+    final double? spanS = first == null || last == null || last <= first
+        ? null
+        : (last - first) / 1000.0;
+    return <String, Object?>{
+      'requestedFps': AppConstants.cameraFps,
+      'framesDelivered': _cameraFramesDelivered,
+      'framesAnalyzed': _cameraFramesAnalyzed,
+      'deliveredFps': spanS == null ? null : (_cameraFramesDelivered - 1) / spanS,
+      'analyzedFps': spanS == null ? null : _cameraFramesAnalyzed / spanS,
+      'imageWidth': _cameraImageSize.width,
+      'imageHeight': _cameraImageSize.height,
+      'lens': _activeCamera?.lensDirection.name,
+      'lensType': _activeCamera?.lensType.name,
+    };
+  }
+
+  /// Debug toggle: start or stop raw recording during a session.
+  Future<void> setRawRecording(bool enabled) async {
+    AppConstants.recordRawSessionData = enabled;
+    rawRecordingToggle.value = enabled;
+    _recordConfigChange('raw_recording=$enabled');
+    if (enabled) {
+      await _startRawRecording();
+    } else {
+      await _finishRawRecording(eventsFilePath: _recorder.filePath);
+    }
+  }
+
+  /// Logs every pose landmark of one camera frame (raw recording only).
+  void _recordLandmarks(
+    List<Pose> poses, {
+    required int arrivalMs,
+    required int doneMs,
+    required CameraImage image,
+  }) {
+    if (!_rawRecorder.isActive) return;
+    final Pose? pose = poses.isEmpty ? null : poses.first;
+    _recorder.record('cam_landmarks', <String, Object?>{
+      'arrivalMs': arrivalMs,
+      'doneMs': doneMs,
+      'w': image.width,
+      'h': image.height,
+      'rotation': _activeCamera == null
+          ? null
+          : _getImageRotation(_activeCamera!).rawValue,
+      'front': isFrontCamera,
+      // [landmark type index, x, y, z, likelihood] (image pixels, ML Kit order)
+      'lm': pose == null
+          ? const <List<num>>[]
+          : <List<num>>[
+              for (final PoseLandmark lm in pose.landmarks.values)
+                <num>[lm.type.index, lm.x, lm.y, lm.z, lm.likelihood],
+            ],
+    }, atEpochMs: arrivalMs);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _recorder.record('ui', <String, Object?>{'lifecycle': state.name});
+  }
 
   // Selected session mode: strongly-typed DetectionMode enum
   final Rx<DetectionMode> sessionMode = DetectionMode.fusion.obs;
@@ -552,6 +699,13 @@ class FreeSessionController extends GetxController {
       onChanged: setCameraPresenceWindow,
     ),
     SettingsDebugToggle(
+      title: 'Record raw data',
+      subtitle:
+          '16 kHz WAV + full-rate accelerometer + landmarks to raw_sessions/',
+      value: rawRecordingToggle,
+      onChanged: setRawRecording,
+    ),
+    SettingsDebugToggle(
       title: 'Touch lockout',
       subtitle:
           'No impact from ${AppConstants.touchLockoutBeforeMs} ms before to ${AppConstants.touchLockoutAfterMs} ms after a tap',
@@ -668,6 +822,8 @@ class FreeSessionController extends GetxController {
       'calibration',
       _calibrationReport ?? const <String, Object?>{'missing': true},
     );
+    WidgetsBinding.instance.addObserver(this);
+    if (AppConstants.recordRawSessionData) unawaited(_startRawRecording());
     _initPoseDetector();
     initCamera();
     _startMicrophoneStream();
@@ -2169,6 +2325,12 @@ class FreeSessionController extends GetxController {
 
       await cameraController!.initialize();
       isCameraInitialized.value = true;
+      _recorder.record('ui', <String, Object?>{
+        'camera': 'initialized',
+        'lens': _activeCamera?.lensDirection.name,
+        'lensType': _activeCamera?.lensType.name,
+        'requestedFps': AppConstants.cameraFps,
+      });
       // check here, dont' change this is for personal debugging.
       final minZoom = await cameraController!.getMinZoomLevel();
       final maxZoom = await cameraController!.getMaxZoomLevel();
@@ -2188,8 +2350,12 @@ class FreeSessionController extends GetxController {
         cameraController?.setZoomLevel(minZoom);
       }
       _startImageStream();
-    } catch (_) {
+    } catch (e) {
       isCameraUnavailable.value = true;
+      _recorder.record('ui', <String, Object?>{
+        'camera': 'unavailable',
+        'error': e.toString(),
+      });
     }
   }
 
@@ -2216,12 +2382,17 @@ class FreeSessionController extends GetxController {
 
     try {
       cameraController!.startImageStream((CameraImage image) async {
+        final int frameArrivalMs = _clock();
+        _cameraFramesDelivered++;
+        _firstCameraFrameMs ??= frameArrivalMs;
+        _lastCameraFrameMs = frameArrivalMs;
         if (cameraController == null ||
             _isProcessingFrame ||
             isCameraUnavailable.value) {
           return;
         }
         _isProcessingFrame = true;
+        _cameraFramesAnalyzed++;
 
         // Capture image dimensions once for the validity gate normalisation.
         if (_cameraImageSize.width == 0) {
@@ -2246,6 +2417,12 @@ class FreeSessionController extends GetxController {
               if (_frameLatencyMsList.length < 300) {
                 _frameLatencyMsList.add(frameLatency);
               }
+              _recordLandmarks(
+                poses,
+                arrivalMs: frameArrivalMs,
+                doneMs: _clock(),
+                image: image,
+              );
               if (poses.isNotEmpty) {
                 livePose.value = poses.first;
                 _analyzeLivePose(poses.first);
@@ -2735,20 +2912,27 @@ class FreeSessionController extends GetxController {
       ((nowMs - _sessionStartTimeMs) / 1000).round(),
     );
     final String totalsText = buildSessionTotalsText(durationSec);
-    unawaited(
-      _recorder.finish(
+    _finishing = true;
+    final String? eventsPath = _recorder.filePath;
+    final String? rawFolder = _rawRecorder.folderPath;
+    unawaited(() async {
+      await _recorder.finish(
         extra: <String, Object?>{
           'punches': punchCount.value,
           'durationSec': durationSec,
           'audioService': _audioLevelService.diagnostics,
+          'camera': _cameraRateStats(),
         },
-      ),
-    );
+      );
+      // After the event file is complete, so it can be copied into the folder.
+      await _finishRawRecording(eventsFilePath: eventsPath);
+    }());
     final result = SessionResultModel(
       confirmedPunchLog: List<String>.from(confirmedPunchLog),
       summaryCsv: summaryTable.toCsv(),
       sessionTotalsText: totalsText,
-      rawEventFilePath: _recorder.filePath,
+      rawEventFilePath: eventsPath,
+      rawSessionFolderPath: rawFolder,
       totalPunches: punchCount.value,
       leftPunches: leftPunchCount.value,
       rightPunches: rightPunchCount.value,
@@ -2772,10 +2956,20 @@ class FreeSessionController extends GetxController {
     AppNavigator.toResults(result);
   }
 
+  /// Set by [finishSession], which finalizes the recordings itself.
+  bool _finishing = false;
+
   @override
   void onClose() {
     resetSettingsGate();
-    unawaited(_recorder.dispose());
+    WidgetsBinding.instance.removeObserver(this);
+    if (!_finishing) {
+      unawaited(() async {
+        final String? eventsPath = _recorder.filePath;
+        await _recorder.dispose();
+        await _finishRawRecording(eventsFilePath: eventsPath);
+      }());
+    }
     _elapsedTimer?.cancel();
     _audioLevelSubscription?.cancel();
     _audioLevelService.dispose();

@@ -106,6 +106,22 @@ class SettingsPage extends GetView<SettingsController> {
                   ),
                 ),
 
+                24.height,
+                Text('DEBUG', style: AppTextStyles.tag(context)),
+                8.height,
+                Obx(
+                  () => _buildSwitch(
+                    context: context,
+                    title: 'Record raw data',
+                    subtitle:
+                        '16 kHz audio, full-rate accelerometer, camera landmarks '
+                        'and every decision for each Free session (for offline '
+                        'replay and tuning). Uses ~2 MB per minute.',
+                    value: controller.recordRawData.value,
+                    onChanged: controller.setRecordRawData,
+                  ),
+                ),
+
                 32.height,
                 ElevatedButton(
                   style: ElevatedButton.styleFrom(
@@ -129,6 +145,53 @@ class SettingsPage extends GetView<SettingsController> {
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildSwitch({
+    required BuildContext context,
+    required String title,
+    required String subtitle,
+    required bool value,
+    required ValueChanged<bool> onChanged,
+  }) {
+    return Container(
+      padding: EdgeInsets.all(16.r),
+      decoration: BoxDecoration(
+        color: AppColors.panel,
+        borderRadius: BorderRadius.circular(18.r),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: AppTextStyles.heading3(
+                    context,
+                  ).copyWith(fontSize: 14.ts(context)),
+                ),
+                4.height,
+                Text(
+                  subtitle,
+                  style: AppTextStyles.bodyMedium(
+                    context,
+                  ).copyWith(fontSize: 11.ts(context)),
+                ),
+              ],
+            ),
+          ),
+          12.width,
+          Switch(
+            value: value,
+            activeThumbColor: AppColors.lime,
+            onChanged: onChanged,
+          ),
+        ],
       ),
     );
   }

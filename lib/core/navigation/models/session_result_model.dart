@@ -38,6 +38,10 @@ class SessionResultModel {
   /// Short CSV table: one row per punch decision and per camera change.
   final String summaryCsv;
 
+  /// Folder with the raw sensor recording (WAV, accelerometer, events, meta)
+  /// when "Record raw data" was on; null otherwise.
+  final String? rawSessionFolderPath;
+
   SessionResultModel({
     required this.totalPunches,
     this.leftPunches = 0,
@@ -62,6 +66,7 @@ class SessionResultModel {
     this.sessionTotalsText = '',
     this.rawEventFilePath,
     this.summaryCsv = '',
+    this.rawSessionFolderPath,
     DateTime? completedAt,
   }) : audioSampleIntervalMs =
            audioSampleIntervalMs ?? AppConstants.globalAudioSampleIntervalMs,
