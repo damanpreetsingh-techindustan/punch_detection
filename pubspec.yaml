@@ -74,6 +74,8 @@ flutter:
 
   assets:
     - assets/images/app_ic.png
+    # fusionV2 scorer weights per mount (docs/detection-v2.md)
+    - assets/detector/
 
 
   # An image asset can refer to one or more resolution-specific "variants", see
