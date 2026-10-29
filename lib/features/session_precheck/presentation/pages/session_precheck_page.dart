@@ -856,6 +856,41 @@ class SessionPreCheckPage extends GetView<SessionPreCheckController> {
   }
 
   // STEP 5: 5-SECOND GYM NOISE CALIBRATION
+  /// Shown while the mic reads the bottom of the scale (35 dB) for over 1 s:
+  /// the microphone is not delivering audio and calibration would be wrong.
+  Widget _buildMicFloorWarning(BuildContext context) {
+    return Obx(() {
+      if (!controller.isMicAtScaleFloor.value) return const SizedBox.shrink();
+      return Container(
+        margin: EdgeInsets.only(top: 10.h),
+        padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 8.h),
+        decoration: BoxDecoration(
+          color: AppColors.amber.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(12.r),
+          border: Border.all(color: AppColors.amber),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.mic_off, color: AppColors.amber, size: 16.w),
+            8.width,
+            Expanded(
+              child: Text(
+                'Microphone is not delivering audio (stuck at '
+                '${AppConstants.micScaleFloorDb.round()} dB). Check the mic '
+                'permission and that no other app is using the microphone.',
+                style: TextStyle(
+                  color: AppColors.amber,
+                  fontSize: 10.ts(context),
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    });
+  }
+
   Widget _buildStep5CalibrateGymNoise(
     BuildContext context, {
     required int stepNumber,
@@ -1023,6 +1058,7 @@ class SessionPreCheckPage extends GetView<SessionPreCheckController> {
                               ),
                             ),
                           ),
+                          _buildMicFloorWarning(context),
                         ],
                       ),
                     ),
@@ -1151,6 +1187,7 @@ class SessionPreCheckPage extends GetView<SessionPreCheckController> {
                             ),
                           ),
                         ),
+                        _buildMicFloorWarning(context),
                       ],
                     ),
                   ),

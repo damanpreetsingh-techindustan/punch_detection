@@ -4,6 +4,7 @@ import 'package:sensors_plus/sensors_plus.dart';
 import '../../utils/constants.dart';
 import 'device_stability_models.dart';
 import 'i_device_stability_service.dart';
+import '../../utils/monotonic_clock.dart';
 
 /// Concrete implementation of [IDeviceStabilityService] using `sensors_plus`.
 /// Fuses UserAccelerometer, Gyroscope, and Raw Accelerometer Tilt Deltas
@@ -190,7 +191,7 @@ class DeviceStabilityService implements IDeviceStabilityService {
   }
 
   void _evaluateState() {
-    final int nowMs = DateTime.now().millisecondsSinceEpoch;
+    final int nowMs = MonotonicClock.epochMs();
 
     // Check if current instant readings exceed handheld motion thresholds
     final bool isHandheldMotionSpike =
@@ -234,7 +235,7 @@ class DeviceStabilityService implements IDeviceStabilityService {
     required DeviceStabilityState state,
     required String statusMessage,
   }) {
-    final int nowMs = DateTime.now().millisecondsSinceEpoch;
+    final int nowMs = MonotonicClock.epochMs();
     _currentMetrics = DeviceStabilityMetrics(
       linearAccelMag: _latestLinearAccelMag,
       angularVelMag: _latestGyroMag,

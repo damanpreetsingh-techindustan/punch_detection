@@ -1,3 +1,5 @@
+import 'package:punch_detection_demo/core/utils/monotonic_clock.dart';
+
 // import 'dart:math';
 
 /// Tracks shoulder-centre stability over a rolling window of frames.
@@ -49,7 +51,7 @@ class ShoulderStabilityTracker {
     required double cy,
     required bool isValidPose,
   }) {
-    final int nowMs = DateTime.now().millisecondsSinceEpoch;
+    final int nowMs = MonotonicClock.epochMs();
 
     if (!isValidPose) {
       // Within grace period: stay stable so the first punch after a brief

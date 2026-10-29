@@ -24,8 +24,13 @@ enum CameraGateState {
   /// A user is visible but farther than the allowed distance.
   tooFar,
 
-  /// A valid user is visible and close enough.
+  /// A valid user is visible and close enough (with the presence window: seen
+  /// at least once in the last `cameraPresenceWindowMs`).
   valid,
+
+  /// Camera not ready yet, but the session is in its first
+  /// `cameraStartupGraceMs`: passes the gate and is logged as a grace pass.
+  startupGrace,
 }
 
 enum ImpactOutcome { valid, rejected, pending }
@@ -75,14 +80,22 @@ class ImpactGateEvaluator {
     final bool vibrationOk = vibration != VibrationGateState.missing;
     final bool cameraOk =
         camera == CameraGateState.notRequired ||
-        camera == CameraGateState.valid;
+        camera == CameraGateState.valid ||
+        camera == CameraGateState.startupGrace;
 
     if (vibrationOk && cameraOk) {
       final bool usesVibration = vibration == VibrationGateState.present;
       final bool usesCamera = camera == CameraGateState.valid;
       final String code;
       final String label;
-      if (usesVibration && usesCamera) {
+      if (camera == CameraGateState.startupGrace) {
+        code = usesVibration
+            ? 'IMPACT_VALID_AUDIO_VIBE_CAM_STARTUP_GRACE'
+            : 'IMPACT_VALID_AUDIO_CAM_STARTUP_GRACE';
+        label = usesVibration
+            ? 'Valid Punch (Audio + Vibration, camera still starting)'
+            : 'Valid Punch (Audio, camera still starting)';
+      } else if (usesVibration && usesCamera) {
         code = 'IMPACT_VALID_AUDIO_VIBE_CAM';
         label = 'Valid Punch (Audio + Vibration + Camera)';
       } else if (usesVibration) {
@@ -143,7 +156,8 @@ class ImpactGateEvaluator {
     final List<String> parts = <String>[
       if (!vibrationOk) 'vibration',
       if (camera != CameraGateState.notRequired &&
-          camera != CameraGateState.valid)
+          camera != CameraGateState.valid &&
+          camera != CameraGateState.startupGrace)
         'camera',
     ];
     return parts.join(' and ');

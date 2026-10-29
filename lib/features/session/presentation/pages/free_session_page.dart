@@ -28,12 +28,19 @@ class FreeSessionPage extends GetView<FreeSessionController> {
           controller.finishSession();
         }
       },
-      child: Scaffold(
-        backgroundColor: AppColors.background,
-        body: SafeArea(
-          child: isLandscape
-              ? _buildLandscapeLayout(context)
-              : _buildPortraitLayout(context),
+      // Every pointer-down on the session screen (including taps a button
+      // consumes) starts the touch lockout: a tap on the phone sounds and
+      // shakes like a small impact.
+      child: Listener(
+        behavior: HitTestBehavior.translucent,
+        onPointerDown: (_) => controller.notifyPointerDown(),
+        child: Scaffold(
+          backgroundColor: AppColors.background,
+          body: SafeArea(
+            child: isLandscape
+                ? _buildLandscapeLayout(context)
+                : _buildPortraitLayout(context),
+          ),
         ),
       ),
     );

@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'raw_session_event.dart';
 import 'session_totals.dart';
+import '../../utils/monotonic_clock.dart';
 
 /// Records every sensor sample and detection decision of one session to a JSONL
 /// file so a field test can be replayed offline, and keeps per-session totals.
@@ -52,7 +53,7 @@ class SessionEventRecorder {
 
   /// Milliseconds since session start right now.
   int get nowElapsedMs =>
-      elapsedForEpoch(DateTime.now().millisecondsSinceEpoch);
+      elapsedForEpoch(MonotonicClock.epochMs());
 
   /// Formats elapsed milliseconds as `+mm:ss.mmm` for log lines.
   static String formatElapsed(int ms) {
@@ -112,7 +113,7 @@ class SessionEventRecorder {
   }) {
     if (!_begun || _finished) return;
     try {
-      final int epoch = atEpochMs ?? DateTime.now().millisecondsSinceEpoch;
+      final int epoch = atEpochMs ?? MonotonicClock.epochMs();
       final String line = RawSessionEvent(
         tMs: epoch - _startEpochMs,
         epochMs: epoch,

@@ -1,5 +1,6 @@
 import 'dart:math';
 import '../../utils/constants.dart';
+import '../../utils/monotonic_clock.dart';
 
 /// Strongly typed candidate spike recorded during acoustic onset detection.
 class CandidateSpike {
@@ -165,7 +166,7 @@ class AdaptiveAudioBaseline {
 
   /// Evaluates an incoming audio frame for instantaneous transient spike onset.
   CandidateSpike? processFrame(double db, double prevFrameDb, {int? nowMs}) {
-    final int currentMs = nowMs ?? DateTime.now().millisecondsSinceEpoch;
+    final int currentMs = nowMs ?? MonotonicClock.epochMs();
 
     // 1. Continuous Leaky Baseline Adaptation
     feedSample(db);

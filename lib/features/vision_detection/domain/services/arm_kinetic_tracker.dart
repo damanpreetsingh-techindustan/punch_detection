@@ -1,6 +1,7 @@
 import 'dart:math';
 import '../entities/pose_frame_sample.dart';
 import '../entities/punch_fsm_state.dart';
+import 'package:punch_detection_demo/core/utils/monotonic_clock.dart';
 
 /// Independent Arm Kinetic Tracker.
 /// Computes normalized 2D/3D metrics (extension, velocity, shoulder drive, trajectory)
@@ -224,7 +225,7 @@ class ArmKineticTracker {
     // 6. Monitor Mandatory Arm Retraction
     if (!hasRetractedSinceLastPunch) {
       final double retractionDelta = lastPunchPeakExtension - armExtension;
-      final int nowMs = DateTime.now().millisecondsSinceEpoch;
+      final int nowMs = MonotonicClock.epochMs();
       if (retractionDelta >= 0.08 ||
           armExtension <= 0.40 ||
           shoulderMovement <= 0.025 ||

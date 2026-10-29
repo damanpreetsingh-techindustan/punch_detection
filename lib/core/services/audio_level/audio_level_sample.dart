@@ -1,7 +1,7 @@
 /// One microphone level reading with the time it actually happened.
 ///
 /// Unlike a bare dB value, [timestampMs] is the estimated time of the audio the
-/// reading describes (wall-clock epoch milliseconds), not the time the plugin
+/// reading describes (monotonic epoch milliseconds, `MonotonicClock.epochMs`), not the time the plugin
 /// delivered it. Several samples can arrive in one burst; their timestamps are
 /// still spaced by the real sub-block duration.
 class AudioLevelSample {

@@ -9,6 +9,7 @@ import '../guards/restriction_guard_pipeline.dart';
 import '../entities/pose_frame_sample.dart';
 import '../entities/punch_detection_config.dart';
 import '../entities/punch_fsm_state.dart';
+import 'package:punch_detection_demo/core/utils/monotonic_clock.dart';
 
 export '../entities/punch_fsm_state.dart';
 export '../services/punch_scoring_engine.dart';
@@ -80,7 +81,7 @@ class TemporalPunchDetector {
     required double imageHeight,
     bool isDeviceStable = true,
   }) {
-    final int nowMs = DateTime.now().millisecondsSinceEpoch;
+    final int nowMs = MonotonicClock.epochMs();
 
     // ── 1. Extract Landmarks ────────────────────────────────────────────────
     final lShoulderLM = pose.landmarks[PoseLandmarkType.leftShoulder];

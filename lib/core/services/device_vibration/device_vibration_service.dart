@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math';
 import 'package:sensors_plus/sensors_plus.dart';
 import 'i_device_vibration_service.dart';
+import '../../utils/monotonic_clock.dart';
 
 /// Concrete implementation of [IDeviceVibrationService] using `sensors_plus`.
 /// Monitors high-frequency linear acceleration shockwave spikes caused by physical impacts on the bag/mount.
@@ -38,7 +39,7 @@ class DeviceVibrationService implements IDeviceVibrationService {
 
   @override
   double get recentPeakVibrationMagnitude {
-    final int nowMs = DateTime.now().millisecondsSinceEpoch;
+    final int nowMs = MonotonicClock.epochMs();
     if (nowMs - _recentPeakTimestampMs <= 600) {
       return max(_recentPeakMagnitude, _currentVibrationMagnitude);
     }
@@ -74,7 +75,7 @@ class DeviceVibrationService implements IDeviceVibrationService {
           userAccelerometerEventStream(
             samplingPeriod: SensorInterval.gameInterval,
           ).listen((UserAccelerometerEvent event) {
-            final int nowMs = DateTime.now().millisecondsSinceEpoch;
+            final int nowMs = MonotonicClock.epochMs();
 
             // 1. Adaptive DC-Block High-Pass Filter:
             // Automatically measures and subtracts static gravity residuals and mounting tilt offsets.

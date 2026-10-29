@@ -127,13 +127,48 @@ class AppConstants {
   static const int cameraObservationStaleMs = 700;
 
   /// Field-test experiments for microphone clipping. Both default to OFF so the
-  /// recorded baseline is unchanged; flip one at a time and compare the
-  /// `audio.saturated_frames` total.
+  /// recorded baseline is unchanged; flip one at a time (debug section of the
+  /// session settings sheet) and compare the `audio.saturated_frames` total.
+  /// They stay set until the app restarts, so the next calibration uses them too.
   /// Turn off hardware noise suppression and echo cancellation on the mic.
-  static const bool audioExperimentDisableMicProcessing = false;
+  static bool audioExperimentDisableMicProcessing = false;
 
-  /// Use the Android `unprocessed` audio source (no gain or filtering).
-  static const bool audioExperimentUnprocessedSource = false;
+  /// Android: record from the `unprocessed` source (no gain or filtering),
+  /// falling back to `voiceRecognition` when it cannot start.
+  /// iOS: put the audio session in `measurement` mode.
+  static bool audioExperimentUnprocessedSource = false;
+
+  // ─── Phase 1 fixes (legacy engine) ──────────────────────────────────────────
+  /// Frame rate requested from the camera (was accidentally the audio interval).
+  static const int cameraFps = 15;
+
+  /// Camera as a soft presence check: an impact passes the camera gate when a
+  /// valid person was seen at least once in the last [cameraPresenceWindowMs].
+  /// false = old per-frame hard gate (the latest frame's state decides).
+  static const bool cameraPresenceWindowEnabled = true;
+  static const int cameraPresenceWindowMs = 1500;
+
+  /// With the presence check on, "camera not ready" passes during the first
+  /// [cameraStartupGraceMs] of a session (logged as a grace pass).
+  static const int cameraStartupGraceMs = 3000;
+
+  /// Screen-touch lockout: no impact counts from [touchLockoutBeforeMs] before
+  /// to [touchLockoutAfterMs] after any pointer-down on the session screen.
+  static const bool touchLockoutEnabled = true;
+  static const int touchLockoutBeforeMs = 100;
+  static const int touchLockoutAfterMs = 400;
+
+  /// Pre-check calibration: blocks in the first [calibrationIgnoreFirstMs] are
+  /// dropped; the room floor is the mean of the 10 ms block levels between
+  /// these two percentiles.
+  static const int calibrationIgnoreFirstMs = 400;
+  static const double calibrationFloorLowPercentile = 20.0;
+  static const double calibrationFloorHighPercentile = 50.0;
+
+  /// Bottom of the app dB scale (-60 dBFS). A mic that stays here for longer
+  /// than [micFloorWarningMs] is not delivering audio.
+  static const double micScaleFloorDb = 35.0;
+  static const int micFloorWarningMs = 1000;
 
   /// TESTING CONFIGURATION:
   /// Absolute minimum safety floor for punch audio detection.

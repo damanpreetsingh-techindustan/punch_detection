@@ -1,12 +1,16 @@
 import 'dart:async';
+import 'dart:developer' as developer;
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../../../../core/navigation/app_navigator.dart';
 import '../../../../core/utils/constants.dart';
+import '../../../../core/utils/monotonic_clock.dart';
 import '../../../../core/widgets/common_permission_dialog.dart';
+import '../../../../detection_core/calibration/ambient_floor.dart';
 
+import '../../../../core/services/audio_level/audio_level_sample.dart';
 import '../../../../core/services/audio_level/i_audio_level_service.dart';
 import '../../../../core/services/audio_level/record_audio_level_service.dart';
 import '../../../../core/services/device_stability/device_stability_models.dart';
@@ -35,7 +39,7 @@ class SessionPreCheckController extends GetxController {
 
   // Real-time Audio Level Sensor Service (DIP: Injected abstract contract)
   final IAudioLevelService _audioLevelService;
-  StreamSubscription<double>? _audioLevelSubscription;
+  StreamSubscription<AudioLevelSample>? _audioLevelSubscription;
 
   // Device Stability & Motion Check State (DIP: Injected abstract contract)
   final IDeviceStabilityService _stabilityService;
@@ -55,17 +59,57 @@ class SessionPreCheckController extends GetxController {
 
   // Calibration data collection
   int _calibrationElapsedMs = 0;
-  final List<double> _calibrationDbSamples = [];
+  int _calibrationStartMs = 0;
+
+  /// Every 10 ms block level seen during the 5 s calibration (raw, for logging).
+  final List<TimedLevel> _calibrationBlocks = <TimedLevel>[];
   final RxList<double> decibelHistory = <double>[].obs;
+
+  /// Loudest block of the calibration (display and logs only; not the target base).
   final RxDouble maxCalibratedDb = 0.0.obs;
+
+  /// Room floor from the calibration: mean of the 20th–50th percentile blocks.
   final RxDouble avgAmbientDb = 48.0.obs;
   final RxDouble spikeThresholdDb = 20.0.obs;
+
+  /// Result of the last completed calibration (null until one completes).
+  AmbientFloorResult? _calibrationResult;
+
+  /// Raw calibration data handed to the session so its recorder logs it.
+  Map<String, Object?>? _calibrationReport;
+  Map<String, Object?>? get calibrationReport => _calibrationReport;
+
+  /// True while the mic has read the bottom of the scale for more than 1 s:
+  /// it is not delivering audio, so a calibration would be meaningless.
+  final RxBool isMicAtScaleFloor = false.obs;
+  final MicFloorWatchdog _micFloorWatchdog = MicFloorWatchdog(
+    floorDb: AppConstants.micScaleFloorDb,
+    maxDurationMs: AppConstants.micFloorWarningMs,
+  );
+
+  static const AmbientFloorEstimator _floorEstimator = AmbientFloorEstimator(
+    ignoreFirstMs: AppConstants.calibrationIgnoreFirstMs,
+    lowPercentile: AppConstants.calibrationFloorLowPercentile,
+    highPercentile: AppConstants.calibrationFloorHighPercentile,
+  );
+
+  // The live meter is refreshed at most every [_uiRefreshMs] with the loudest
+  // block since the last refresh (blocks arrive every 10 ms).
+  static const int _uiRefreshMs = 100;
+  int _lastUiRefreshMs = 0;
+  double _uiPeakDb = 0.0;
 
   SessionPreCheckController({
     this.sessionType = 'prompt',
     IAudioLevelService? audioLevelService,
     IDeviceStabilityService? stabilityService,
-  }) : _audioLevelService = audioLevelService ?? RecordAudioLevelService(),
+  }) : _audioLevelService =
+           audioLevelService ??
+           // Same capture path as the Free session, so calibration hears the
+           // room exactly the way detection does.
+           RecordAudioLevelService(
+             enableSubBlockPcm: AppConstants.useSubBlockPcmLevels,
+           ),
        _stabilityService = stabilityService ?? DeviceStabilityService();
 
   /// Returns true if all required permissions for the active mode are granted
@@ -164,43 +208,115 @@ class SessionPreCheckController extends GetxController {
       return;
     }
 
-    _audioLevelSubscription = _audioLevelService.decibelStream.listen(
-      (double safeDb) {
-        decibelHistory.add(safeDb);
-        if (decibelHistory.length > 50) {
-          decibelHistory.removeAt(0);
-        }
-
-        // Controlled by AppConstants.useAvarageAudioFormate:
-        // When enabled: Uses rolling average dB to prevent jitter on display.
-        // When disabled: Uses raw instantaneous safeDb directly.
-        final double effectiveDb = AppConstants.useAvarageAudioFormate
-            ? (decibelHistory.isNotEmpty
-                ? decibelHistory.reduce((a, b) => a + b) / decibelHistory.length
-                : safeDb)
-            : safeDb;
-        final int db = effectiveDb.round();
-        decibels.value = db;
-
-        if (!isCalibrating.value) {
-          noiseStatusText.value = 'Live mic: $db dB';
-        } else {
-          // Track highest dB reached on screen during calibration
-          if (db > maxCalibratedDb.value) {
-            maxCalibratedDb.value = db.toDouble();
-          }
-          // Ignore first 400ms so physical finger tap on "Start Calibration" button is ignored
-          if (_calibrationElapsedMs >= 400) {
-            _calibrationDbSamples.add(safeDb);
-          }
-        }
-      },
+    _audioLevelSubscription = _audioLevelService.sampleStream.listen(
+      onAudioSample,
       onError: (Object error) {
         noiseStatusText.value = 'Microphone error — check permissions';
       },
     );
 
+    developer.log(
+      'Pre-check audio service: ${_audioLevelService.diagnostics}',
+      name: 'SessionPreCheckController',
+    );
     noiseStatusText.value = 'Live audio monitoring active';
+  }
+
+  /// Handles one microphone block (10 ms with the PCM path). Public so tests
+  /// can feed blocks with explicit times.
+  void onAudioSample(AudioLevelSample sample) {
+    final double safeDb = sample.db;
+    isMicAtScaleFloor.value = _micFloorWatchdog.update(
+      safeDb,
+      sample.timestampMs,
+    );
+    if (isCalibrating.value &&
+        sample.timestampMs >= _calibrationStartMs &&
+        sample.timestampMs <= _calibrationStartMs + _calibrationDurationMs) {
+      _calibrationBlocks.add(TimedLevel(sample.timestampMs, safeDb));
+    }
+
+    // Live meter: loudest block since the last refresh, at most every 100 ms.
+    _uiPeakDb = max(_uiPeakDb, safeDb);
+    if (sample.timestampMs - _lastUiRefreshMs < _uiRefreshMs) return;
+    _lastUiRefreshMs = sample.timestampMs;
+    final double shownDb = _uiPeakDb;
+    _uiPeakDb = 0.0;
+
+    decibelHistory.add(shownDb);
+    if (decibelHistory.length > 50) {
+      decibelHistory.removeAt(0);
+    }
+    final int db = shownDb.round();
+    decibels.value = db;
+    if (!isCalibrating.value) {
+      noiseStatusText.value = 'Live mic: $db dB';
+    }
+  }
+
+  static const int _calibrationDurationMs = 5000;
+
+  /// Room floor and target from the collected blocks; logs the raw values.
+  void _finishCalibration() {
+    final AmbientFloorResult result = _floorEstimator.estimate(
+      _calibrationBlocks,
+      startMs: _calibrationStartMs,
+    );
+    _calibrationResult = result;
+    avgAmbientDb.value = result.floorDb;
+    maxCalibratedDb.value = result.maxDb;
+    spikeThresholdDb.value = AppConstants.defaultAudioSpikeThresholdDb;
+
+    _calibrationReport = <String, Object?>{
+      ...result.toMap(),
+      'startMs': _calibrationStartMs,
+      'durationMs': _calibrationDurationMs,
+      'ignoreFirstMs': AppConstants.calibrationIgnoreFirstMs,
+      'lowPercentile': AppConstants.calibrationFloorLowPercentile,
+      'highPercentile': AppConstants.calibrationFloorHighPercentile,
+      'micAtScaleFloor': isMicAtScaleFloor.value,
+      'audioService': _audioLevelService.diagnostics,
+      // Raw block levels: [ms since calibration start, app-dB].
+      'blocks': <List<num>>[
+        for (final TimedLevel block in _calibrationBlocks)
+          <num>[block.tMs - _calibrationStartMs, block.db],
+      ],
+    };
+    developer.log(
+      'Calibration: ${result.toMap()} from ${_calibrationBlocks.length} blocks',
+      name: 'SessionPreCheckController',
+    );
+    developer.log(
+      'Calibration raw blocks (ms, dB): '
+      '${_calibrationBlocks.map((TimedLevel b) => '${b.tMs - _calibrationStartMs}:${b.db.toStringAsFixed(1)}').join(' ')}',
+      name: 'SessionPreCheckController',
+    );
+  }
+
+  /// Base of the legacy audio target: the calibrated room floor, or the
+  /// default ambient level when no calibration completed.
+  double get calibratedBaseDb => _calibrationResult?.floorDb ?? avgAmbientDb.value;
+
+  /// Legacy audio target handed to the session: floor + default spike,
+  /// clamped to the unchanged min/max target constants.
+  double get initialTargetDb =>
+      (calibratedBaseDb + AppConstants.defaultAudioSpikeThresholdDb)
+          .clamp(
+            AppConstants.minCalibratedTargetPunchDb,
+            AppConstants.maxCalibratedTargetPunchDb,
+          )
+          .roundToDouble();
+
+  /// Test hook: run the end-of-calibration computation on given blocks.
+  void calibrateFromBlocksForTesting(
+    List<TimedLevel> blocks, {
+    required int startMs,
+  }) {
+    _calibrationStartMs = startMs;
+    _calibrationBlocks
+      ..clear()
+      ..addAll(blocks);
+    _finishCalibration();
   }
 
   Future<void> checkPermissions() async {
@@ -362,19 +478,13 @@ class SessionPreCheckController extends GetxController {
       await _audioLevelService.stopMonitoring();
 
       // DYNAMIC AUDIO TARGET:
-      // Base audio is the max calibrated average dB recorded during pre-check.
-      // Initial target is Base + Default Spike Threshold (+6 dB, e.g. 80 -> 86 dB).
+      // Base audio is the calibrated room floor (20th–50th percentile of the
+      // 10 ms blocks), so the target sits above the room instead of below it.
+      // Initial target is Base + Default Spike Threshold (+8 dB, e.g. 77 -> 85 dB).
       // Strictly clamped between minCalibratedTargetPunchDb and maxCalibratedTargetPunchDb.
-      final double baseAudioDb = maxCalibratedDb.value > 0
-          ? maxCalibratedDb.value
-          : avgAmbientDb.value;
+      final double baseAudioDb = calibratedBaseDb;
       final double defaultSpike = AppConstants.defaultAudioSpikeThresholdDb;
-      final double initialTarget = (baseAudioDb + defaultSpike)
-          .clamp(
-            AppConstants.minCalibratedTargetPunchDb,
-            AppConstants.maxCalibratedTargetPunchDb,
-          )
-          .roundToDouble();
+      final double initialTarget = initialTargetDb;
 
       final double safeMaxAudioDb = min(
         AppConstants.maxCalibratedTargetPunchDb,
@@ -397,6 +507,7 @@ class SessionPreCheckController extends GetxController {
         spikeThresholdDb: defaultSpike,
         targetPunchDb: initialTarget,
         calibratedDb: baseAudioDb,
+        calibrationReport: _calibrationReport,
       );
       if (sessionType == 'prompt') {
         AppNavigator.toPromptSession(arguments: args);
@@ -437,11 +548,14 @@ class SessionPreCheckController extends GetxController {
     calibrationButtonText.value = 'Sampling 5s environment…';
     noiseStatusText.value = 'Capturing ambient environment baseline…';
     calibrationProgress.value = 0.0;
-    _calibrationDbSamples.clear();
+    _calibrationBlocks.clear();
+    _calibrationResult = null;
+    _calibrationReport = null;
     maxCalibratedDb.value = 0.0;
     avgAmbientDb.value = 48.0;
     spikeThresholdDb.value = 20.0;
     _calibrationElapsedMs = 0;
+    _calibrationStartMs = MonotonicClock.epochMs();
 
     _calibrationTimer?.cancel();
     _calibrationTimer = Timer.periodic(const Duration(milliseconds: 250), (
@@ -449,45 +563,22 @@ class SessionPreCheckController extends GetxController {
     ) {
       _calibrationElapsedMs += 250;
 
-      calibrationProgress.value = (_calibrationElapsedMs / 5000.0).clamp(
-        0.0,
-        1.0,
-      );
+      calibrationProgress.value =
+          (_calibrationElapsedMs / _calibrationDurationMs).clamp(0.0, 1.0);
 
-      if (_calibrationElapsedMs >= 5000) {
+      if (_calibrationElapsedMs >= _calibrationDurationMs) {
         calibrationProgress.value = 1.0;
         _calibrationTimer?.cancel();
 
-        // Calculate AVERAGE ambient baseline from calibration samples
-        final double avgDb = _calibrationDbSamples.isNotEmpty
-            ? _calibrationDbSamples.reduce((a, b) => a + b) /
-                  _calibrationDbSamples.length
-            : 40.0;
+        // Room floor = mean of the 20th–50th percentile blocks (first 400 ms
+        // dropped), not the mean or the max.
+        _finishCalibration();
 
-        final double safeAvgDb = (avgDb.isNaN || !avgDb.isFinite)
-            ? 40.0
-            : avgDb;
-        avgAmbientDb.value = safeAvgDb;
-
-        // If maxCalibratedDb was not recorded, fallback to safeAvgDb
-        if (maxCalibratedDb.value <= 0) {
-          maxCalibratedDb.value = safeAvgDb;
-        }
-
-        // Default spike threshold (+6 dB)
-        spikeThresholdDb.value = AppConstants.defaultAudioSpikeThresholdDb;
-
-        final int safeBase = maxCalibratedDb.value.round();
-        final int initialTarget =
-            (maxCalibratedDb.value + AppConstants.defaultAudioSpikeThresholdDb)
-                .clamp(
-                  AppConstants.minCalibratedTargetPunchDb,
-                  AppConstants.maxCalibratedTargetPunchDb,
-                )
-                .round();
+        final int safeBase = calibratedBaseDb.round();
+        final int initialTarget = initialTargetDb.round();
 
         noiseStatusText.value =
-            'Calibrated — Base: $safeBase dB, Target: $initialTarget dB (+${AppConstants.defaultAudioSpikeThresholdDb.round()} dB)';
+            'Calibrated — Floor: $safeBase dB, Target: $initialTarget dB (+${AppConstants.defaultAudioSpikeThresholdDb.round()} dB)';
 
         calibrationButtonText.value = 'Calibration complete';
         isCalibrating.value = false;

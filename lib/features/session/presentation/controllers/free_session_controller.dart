@@ -7,6 +7,9 @@ import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 import 'package:punch_detection_demo/core/utils/constants.dart';
+import 'package:punch_detection_demo/core/utils/monotonic_clock.dart';
+import 'package:punch_detection_demo/detection_core/context/presence_window.dart';
+import 'package:punch_detection_demo/detection_core/context/touch_lockout.dart';
 import '../../../../core/enums/detection_enums.dart';
 import '../../../../core/navigation/app_navigator.dart';
 import '../../../vision_detection/data/geometric_rules/pose_validity_gate.dart';
@@ -84,7 +87,9 @@ class FreeSessionController extends GetxController {
     ShoulderStabilityTracker? stabilityTracker,
     AdaptiveAudioBaseline? adaptiveBaseline,
     SessionEventRecorder? recorder,
-  }) : _recorder = recorder ?? SessionEventRecorder(),
+    int Function()? clock,
+  }) : _clock = clock ?? MonotonicClock.epochMs,
+       _recorder = recorder ?? SessionEventRecorder(),
        _audioLevelService =
            audioLevelService ??
            RecordAudioLevelService(
@@ -110,6 +115,27 @@ class FreeSessionController extends GetxController {
        _adaptiveBaseline = adaptiveBaseline ?? AdaptiveAudioBaseline();
 
   FastComboFusionSynchronizer get fusionSynchronizer => _fusionSynchronizer;
+
+  /// Detection clock: monotonic epoch milliseconds (never the wall clock).
+  final int Function() _clock;
+
+  /// Screen-touch lockout (pointer-downs on the session screen).
+  final TouchLockout _touchLockout = TouchLockout(
+    beforeMs: AppConstants.touchLockoutBeforeMs,
+    afterMs: AppConstants.touchLockoutAfterMs,
+  );
+
+  /// Camera presence as a soft time window instead of a per-frame gate.
+  final PresenceWindow _presence = PresenceWindow(
+    windowMs: AppConstants.cameraPresenceWindowMs,
+    startupGraceMs: AppConstants.cameraStartupGraceMs,
+  );
+
+  /// true = presence window (default); false = old per-frame camera hard gate.
+  bool cameraPresenceWindowEnabled = AppConstants.cameraPresenceWindowEnabled;
+
+  /// Touch lockout on/off (tests and debugging).
+  bool touchLockoutEnabled = AppConstants.touchLockoutEnabled;
 
   // Selected session mode: strongly-typed DetectionMode enum
   final Rx<DetectionMode> sessionMode = DetectionMode.fusion.obs;
@@ -183,12 +209,13 @@ class FreeSessionController extends GetxController {
     String logEntry, {
     bool isConfirmedPunch = false,
     int? atEpochMs,
+    bool alsoInPunchLog = false,
   }) {
     final String stamped = _recorder.isBegun
-        ? '[${SessionEventRecorder.formatElapsed(_recorder.elapsedForEpoch(atEpochMs ?? DateTime.now().millisecondsSinceEpoch))}] $logEntry'
+        ? '[${SessionEventRecorder.formatElapsed(_recorder.elapsedForEpoch(atEpochMs ?? _clock()))}] $logEntry'
         : logEntry;
     recordedSpikesHistory.insert(0, stamped);
-    if (stamped.contains(_punchLogMarker)) {
+    if (alsoInPunchLog || stamped.contains(_punchLogMarker)) {
       confirmedPunchLog.add(stamped);
     }
     const int maxCapacity = 500;
@@ -219,6 +246,11 @@ class FreeSessionController extends GetxController {
     'audioRefractoryMs': AppConstants.audioRefractoryMs,
     'subBlockPcm': AppConstants.useSubBlockPcmLevels,
     'warmupMs': AppConstants.warmUpDurationInMiliSeconds.round(),
+    'micUnprocessedSource': AppConstants.audioExperimentUnprocessedSource,
+    'micProcessingDisabled': AppConstants.audioExperimentDisableMicProcessing,
+    'cameraPresenceWindow': cameraPresenceWindowEnabled,
+    'touchLockout': touchLockoutEnabled,
+    'cameraFps': AppConstants.cameraFps,
   };
 
   void _recordConfigChange(String reason) {
@@ -259,7 +291,7 @@ class FreeSessionController extends GetxController {
   /// Records one microphone stream sample: raw level plus arrival statistics.
   void _traceAudioSample(AudioLevelSample sample) {
     final double db = sample.db;
-    final int nowMs = DateTime.now().millisecondsSinceEpoch;
+    final int nowMs = _clock();
     if (sample.chunkIndex != _lastAudioChunkIndex) {
       // New plugin chunk: the gap between chunk arrivals is the real audio
       // delivery period (about 80 ms with the plugin default buffer).
@@ -380,7 +412,7 @@ class FreeSessionController extends GetxController {
   /// True if settings sheet or tune dialog is currently open OR in post-close cooldown period.
   bool get isSettingsViewActive =>
       _openSettingsViewsCount > 0 ||
-      DateTime.now().millisecondsSinceEpoch < _settingsCooldownUntilMs;
+      _clock() < _settingsCooldownUntilMs;
 
   int get openSettingsViewsCount => _openSettingsViewsCount;
   int get settingsCooldownUntilMs => _settingsCooldownUntilMs;
@@ -406,7 +438,7 @@ class FreeSessionController extends GetxController {
       });
       if (_openSettingsViewsCount == 0) {
         _settingsCooldownUntilMs =
-            DateTime.now().millisecondsSinceEpoch +
+            _clock() +
             AppConstants.postSettingsCooldownMs;
         developer.log(
           'Settings view closed. Post-settings cooldown active until $_settingsCooldownUntilMs (${AppConstants.postSettingsCooldownMs}ms).',
@@ -456,6 +488,77 @@ class FreeSessionController extends GetxController {
     audioSampleIntervalMs.value = ms;
     _audioLevelService.updateSampleInterval(ms);
   }
+
+  // ─── Debug experiments (session settings sheet, debug section) ─────────────
+  final RxBool micUnprocessedSource =
+      AppConstants.audioExperimentUnprocessedSource.obs;
+  final RxBool micProcessingDisabled =
+      AppConstants.audioExperimentDisableMicProcessing.obs;
+  late final RxBool presenceWindowToggle = cameraPresenceWindowEnabled.obs;
+  late final RxBool touchLockoutToggle = touchLockoutEnabled.obs;
+
+  /// Switches a microphone experiment and restarts the mic so it takes effect.
+  /// The choice stays for later sessions (and their calibration) until restart.
+  Future<void> setMicExperiment({
+    bool? unprocessedSource,
+    bool? disableProcessing,
+  }) async {
+    if (unprocessedSource != null) {
+      AppConstants.audioExperimentUnprocessedSource = unprocessedSource;
+      micUnprocessedSource.value = unprocessedSource;
+    }
+    if (disableProcessing != null) {
+      AppConstants.audioExperimentDisableMicProcessing = disableProcessing;
+      micProcessingDisabled.value = disableProcessing;
+    }
+    _recordConfigChange('mic_experiment');
+    await _audioLevelSubscription?.cancel();
+    _audioLevelSubscription = null;
+    await _audioLevelService.stopMonitoring();
+    if (sessionMode.value.requiresMicrophone) await _startMicrophoneStream();
+  }
+
+  void setCameraPresenceWindow(bool enabled) {
+    cameraPresenceWindowEnabled = enabled;
+    presenceWindowToggle.value = enabled;
+    _recordConfigChange('presence_window=$enabled');
+  }
+
+  void setTouchLockout(bool enabled) {
+    touchLockoutEnabled = enabled;
+    touchLockoutToggle.value = enabled;
+    _recordConfigChange('touch_lockout=$enabled');
+  }
+
+  List<SettingsDebugToggle> get _debugToggles => <SettingsDebugToggle>[
+    SettingsDebugToggle(
+      title: 'Mic: unprocessed source',
+      subtitle:
+          'Android UNPROCESSED (fallback VOICE_RECOGNITION) · iOS measurement mode',
+      value: micUnprocessedSource,
+      onChanged: (bool v) => setMicExperiment(unprocessedSource: v),
+    ),
+    SettingsDebugToggle(
+      title: 'Mic: noise suppression + echo cancel OFF',
+      subtitle: 'Restarts the microphone',
+      value: micProcessingDisabled,
+      onChanged: (bool v) => setMicExperiment(disableProcessing: v),
+    ),
+    SettingsDebugToggle(
+      title: 'Camera: presence window',
+      subtitle:
+          'ON = person seen in the last ${AppConstants.cameraPresenceWindowMs} ms · OFF = old per-frame gate',
+      value: presenceWindowToggle,
+      onChanged: setCameraPresenceWindow,
+    ),
+    SettingsDebugToggle(
+      title: 'Touch lockout',
+      subtitle:
+          'No impact from ${AppConstants.touchLockoutBeforeMs} ms before to ${AppConstants.touchLockoutAfterMs} ms after a tap',
+      value: touchLockoutToggle,
+      onChanged: setTouchLockout,
+    ),
+  ];
 
   /// Whether camera vision confirmation is strictly required in Fusion mode
   /// true = Strict (Punch only counts if camera confirms), false = Optional (Audio+Vibe dual counts)
@@ -553,13 +656,17 @@ class FreeSessionController extends GetxController {
   @override
   void onInit() {
     super.onInit();
-    _sessionStartTimeMs = DateTime.now().millisecondsSinceEpoch;
+    _sessionStartTimeMs = _clock();
     _startElapsedTimer();
     _readRouteArguments();
     _updateDetectorConfig();
     _recorder.begin(
       startEpochMs: _sessionStartTimeMs,
       config: _configSnapshot(),
+    );
+    _recorder.record(
+      'calibration',
+      _calibrationReport ?? const <String, Object?>{'missing': true},
     );
     _initPoseDetector();
     initCamera();
@@ -593,7 +700,7 @@ class FreeSessionController extends GetxController {
   void _handleVibrationSample(double mag, {int? atEpochMs}) {
     liveVibrationMagnitude.value = mag;
 
-    final int nowMs = atEpochMs ?? DateTime.now().millisecondsSinceEpoch;
+    final int nowMs = atEpochMs ?? _clock();
     _noteEventClock(nowMs);
     _appendVibrationHistory(nowMs, mag);
     final bool vibeRisingEdge = _traceVibrationSample(mag, nowMs);
@@ -702,7 +809,7 @@ class FreeSessionController extends GetxController {
         smoothedLinearAccel: 0.0,
         smoothedAngularVel: 0.0,
         state: DeviceStabilityState.stable,
-        timestampMs: DateTime.now().millisecondsSinceEpoch,
+        timestampMs: _clock(),
         statusMessage: 'Device stability check disabled',
       );
     }
@@ -755,7 +862,11 @@ class FreeSessionController extends GetxController {
 
     customTargetAudioDb.value = initialTarget;
     _adaptiveBaseline.fixedAudioTargetDb = initialTarget;
+    _calibrationReport = sessionArgs.calibrationReport;
   }
+
+  /// Raw pre-check calibration data, written to the session's event file.
+  Map<String, Object?>? _calibrationReport;
 
   /// Sets active session detection mode
   void setSessionMode(dynamic mode) {
@@ -897,7 +1008,7 @@ class FreeSessionController extends GetxController {
   /// audio-vs-vibration coincidence check. Defaults to "now".
   bool _isAudioTransient({int? frameTimestampMs}) {
     final double db = liveDecibelLevel.value;
-    final int nowMs = frameTimestampMs ?? DateTime.now().millisecondsSinceEpoch;
+    final int nowMs = frameTimestampMs ?? _clock();
 
     // Sync parameters with live settings
     _adaptiveBaseline.spikeThresholdDb = minAudioPunchSpikeDb.value;
@@ -1113,7 +1224,7 @@ class FreeSessionController extends GetxController {
       'targetDb': effectiveTargetDb,
       'targetMet': isAudioTargetReached,
       'refractory': isAudioInRefractory,
-      'processingLagMs': DateTime.now().millisecondsSinceEpoch - spikeTimeMs,
+      'processingLagMs': _clock() - spikeTimeMs,
       'vibeEffectiveMag': effectiveVibeMag,
       'vibeLiveMag': liveVibrationMagnitude.value,
       'vibePeakAgeMs': peakVibeTime > 0 ? spikeTimeMs - peakVibeTime : null,
@@ -1237,7 +1348,8 @@ class FreeSessionController extends GetxController {
     double? shoulderConf,
     int? atMs,
   }) {
-    final int at = atMs ?? DateTime.now().millisecondsSinceEpoch;
+    final int at = atMs ?? _clock();
+    if (state == CameraGateState.valid) _presence.noteValid(at);
     final CameraGateState? previous = _cameraObservation?.state;
     _cameraObservation = _CameraObservation(
       state,
@@ -1263,8 +1375,11 @@ class FreeSessionController extends GetxController {
     }
   }
 
-  CameraGateState _cameraGateState() {
+  /// Camera gate state for an impact at [impactMs] (defaults to the event clock).
+  CameraGateState _cameraGateState({int? impactMs}) {
     if (!_isCameraGateRequired) return CameraGateState.notRequired;
+    if (cameraPresenceWindowEnabled) return _presenceGateState(impactMs);
+    // Old behaviour: the latest frame decides.
     if (!isCameraInitialized.value) return CameraGateState.notReady;
     final _CameraObservation? observation = _cameraObservation;
     if (observation == null) return CameraGateState.noPerson;
@@ -1273,6 +1388,43 @@ class FreeSessionController extends GetxController {
       return CameraGateState.noPerson;
     }
     return observation.state;
+  }
+
+  /// Soft presence check: valid when a valid person was seen at least once in
+  /// the last `cameraPresenceWindowMs` before the impact (or since). A camera
+  /// that has not produced its first frame yet passes during the first
+  /// `cameraStartupGraceMs` of the session.
+  CameraGateState _presenceGateState(int? impactMs) {
+    final int at = impactMs ?? _eventClockMs;
+    final _CameraObservation? observation = _cameraObservation;
+    final bool cameraWarmingUp =
+        !isCameraInitialized.value || observation == null;
+    if (cameraWarmingUp) {
+      return _presence.isInStartupGrace(at, _sessionStartTimeMs)
+          ? CameraGateState.startupGrace
+          : (isCameraInitialized.value
+                ? CameraGateState.noPerson
+                : CameraGateState.notReady);
+    }
+    if (_presence.isPresentAt(at)) return CameraGateState.valid;
+    // Not seen recently: report what the camera sees now (too far / nobody).
+    return observation.state == CameraGateState.tooFar
+        ? CameraGateState.tooFar
+        : CameraGateState.noPerson;
+  }
+
+  /// Log text for a valid camera gate: when the person was last seen and what
+  /// the latest frame shows.
+  String _presenceDetail(int impactMs, _CameraObservation? observation) {
+    if (!cameraPresenceWindowEnabled) return observation?.detail ?? '';
+    final int? since = _presence.msSinceValid(impactMs);
+    return <String>[
+      if (since != null)
+        since <= 0 ? 'seen during window' : 'seen ${since}ms before impact',
+      if (observation != null) 'latest frame: ${observation.state.name}',
+      if (observation != null && observation.detail.isNotEmpty)
+        observation.detail,
+    ].join(', ');
   }
 
   void _handleSpikeForImpactWindow({
@@ -1295,6 +1447,9 @@ class FreeSessionController extends GetxController {
     if (isSettingsViewActive) {
       rejectCode = 'SETTINGS_OPEN_GATE';
       rejectReason = 'Declined: Settings open or client using mobile';
+    } else if (_isTouchLocked(spike.timestampMs)) {
+      rejectCode = 'IMPACT_REJECTED_TOUCH';
+      rejectReason = _touchReason(spike.timestampMs);
     } else if (!isAudioTargetReached) {
       rejectCode = 'AUDIO_BELOW_TARGET';
       candidate = true;
@@ -1357,7 +1512,9 @@ class FreeSessionController extends GetxController {
         : (vibePeak >= minVibrationThreshold.value
               ? VibrationGateState.present
               : VibrationGateState.missing);
-    final CameraGateState cameraState = _cameraGateState();
+    final CameraGateState cameraState = _cameraGateState(
+      impactMs: impact.audioTsMs,
+    );
 
     final ImpactGateResult result = _impactGates.evaluate(
       vibration: vibeState,
@@ -1401,7 +1558,9 @@ class FreeSessionController extends GetxController {
             CameraGateState.tooFar =>
               'Cam: too far (${observation?.detail ?? ''})',
             CameraGateState.valid =>
-              'Cam: valid user (${observation?.detail ?? ''})',
+              'Cam: valid user (${_presenceDetail(impact.audioTsMs, observation)})',
+            CameraGateState.startupGrace =>
+              'Cam: still starting (startup grace pass)',
           };
     final String vibeDetail = vibration == null
         ? ''
@@ -1449,6 +1608,15 @@ class FreeSessionController extends GetxController {
 
     final int decidedAfterMs = _eventClockMs - impact.audioTsMs;
     _recorder.count('decision.IMPACT.$code');
+    if (camera == CameraGateState.startupGrace) {
+      _recorder.count('cam.startup_grace_pass');
+    } else if (camera == CameraGateState.valid &&
+        cameraPresenceWindowEnabled &&
+        observation != null &&
+        observation.state != CameraGateState.valid) {
+      // Valid only thanks to the presence window (latest frame was not valid).
+      _recorder.count('cam.presence_window_pass');
+    }
     _recorder.count(
       valid
           ? 'impact.valid'
@@ -1471,11 +1639,14 @@ class FreeSessionController extends GetxController {
       'vibeWindowPeak': vibePeak,
       'vibeThreshold': minVibrationThreshold.value,
       'cameraState': camera?.name,
+      'cameraLatestFrame': observation?.state.name,
+      'msSinceValidPerson': _presence.msSinceValid(impact.audioTsMs),
+      'presenceWindow': cameraPresenceWindowEnabled,
       'cameraRatio': observation?.ratio,
       'cameraDetail': observation?.detail,
       'decidedAfterMs': decidedAfterMs,
       'processingLagMs':
-          DateTime.now().millisecondsSinceEpoch - impact.audioTsMs,
+          _clock() - impact.audioTsMs,
       'msSinceLastPunch': _lastPunchTimestampMs > 0
           ? impact.audioTsMs - _lastPunchTimestampMs
           : null,
@@ -1528,6 +1699,101 @@ class FreeSessionController extends GetxController {
     _triggerPunchHaptic();
   }
 
+  // ─── Screen-touch lockout ──────────────────────────────────────────────────
+  // A tap on the phone sounds and shakes like a small impact. No impact counts
+  // from touchLockoutBeforeMs before to touchLockoutAfterMs after a pointer-down.
+  // The touch event can arrive after the tap's sound was already counted, so a
+  // pointer-down also takes back a punch counted in the "before" part.
+
+  /// Punches counted in the last couple of seconds (for touch take-backs).
+  final List<_RegisteredPunch> _recentPunches = <_RegisteredPunch>[];
+
+  bool _isTouchLocked(int tMs) =>
+      touchLockoutEnabled && _touchLockout.isLocked(tMs);
+
+  String _touchReason(int tMs) {
+    final int? touch = _touchLockout.touchCovering(tMs);
+    if (touch == null) return 'Screen touch';
+    final int delta = tMs - touch;
+    return delta >= 0
+        ? 'Screen touch ${delta}ms before the impact'
+        : 'Screen touch ${-delta}ms after the impact';
+  }
+
+  /// Called by the session page on every pointer-down. [atMs] lets tests
+  /// supply the time; the app stamps it on arrival.
+  void notifyPointerDown({int? atMs}) {
+    final int touchMs = atMs ?? _clock();
+    _touchLockout.addTouch(touchMs);
+    _recorder.count('touch.pointer_down');
+    _recorder.record('touch', <String, Object?>{
+      'phase': 'down',
+      'lockout': touchLockoutEnabled,
+    }, atEpochMs: touchMs);
+    if (!touchLockoutEnabled) return;
+
+    final int lockStart = touchMs - AppConstants.touchLockoutBeforeMs;
+    final _PendingImpact? pending = _pendingImpact;
+    if (pending != null && pending.audioTsMs >= lockStart) {
+      _pendingImpact = null;
+      _recordImpactDecision(
+        impact: pending,
+        code: 'IMPACT_REJECTED_TOUCH',
+        reason: _touchReason(pending.audioTsMs),
+        valid: false,
+      );
+    }
+    for (final _RegisteredPunch punch in List<_RegisteredPunch>.of(
+      _recentPunches,
+    )) {
+      if (punch.tMs >= lockStart && punch.tMs <= touchMs) {
+        _retractPunch(punch, touchMs: touchMs);
+      }
+    }
+  }
+
+  /// Takes back a punch that turned out to be a screen tap.
+  void _retractPunch(_RegisteredPunch punch, {required int touchMs}) {
+    _recentPunches.remove(punch);
+    if (punchCount.value > 0) punchCount.value--;
+    if (punch.isLeft && leftPunchCount.value > 0) {
+      leftPunchCount.value--;
+    } else if (!punch.isLeft && rightPunchCount.value > 0) {
+      rightPunchCount.value--;
+    }
+    final String reason =
+        'Punch #${punch.number} taken back: screen touch ${touchMs - punch.tMs}ms after it';
+    _recorder.count('impact.retracted_touch');
+    _recorder.count('decision.IMPACT.IMPACT_REJECTED_TOUCH');
+    _recorder.record('decision', <String, Object?>{
+      'path': 'TOUCH_RETRACT',
+      'code': 'IMPACT_REJECTED_TOUCH',
+      'valid': false,
+      'punchNo': punch.number,
+      'touchMs': touchMs,
+      'msBeforeTouch': touchMs - punch.tMs,
+    }, atEpochMs: punch.tMs);
+    summaryTable.addRow(<String, Object?>{
+      'time': SessionEventRecorder.formatElapsed(
+        _recorder.elapsedForEpoch(punch.tMs),
+      ),
+      'kind': 'IMPACT',
+      'code': 'IMPACT_REJECTED_TOUCH',
+      'valid': false,
+      'punch_no': punch.number,
+      'detail': reason,
+    });
+    _insertSpikeLog(
+      '↩️ [RETRACTED PUNCH #${punch.number}] IMPACT_REJECTED_TOUCH | $reason',
+      atEpochMs: touchMs,
+      alsoInPunchLog: true,
+    );
+    detectionStatusText.value = 'Punch taken back (screen touch)';
+  }
+
+  /// Test hook: set the session start time (normally set in onInit).
+  void setSessionStartForTesting(int startMs) => _sessionStartTimeMs = startMs;
+
   /// Test hook: feed a vibration sample with an explicit time.
   void ingestVibrationSampleForTesting(double mag, {required int atEpochMs}) =>
       _handleVibrationSample(mag, atEpochMs: atEpochMs);
@@ -1564,7 +1830,7 @@ class FreeSessionController extends GetxController {
   );
 
   void _checkPunchDetection({int? frameTimestampMs}) {
-    final int nowMs = DateTime.now().millisecondsSinceEpoch;
+    final int nowMs = _clock();
     _noteEventClock(frameTimestampMs ?? nowMs);
 
     // Dynamic Session Start Warmup: ignore audio & vision spikes from screen transition / tap sound
@@ -1657,6 +1923,7 @@ class FreeSessionController extends GetxController {
       onApplyAutoConfig: applyAutoConfig,
       onOpened: notifySettingsViewOpened,
       onClosed: notifySettingsViewClosed,
+      debugToggles: AppConstants.showAllFeatures ? _debugToggles : null,
     );
   }
 
@@ -1747,6 +2014,23 @@ class FreeSessionController extends GetxController {
       _recorder.count('punch.blocked_by_settings_gate');
       return;
     }
+    if (_isTouchLocked(nowMs)) {
+      // Audio-only, vibration-only and camera-only modes end up here; the
+      // impact-window modes were already rejected before opening a window.
+      _recorder.count('punch.blocked_by_touch');
+      _recorder.record('decision', <String, Object?>{
+        'path': 'TOUCH',
+        'code': 'IMPACT_REJECTED_TOUCH',
+        'valid': false,
+        'status': status,
+      }, atEpochMs: nowMs);
+      _insertSpikeLog(
+        '🔴 [REJECTED] IMPACT_REJECTED_TOUCH | ${_touchReason(nowMs)} | $status',
+        atEpochMs: nowMs,
+      );
+      detectionStatusText.value = 'Impact Rejected (screen touch)';
+      return;
+    }
 
     // Instrumentation only: read the sensor peak before it is consumed below.
     final int interPunchMs = _prevRegisteredPunchMs > 0
@@ -1775,17 +2059,15 @@ class FreeSessionController extends GetxController {
 
     punchCount.value++;
     final String armUpper = (arm ?? status).toUpperCase();
-    if (armUpper.contains('LEFT')) {
+    final bool isLeft = armUpper.contains('LEFT') ||
+        (!armUpper.contains('RIGHT') && punchCount.value % 2 != 0);
+    if (isLeft) {
       leftPunchCount.value++;
-    } else if (armUpper.contains('RIGHT')) {
-      rightPunchCount.value++;
     } else {
-      if (punchCount.value % 2 == 0) {
-        rightPunchCount.value++;
-      } else {
-        leftPunchCount.value++;
-      }
+      rightPunchCount.value++;
     }
+    _recentPunches.add(_RegisteredPunch(nowMs, punchCount.value, isLeft));
+    _recentPunches.removeWhere((_RegisteredPunch p) => nowMs - p.tMs > 2000);
     _lastPunchTimestampMs = nowMs;
     // Reset audio & vibration state so the exact same strike cannot re-trigger a second punch
     _lastAudioPunchTimestampMs = nowMs;
@@ -1882,7 +2164,7 @@ class FreeSessionController extends GetxController {
         targetResolution,
         enableAudio: false,
         imageFormatGroup: ImageFormatGroup.nv21,
-        fps: AppConstants.globalAudioSampleIntervalMs,
+        fps: AppConstants.cameraFps,
       );
 
       await cameraController!.initialize();
@@ -2235,7 +2517,7 @@ class FreeSessionController extends GetxController {
       isValidPose: true,
     );
 
-    final int nowMs = DateTime.now().millisecondsSinceEpoch;
+    final int nowMs = _clock();
 
     final bool isDeviceStableHardware = _stabilityService.isDeviceStable;
     if (!isDeviceStableHardware) {
@@ -2447,7 +2729,7 @@ class FreeSessionController extends GetxController {
   }
 
   void finishSession() {
-    final int nowMs = DateTime.now().millisecondsSinceEpoch;
+    final int nowMs = _clock();
     final int durationSec = max(
       1,
       ((nowMs - _sessionStartTimeMs) / 1000).round(),
@@ -2521,6 +2803,15 @@ class _PendingImpact {
     required this.riseDb,
     required this.targetDb,
   });
+}
+
+/// A counted punch, kept briefly so a late screen-touch event can take it back.
+class _RegisteredPunch {
+  final int tMs;
+  final int number;
+  final bool isLeft;
+
+  const _RegisteredPunch(this.tMs, this.number, this.isLeft);
 }
 
 /// One vibration stream sample kept for timestamp lookups.

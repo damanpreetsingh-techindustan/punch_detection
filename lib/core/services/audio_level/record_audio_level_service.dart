@@ -5,7 +5,9 @@ import 'dart:math';
 import 'dart:typed_data';
 import 'package:record/record.dart';
 import '../../utils/constants.dart';
+import '../../utils/monotonic_clock.dart';
 import 'audio_level_sample.dart';
+import 'audio_session_channel.dart';
 import 'i_audio_level_service.dart';
 import 'pcm_level_extractor.dart';
 
@@ -180,7 +182,7 @@ class RecordAudioLevelService implements IAudioLevelService {
       _sampleStreamController.add(
         AudioLevelSample(
           db: _currentDecibels,
-          timestampMs: DateTime.now().millisecondsSinceEpoch,
+          timestampMs: MonotonicClock.epochMs(),
           clipped: rawDbFS >= -0.5,
         ),
       );
@@ -190,7 +192,7 @@ class RecordAudioLevelService implements IAudioLevelService {
   /// Handles one raw PCM chunk: splits it into blocks and publishes them with
   /// timestamps back-dated from the chunk arrival time.
   void _onPcmChunk(Uint8List bytes) {
-    final int arrivalMs = DateTime.now().millisecondsSinceEpoch;
+    final int arrivalMs = MonotonicClock.epochMs();
     final Completer<void>? first = _firstChunk;
     if (first != null && !first.isCompleted) first.complete();
 
@@ -245,15 +247,56 @@ class RecordAudioLevelService implements IAudioLevelService {
   static int _bufferBytesForChunkMs(int chunkMs) =>
       (chunkMs * _pcmSampleRate / 1000).round() * 2;
 
-  /// Tries the PCM stream with each candidate chunk length (smallest first) and
-  /// keeps the first that starts and delivers data. Returns false if none do.
+  /// Android audio sources to try, in order. With the unprocessed experiment on:
+  /// UNPROCESSED (only when the device reports support), then VOICE_RECOGNITION.
+  Future<List<AndroidAudioSource>> _androidSourcesToTry() async {
+    if (!Platform.isAndroid || !AppConstants.audioExperimentUnprocessedSource) {
+      return const <AndroidAudioSource>[AndroidAudioSource.defaultSource];
+    }
+    final Map<String, Object?> caps = await AudioSessionChannel.capabilities();
+    _startInfo['androidAudioCaps'] = caps;
+    // Unknown support (no native answer): still try UNPROCESSED first.
+    final bool unprocessedSupported = caps['unprocessedSupported'] != false;
+    return <AndroidAudioSource>[
+      if (unprocessedSupported) AndroidAudioSource.unprocessed,
+      AndroidAudioSource.voiceRecognition,
+    ];
+  }
+
+  /// iOS with the unprocessed experiment on: the app (not the plugin) owns the
+  /// audio session and puts it in `measurement` mode before recording starts.
+  Future<void> _configureIosSessionIfNeeded() async {
+    if (!Platform.isIOS || !AppConstants.audioExperimentUnprocessedSource) {
+      return;
+    }
+    try {
+      await _audioRecorder?.ios?.manageAudioSession(false);
+    } catch (_) {}
+    _startInfo['iosSession'] = await AudioSessionChannel.configureIosSession(
+      measurementMode: true,
+    );
+  }
+
+  /// Tries the PCM stream with each audio source and candidate chunk length
+  /// (smallest first) and keeps the first that starts and delivers data.
+  /// Returns false if none do.
   Future<bool> _startSubBlockPcm(InputDevice? device, int blockMs) async {
     final List<Map<String, Object?>> attempts = <Map<String, Object?>>[];
     final List<int?> candidatesMs = <int?>[
       ...AppConstants.audioStreamChunkCandidatesMs,
       null,
     ];
-    for (final int? chunkMs in candidatesMs) {
+    final bool micProcessing = !AppConstants.audioExperimentDisableMicProcessing;
+    _startInfo['micProcessing'] = micProcessing;
+    _startInfo['unprocessedExperiment'] =
+        AppConstants.audioExperimentUnprocessedSource;
+    await _configureIosSessionIfNeeded();
+    final List<AndroidAudioSource> sources = await _androidSourcesToTry();
+    final List<(AndroidAudioSource, int?)> plan = <(AndroidAudioSource, int?)>[
+      for (final AndroidAudioSource source in sources)
+        for (final int? chunkMs in candidatesMs) (source, chunkMs),
+    ];
+    for (final (AndroidAudioSource source, int? chunkMs) in plan) {
       final int? bufferBytes = chunkMs == null
           ? null
           : _bufferBytesForChunkMs(chunkMs);
@@ -263,15 +306,11 @@ class RecordAudioLevelService implements IAudioLevelService {
           sampleRate: _pcmSampleRate,
           numChannels: 1,
           device: device,
-          echoCancel: !AppConstants.audioExperimentDisableMicProcessing,
+          echoCancel: micProcessing,
           autoGain:
               false, // Disables Automatic Gain Control so quiet background noise isn't boosted
-          noiseSuppress: !AppConstants.audioExperimentDisableMicProcessing,
-          androidConfig: AndroidRecordConfig(
-            audioSource: AppConstants.audioExperimentUnprocessedSource
-                ? AndroidAudioSource.unprocessed
-                : AndroidAudioSource.defaultSource,
-          ),
+          noiseSuppress: micProcessing,
+          androidConfig: AndroidRecordConfig(audioSource: source),
           streamBufferSize: bufferBytes,
         );
         _extractor = PcmLevelExtractor(
@@ -304,12 +343,14 @@ class RecordAudioLevelService implements IAudioLevelService {
 
         _pcmActive = true;
         attempts.add(<String, Object?>{
+          'source': source.name,
           'requestedChunkMs': chunkMs,
           'bufferBytes': bufferBytes,
           'ok': true,
         });
         _startInfo
           ..['mode'] = 'pcm_subblock'
+          ..['audioSource'] = Platform.isAndroid ? source.name : 'ios'
           ..['requestedChunkMs'] = chunkMs
           ..['bufferBytes'] = bufferBytes
           ..['sampleRate'] = _pcmSampleRate
@@ -318,6 +359,7 @@ class RecordAudioLevelService implements IAudioLevelService {
         return true;
       } catch (e) {
         attempts.add(<String, Object?>{
+          'source': source.name,
           'requestedChunkMs': chunkMs,
           'bufferBytes': bufferBytes,
           'ok': false,

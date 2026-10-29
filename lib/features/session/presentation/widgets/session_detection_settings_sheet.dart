@@ -10,6 +10,21 @@ import '../../../../core/utils/size_box.dart';
 import '../../domain/services/auto_config_evaluator.dart';
 import 'auto_config_dialog.dart';
 
+/// One on/off switch in the sheet's debug / experiments section.
+class SettingsDebugToggle {
+  final String title;
+  final String subtitle;
+  final RxBool value;
+  final ValueChanged<bool> onChanged;
+
+  const SettingsDebugToggle({
+    required this.title,
+    required this.subtitle,
+    required this.value,
+    required this.onChanged,
+  });
+}
+
 /// Opens an adaptive, live bottom sheet to adjust Audio, Vibration & Camera detection parameters.
 /// Automatically adapts with tailored layouts for Portrait and Landscape orientations.
 /// In Landscape, utilizes the full screen width with an executive two-column dashboard layout.
@@ -41,6 +56,7 @@ void showSessionDetectionSettingsSheet(
   Function(AutoConfigResult)? onApplyAutoConfig,
   VoidCallback? onOpened,
   VoidCallback? onClosed,
+  List<SettingsDebugToggle>? debugToggles,
 }) async {
   onOpened?.call();
   try {
@@ -76,6 +92,7 @@ void showSessionDetectionSettingsSheet(
         onApplyAutoConfig: onApplyAutoConfig,
         onOpened: onOpened,
         onClosed: onClosed,
+        debugToggles: debugToggles,
       ),
     );
   } finally {
@@ -110,6 +127,7 @@ class _SessionDetectionSettingsSheetContent extends StatelessWidget {
   final Function(AutoConfigResult)? onApplyAutoConfig;
   final VoidCallback? onOpened;
   final VoidCallback? onClosed;
+  final List<SettingsDebugToggle>? debugToggles;
 
   const _SessionDetectionSettingsSheetContent({
     required this.staticCalibratedAudioDb,
@@ -137,6 +155,7 @@ class _SessionDetectionSettingsSheetContent extends StatelessWidget {
     this.onApplyAutoConfig,
     this.onOpened,
     this.onClosed,
+    this.debugToggles,
   });
 
   @override
@@ -309,6 +328,7 @@ class _SessionDetectionSettingsSheetContent extends StatelessWidget {
                   ),
                   8.height,
                   _buildDeviceStabilityTile(context, isLandscape: true),
+                  _buildDebugToggles(context, isLandscape: true),
                 ],
               ),
             ),
@@ -369,6 +389,7 @@ class _SessionDetectionSettingsSheetContent extends StatelessWidget {
           _buildVisionConfirmationModeSelector(context, isLandscape: false),
           10.height,
           _buildDeviceStabilityTile(context, isLandscape: false),
+          _buildDebugToggles(context, isLandscape: false),
 
           // ─── OPTIONAL: OPEN FULL APP SETTINGS BUTTON (COMMENTED OUT) ───
           // 14.height,
@@ -1731,6 +1752,78 @@ class _SessionDetectionSettingsSheetContent extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+
+  // ─── DEBUG / EXPERIMENT SWITCHES ───
+  Widget _buildDebugToggles(BuildContext context, {required bool isLandscape}) {
+    final List<SettingsDebugToggle> toggles =
+        debugToggles ?? const <SettingsDebugToggle>[];
+    if (toggles.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(height: isLandscape ? 8.h : 12.h),
+        Text(
+          'DEBUG / EXPERIMENTS',
+          style: TextStyle(
+            color: AppColors.amber,
+            fontSize: isLandscape ? 9.ts(context) : 10.5.ts(context),
+            fontWeight: FontWeight.w900,
+            letterSpacing: 0.6,
+          ),
+        ),
+        for (final SettingsDebugToggle toggle in toggles)
+          Obx(
+            () => Container(
+              margin: EdgeInsets.only(top: isLandscape ? 4.h : 6.h),
+              padding: EdgeInsets.symmetric(
+                horizontal: isLandscape ? 10.w : 12.w,
+                vertical: isLandscape ? 2.h : 4.h,
+              ),
+              decoration: BoxDecoration(
+                color: AppColors.surface.withValues(alpha: 0.6),
+                borderRadius: BorderRadius.circular(12.r),
+                border: Border.all(color: AppColors.border),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          toggle.title,
+                          style: TextStyle(
+                            color: AppColors.textPrimary,
+                            fontSize: isLandscape
+                                ? 10.ts(context)
+                                : 11.5.ts(context),
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        Text(
+                          toggle.subtitle,
+                          style: TextStyle(
+                            color: AppColors.textMuted,
+                            fontSize: isLandscape
+                                ? 8.ts(context)
+                                : 9.5.ts(context),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Switch(
+                    value: toggle.value.value,
+                    activeThumbColor: AppColors.amber,
+                    onChanged: toggle.onChanged,
+                  ),
+                ],
+              ),
+            ),
+          ),
+      ],
     );
   }
 

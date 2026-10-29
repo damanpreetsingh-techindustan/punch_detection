@@ -30,6 +30,10 @@ class SessionArguments {
   /// Static base calibrated decibel level captured during pre-check calibration.
   final double? calibratedDb;
 
+  /// Raw pre-check calibration data (floor statistics and every block level).
+  /// Logged by the session recorder; never used for detection.
+  final Map<String, Object?>? calibrationReport;
+
   const SessionArguments({
     required this.sessionType,
     this.promptMode,
@@ -44,6 +48,7 @@ class SessionArguments {
     this.spikeThresholdDb = 10.0,
     this.targetPunchDb,
     this.calibratedDb,
+    this.calibrationReport,
   });
 
   factory SessionArguments.fromArguments(dynamic args) {
@@ -64,6 +69,7 @@ class SessionArguments {
         targetPunchDb: args['targetPunchDb'] as double?,
         calibratedDb: args['calibratedDb'] as double? ??
             args['maxAudioDb'] as double?,
+        calibrationReport: args['calibrationReport'] as Map<String, Object?>?,
       );
     }
     if (args is String) return SessionArguments(sessionType: args);
@@ -85,6 +91,7 @@ class SessionArguments {
       'spikeThresholdDb': spikeThresholdDb,
       'targetPunchDb': targetPunchDb,
       'calibratedDb': calibratedDb,
+      'calibrationReport': calibrationReport,
     };
   }
 }
