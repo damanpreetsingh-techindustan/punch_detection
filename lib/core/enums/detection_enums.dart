@@ -151,3 +151,19 @@ enum EnvironmentPreset {
     required this.label,
   });
 }
+
+/// Which punch detector a Free session runs. `legacy` is the original
+/// audio-target + vibration + camera-gate path; `fusionV2` is the adaptive
+/// impact-fusion core in lib/detection_core (docs/detection-v2.md).
+enum DetectorEngine {
+  legacy,
+  fusionV2;
+
+  String get title => this == DetectorEngine.legacy
+      ? 'Legacy detector'
+      : 'fusionV2 (adaptive impact fusion)';
+
+  static DetectorEngine fromName(String? name) => name == 'fusionV2'
+      ? DetectorEngine.fusionV2
+      : DetectorEngine.legacy;
+}

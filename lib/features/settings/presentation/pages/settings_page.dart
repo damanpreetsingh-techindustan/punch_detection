@@ -112,6 +112,19 @@ class SettingsPage extends GetView<SettingsController> {
                 Obx(
                   () => _buildSwitch(
                     context: context,
+                    title: 'Detection engine: fusionV2',
+                    subtitle:
+                        'Experimental adaptive impact-fusion detector for Free '
+                        'sessions (low-latency native mic, full-rate '
+                        'accelerometer, camera as a soft prior). Off = legacy.',
+                    value: controller.useFusionV2.value,
+                    onChanged: controller.setUseFusionV2,
+                  ),
+                ),
+                12.height,
+                Obx(
+                  () => _buildSwitch(
+                    context: context,
                     title: 'Record raw data',
                     subtitle:
                         '16 kHz audio, full-rate accelerometer, camera landmarks '

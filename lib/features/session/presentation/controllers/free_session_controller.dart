@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:developer' as developer;
 import 'dart:io' show Platform;
 import 'dart:math';
@@ -30,7 +31,13 @@ import '../../../../core/services/device_stability/device_stability_service.dart
 import '../../../../core/services/device_stability/i_device_stability_service.dart';
 import '../../../../core/services/device_vibration/device_vibration_service.dart';
 import '../../../../core/services/device_vibration/i_device_vibration_service.dart';
+import 'package:flutter/scheduler.dart' show SchedulerBinding;
+import 'package:punch_detection_demo/detection_core/config/detector_config.dart';
+import 'package:punch_detection_demo/detection_core/scoring/logistic_scorer.dart';
+import '../../../../core/services/audio_level/pcm_level_extractor.dart';
 import '../../../../core/services/audio_level/raw_pcm_source.dart';
+import '../../../../core/services/fusion_v2/fusion_v2_session.dart';
+import '../../../../core/services/fusion_v2/native_pcm_capture.dart';
 import '../../../../core/services/raw_sensors/device_info_channel.dart';
 import '../../../../core/services/raw_sensors/raw_accelerometer_service.dart';
 import '../../../../core/services/session_recording/raw_sensor_recorder.dart';
@@ -95,7 +102,12 @@ class FreeSessionController extends GetxController with WidgetsBindingObserver {
     int Function()? clock,
     RawSensorRecorder? rawRecorder,
     RawAccelerometerService? rawAccelerometer,
+    DetectorEngine? engine,
+    FusionV2Session Function(MountProfile mount, RawAccelerometerService accel)?
+    fusionSessionFactory,
   }) : _clock = clock ?? MonotonicClock.epochMs,
+       detectorEngine = engine ?? AppConstants.detectorEngine,
+       _fusionFactory = fusionSessionFactory,
        _rawRecorder = rawRecorder ?? RawSensorRecorder(),
        _rawAccel = rawAccelerometer ?? RawAccelerometerService(),
        _recorder = recorder ?? SessionEventRecorder(),
@@ -209,9 +221,12 @@ class FreeSessionController extends GetxController with WidgetsBindingObserver {
         'osVersion': Platform.operatingSystemVersion,
         'mountType': mountType.value.name,
         'detectionMode': sessionMode.value.name,
-        'engine': 'legacy',
+        'engine': isFusionV2 ? 'fusionV2' : 'legacy',
         'flags': _configSnapshot(),
-        'audio': <String, Object?>{'service': _audioLevelService.diagnostics},
+        'audio': <String, Object?>{
+          'service': _fusion?.pcm.diagnostics ?? _audioLevelService.diagnostics,
+        },
+        if (isFusionV2) 'fusionLatency': fusionLatencyStats,
         'accel': <String, Object?>{'service': _rawAccel.diagnostics},
         'camera': _cameraRateStats(),
         // Includes interval.vibe_stream_ms (legacy 50 Hz vibration stream) etc.
@@ -283,6 +298,352 @@ class FreeSessionController extends GetxController with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _recorder.record('ui', <String, Object?>{'lifecycle': state.name});
   }
+
+  // ─── fusionV2 engine (Phase 4) ─────────────────────────────────────────────
+  // The detector core runs on a background isolate (FusionV2Session); this
+  // controller only relays context (touch, settings, camera, pose, frames) and
+  // turns accepted decisions into punches. Vibration-only and camera-only
+  // modes keep the legacy logic.
+
+  /// Engine chosen for this session (Settings -> Debug).
+  final DetectorEngine detectorEngine;
+  final FusionV2Session Function(MountProfile, RawAccelerometerService)?
+  _fusionFactory;
+  FusionV2Session? _fusion;
+  final List<StreamSubscription<Object?>> _fusionSubs =
+      <StreamSubscription<Object?>>[];
+  final RxString engineDebugText = ''.obs;
+  final RxBool isQuickCalibrating = false.obs;
+  final List<double> _e2eLatenciesMs = <double>[];
+  final List<double> _coreLatenciesMs = <double>[];
+  Map<String, Object?> _fusionDebug = const <String, Object?>{};
+  double? _lastFusionP;
+  int _lastMeterUpdateMs = 0;
+  double _meterPeakDb = 0;
+  int _rawFusionChunks = 0;
+
+  bool get isFusionV2 =>
+      detectorEngine == DetectorEngine.fusionV2 &&
+      sessionMode.value.requiresMicrophone;
+
+  FusionV2Session? get fusionSession => _fusion;
+
+  MountProfile get _mountProfile => mountType.value.isVibrationDisabled
+      ? MountProfile.rig
+      : MountProfile.wall;
+
+  int get _nowUs => _clock() * 1000;
+
+  void _createFusionSession() {
+    final FusionV2Session session =
+        _fusionFactory?.call(_mountProfile, _rawAccel) ??
+        FusionV2Session(
+          mount: _mountProfile,
+          accel: _rawAccel,
+          useAccelerometer: sessionMode.value.requiresVibration,
+          useArmMotion: sessionMode.value.requiresCamera,
+        );
+    _fusion = session;
+    _fusionSubs
+      ..add(session.decisions.listen(_onFusionDecision))
+      ..add(session.debug.listen(_onFusionDebug))
+      ..add(session.calibration.listen(_onQuickCalibrationResult))
+      ..add(
+        session.armResults.listen(
+          (Map<String, Object?> r) => _recorder.record(
+            'arm_motion',
+            r,
+            atEpochMs: ((r['tUs'] as num?)?.toInt() ?? _nowUs) ~/ 1000,
+          ),
+        ),
+      )
+      ..add(session.pcm.batches.listen(_onFusionPcm))
+      ..add(
+        session.errors.listen(
+          (String e) =>
+              _recorder.record('ui', <String, Object?>{'fusionError': e}),
+        ),
+      );
+  }
+
+  Future<void> _startFusionV2() async {
+    final FusionV2Session? session = _fusion;
+    if (session == null) return;
+    detectionStatusText.value = 'Starting fusionV2 engine…';
+    final ScorerSet? scorer = await _loadScorer(_mountProfile);
+    bool ok;
+    try {
+      ok = await session.start(
+        scorer: scorer,
+        audioSource: AppConstants.audioExperimentUnprocessedSource
+            ? 'unprocessed'
+            : 'mic',
+        measurementMode: AppConstants.audioExperimentUnprocessedSource,
+      );
+    } catch (e) {
+      ok = false;
+      _recorder.record('ui', <String, Object?>{'fusionStartError': '$e'});
+    }
+    _recorder.record('audio_service', <String, Object?>{
+      'mode': 'fusionV2_native',
+      'ok': ok,
+      'mount': _mountProfile.name,
+      'scorer': scorer?.source ?? 'built-in defaults',
+      ...session.pcm.diagnostics,
+    });
+    if (isCameraInitialized.value) session.camera(true, _nowUs);
+    detectionStatusText.value = ok
+        ? 'fusionV2 engine running (${_mountProfile.name})'
+        : 'fusionV2: microphone could not start';
+  }
+
+  /// Mount weights from `assets/detector/{mount}.json` (null = built-in).
+  Future<ScorerSet?> _loadScorer(MountProfile mount) async {
+    try {
+      final String json = await rootBundle.loadString(
+        'assets/detector/${mount.name}.json',
+      );
+      return ScorerSet.fromJson(
+        (jsonDecode(json) as Map).cast<String, Object?>(),
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  void _onFusionPcm(PcmBatch b) {
+    // Live meter (UI only): loudest block, refreshed at most every 50 ms.
+    int peak = 0;
+    for (final int s in b.samples) {
+      final int a = s.abs();
+      if (a > peak) peak = a;
+    }
+    final double db = PcmLevelExtractor.mapDbfsToDb(
+      PcmLevelExtractor.peakToDbfs(peak),
+    );
+    _meterPeakDb = max(_meterPeakDb, db);
+    final int nowMs = b.arrivalUs ~/ 1000;
+    if (nowMs - _lastMeterUpdateMs >= 50) {
+      _lastMeterUpdateMs = nowMs;
+      liveDecibelLevel.value = _meterPeakDb;
+      decibelHistory.add(_meterPeakDb);
+      if (decibelHistory.length > 50) decibelHistory.removeAt(0);
+      if (_meterPeakDb > peakAudioDbRecorded.value) {
+        peakAudioDbRecorded.value = _meterPeakDb;
+      }
+      _meterPeakDb = 0;
+    }
+    if (_rawRecorder.isActive) {
+      _rawRecorder.addPcmChunk(
+        RawPcmChunk(
+          bytes: b.samples.buffer.asUint8List(),
+          sampleRate: b.sampleRate,
+          channels: 1,
+          arrivalUs: b.arrivalUs,
+          chunkIndex: ++_rawFusionChunks,
+        ),
+      );
+    }
+  }
+
+  void _onFusionDecision(Map<String, Object?> message) {
+    final Map<String, Object?> d = (message['decision']! as Map)
+        .cast<String, Object?>();
+    final bool calibrating = message['calibrating'] == true;
+    final int onsetMs = (d['onsetUs']! as num).toInt() ~/ 1000;
+    final int decidedMs = (d['decidedUs']! as num).toInt() ~/ 1000;
+    final bool accepted = d['accepted'] == true;
+    final double p = (d['p']! as num).toDouble();
+    final double coreLatencyMs = (d['latencyMs']! as num).toDouble();
+    final String path = '${d['path']}';
+    final String hand = '${d['hand']}';
+    final int receivedMs = _clock();
+    _lastFusionP = p;
+
+    _recorder.count(
+      calibrating
+          ? 'fusion.calibration_decisions'
+          : (accepted ? 'fusion.accepted' : 'fusion.rejected'),
+    );
+    _recorder.count('fusion.path.$path');
+    _recorder.stat('latency.core_ms', coreLatencyMs);
+    _recorder.stat('latency.delivery_ms', (receivedMs - decidedMs).toDouble());
+    _recorder.record('decision', <String, Object?>{
+      'path': 'FUSION_V2',
+      'calibrating': calibrating,
+      'receivedMs': receivedMs,
+      ...d,
+    }, atEpochMs: onsetMs);
+    summaryTable.addRow(<String, Object?>{
+      'time': SessionEventRecorder.formatElapsed(
+        _recorder.elapsedForEpoch(onsetMs),
+      ),
+      'kind': 'IMPACT',
+      'code': 'FUSION_V2_${path.toUpperCase()}',
+      'valid': accepted && !calibrating,
+      'detail': 'p=${p.toStringAsFixed(3)} ${d['reason']} '
+          '(${d['mode']}, core ${coreLatencyMs.toStringAsFixed(0)} ms)',
+    });
+    _updateEngineDebugText();
+
+    if (calibrating) {
+      detectionStatusText.value =
+          'Quick calibration: impact seen (p=${p.toStringAsFixed(2)})';
+      return;
+    }
+    if (!accepted) {
+      _insertSpikeLog(
+        '🔴 [REJECTED] FUSION_V2 ${path.toUpperCase()} (${d['reason']}) | '
+        'p=${p.toStringAsFixed(3)} | core ${coreLatencyMs.toStringAsFixed(0)} ms',
+        atEpochMs: onsetMs,
+      );
+      return;
+    }
+    _coreLatenciesMs.add(coreLatencyMs);
+    final int before = punchCount.value;
+    _registerPunch(
+      onsetMs,
+      '★ PUNCH CONFIRMED! (fusionV2 p=${p.toStringAsFixed(2)}, $path)',
+      arm: hand == 'unknown' ? null : hand,
+      telemetryLog:
+          'Mode: FUSION_V2 ($path) | p=${p.toStringAsFixed(3)} '
+          '(raw ${(d['pRaw']! as num).toStringAsFixed(3)}) | core '
+          '${coreLatencyMs.toStringAsFixed(0)} ms | hand $hand',
+    );
+    if (punchCount.value == before) return; // blocked (touch / settings)
+    // End-to-end latency: impact onset -> the frame that shows the new count.
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      final int renderedMs = _clock();
+      final double e2e = (renderedMs - onsetMs).toDouble();
+      _e2eLatenciesMs.add(e2e);
+      _recorder.stat('latency.e2e_ms', e2e);
+      _recorder.record('latency', <String, Object?>{
+        'onsetMs': onsetMs,
+        'decidedMs': decidedMs,
+        'receivedMs': receivedMs,
+        'renderedMs': renderedMs,
+        'coreMs': coreLatencyMs,
+        'e2eMs': e2e,
+      }, atEpochMs: onsetMs);
+      _updateEngineDebugText();
+    });
+    SchedulerBinding.instance.ensureVisualUpdate();
+  }
+
+  void _onFusionDebug(Map<String, Object?> message) {
+    _fusionDebug = (message['state'] as Map?)?.cast<String, Object?>() ??
+        const <String, Object?>{};
+    _updateEngineDebugText();
+  }
+
+  static double? _percentile(List<double> values, double p) {
+    if (values.isEmpty) return null;
+    final List<double> s = List<double>.of(values)..sort();
+    return s[((p / 100) * (s.length - 1)).round()];
+  }
+
+  /// Median / p95 of the end-to-end latency (impact onset -> counter render).
+  Map<String, Object?> get fusionLatencyStats => <String, Object?>{
+    'e2eCount': _e2eLatenciesMs.length,
+    'e2eMedianMs': _percentile(_e2eLatenciesMs, 50),
+    'e2eP95Ms': _percentile(_e2eLatenciesMs, 95),
+    'coreMedianMs': _percentile(_coreLatenciesMs, 50),
+    'coreP95Ms': _percentile(_coreLatenciesMs, 95),
+  };
+
+  void _updateEngineDebugText() {
+    if (!isFusionV2) return;
+    String n(Object? v, [int digits = 0]) =>
+        v is num ? v.toStringAsFixed(digits) : '-';
+    final List<Object?> floors =
+        (_fusionDebug['audioFloorsDb'] as List?) ?? const <Object?>[];
+    final Map<String, Object?> lat = fusionLatencyStats;
+    engineDebugText.value = <String>[
+      'Engine: fusionV2 (${_mountProfile.name})'
+          '${isQuickCalibrating.value ? ' · CALIBRATING' : ''}',
+      'Audio floors dB: ${floors.map((Object? f) => n(f)).join(' / ')} '
+          '(full ${n(_fusionDebug['audioFullFloorDb'])})',
+      'Jerk floor ${n(_fusionDebug['jerkFloor'])} m/s³ · decay '
+          '${n(_fusionDebug['decayDbPerS'])} dB/s · ring '
+          '${n(_fusionDebug['ringTauMs'])} ms · lag '
+          '${n(_fusionDebug['learnedLagMs'], 1)} ms',
+      'Last p ${n(_lastFusionP, 3)} · last core latency '
+          '${n(_fusionDebug['lastLatencyMs'])} ms',
+      'Latency impact→counter: median ${n(lat['e2eMedianMs'])} / p95 '
+          '${n(lat['e2eP95Ms'])} ms (n=${lat['e2eCount']}) · core median '
+          '${n(lat['coreMedianMs'])} / p95 ${n(lat['coreP95Ms'])} ms',
+    ].join('\n');
+  }
+
+  /// Optional 10 s quick calibration: "throw 5 punches, 2 of them low".
+  /// Punches during the calibration are not counted.
+  void startQuickCalibration() {
+    final FusionV2Session? session = _fusion;
+    if (session == null || isQuickCalibrating.value) return;
+    isQuickCalibrating.value = true;
+    session.startQuickCalibration(_nowUs);
+    _recorder.record('ui', <String, Object?>{'quickCalibration': 'start'});
+    detectionStatusText.value =
+        'Quick calibration (10 s): throw 5 punches, 2 of them low';
+    _updateEngineDebugText();
+  }
+
+  void _onQuickCalibrationResult(Map<String, Object?> message) {
+    final Map<String, Object?> result =
+        (message['result'] as Map?)?.cast<String, Object?>() ??
+        const <String, Object?>{};
+    isQuickCalibrating.value = false;
+    _recorder.record('quick_calibration', result);
+    detectionStatusText.value = '${result['message']}';
+    _insertSpikeLog(
+      '⚙️ [QUICK CALIBRATION] ${result['message']} | lag '
+      '${(result['lagMs'] as num?)?.toStringAsFixed(1) ?? '-'} ms | decay '
+      '${(result['decayDbPerS'] as num?)?.toStringAsFixed(0)} dB/s | ring '
+      '${(result['ringTauMs'] as num?)?.toStringAsFixed(0)} ms | suggested mount '
+      '${result['suggestedMount']}',
+    );
+    _updateEngineDebugText();
+  }
+
+  /// Sends the camera frame to the optical-flow isolate (dropped when busy).
+  void _sendFrameToArmMotion(CameraImage image, int arrivalMs) {
+    final FusionV2Session? session = _fusion;
+    final CameraDescription? camera = _activeCamera;
+    if (session == null || camera == null || image.planes.isEmpty) return;
+    final Plane plane = image.planes.first;
+    final bool bgra = image.format.group == ImageFormatGroup.bgra8888;
+    final int bytes = min(plane.bytes.length, plane.bytesPerRow * image.height);
+    session.sendFrame(
+      bytes: Uint8List.sublistView(plane.bytes, 0, bytes),
+      width: image.width,
+      height: image.height,
+      rowStride: plane.bytesPerRow,
+      rotationDegrees: _getImageRotation(camera).rawValue,
+      tUs: arrivalMs * 1000,
+      bgra: bgra,
+    );
+  }
+
+  void _sendPoseToArmMotion(Pose pose) {
+    final FusionV2Session? session = _fusion;
+    if (session == null) return;
+    List<double>? lm(PoseLandmarkType type) {
+      final PoseLandmark? p = pose.landmarks[type];
+      return p == null ? null : <double>[p.x, p.y, p.likelihood];
+    }
+
+    session.sendPose(
+      tUs: _nowUs,
+      leftWrist: lm(PoseLandmarkType.leftWrist),
+      rightWrist: lm(PoseLandmarkType.rightWrist),
+      leftShoulder: lm(PoseLandmarkType.leftShoulder),
+      rightShoulder: lm(PoseLandmarkType.rightShoulder),
+    );
+  }
+
+  /// Test hook: feed a decision message as if the worker had sent it.
+  void handleFusionDecisionForTesting(Map<String, Object?> message) =>
+      _onFusionDecision(message);
 
   // Selected session mode: strongly-typed DetectionMode enum
   final Rx<DetectionMode> sessionMode = DetectionMode.fusion.obs;
@@ -398,6 +759,8 @@ class FreeSessionController extends GetxController with WidgetsBindingObserver {
     'cameraPresenceWindow': cameraPresenceWindowEnabled,
     'touchLockout': touchLockoutEnabled,
     'cameraFps': AppConstants.cameraFps,
+    'engine': detectorEngine.name,
+    'engineActive': isFusionV2 ? 'fusionV2' : 'legacy',
   };
 
   void _recordConfigChange(String reason) {
@@ -519,6 +882,19 @@ class FreeSessionController extends GetxController with WidgetsBindingObserver {
         '  Camera unavailable (% of tracked time)              : ${(unavailable * 100 / tracked).toStringAsFixed(1)}',
       );
     }
+    buffer.writeln(
+      '  Detection engine                                    : ${isFusionV2 ? 'fusionV2 (${_mountProfile.name})' : 'legacy'}',
+    );
+    if (isFusionV2) {
+      String ms(Object? v) => v is num ? '${v.toStringAsFixed(0)} ms' : '-';
+      final Map<String, Object?> lat = fusionLatencyStats;
+      buffer.writeln(
+        '  Latency impact -> counter (median / p95, n)         : ${ms(lat['e2eMedianMs'])} / ${ms(lat['e2eP95Ms'])}, ${lat['e2eCount']}',
+      );
+      buffer.writeln(
+        '  Latency inside the core (median / p95)              : ${ms(lat['coreMedianMs'])} / ${ms(lat['coreP95Ms'])}',
+      );
+    }
     buffer.write(_recorder.totals.toText());
     return buffer.toString();
   }
@@ -566,6 +942,7 @@ class FreeSessionController extends GetxController with WidgetsBindingObserver {
 
   void notifySettingsViewOpened() {
     _openSettingsViewsCount++;
+    _fusion?.settings(true, _nowUs);
     _recorder.record('settings', <String, Object?>{
       'open': true,
       'count': _openSettingsViewsCount,
@@ -584,6 +961,7 @@ class FreeSessionController extends GetxController with WidgetsBindingObserver {
         'count': _openSettingsViewsCount,
       });
       if (_openSettingsViewsCount == 0) {
+        _fusion?.settings(false, _nowUs);
         _settingsCooldownUntilMs =
             _clock() +
             AppConstants.postSettingsCooldownMs;
@@ -823,10 +1201,15 @@ class FreeSessionController extends GetxController with WidgetsBindingObserver {
       _calibrationReport ?? const <String, Object?>{'missing': true},
     );
     WidgetsBinding.instance.addObserver(this);
+    if (isFusionV2) _createFusionSession();
     if (AppConstants.recordRawSessionData) unawaited(_startRawRecording());
     _initPoseDetector();
     initCamera();
-    _startMicrophoneStream();
+    if (isFusionV2) {
+      unawaited(_startFusionV2());
+    } else {
+      _startMicrophoneStream();
+    }
     _startDeviceStabilityMonitor();
     _startDeviceVibrationMonitor();
   }
@@ -860,6 +1243,8 @@ class FreeSessionController extends GetxController with WidgetsBindingObserver {
     _noteEventClock(nowMs);
     _appendVibrationHistory(nowMs, mag);
     final bool vibeRisingEdge = _traceVibrationSample(mag, nowMs);
+    // fusionV2 reads the raw accelerometer itself; this stream is display only.
+    if (isFusionV2) return;
     // Audio + vibration (+ camera) modes: a pending impact may now be complete.
     if (_usesImpactWindow) _evaluatePendingImpact();
     final int vibrationRefractoryMs =
@@ -1092,7 +1477,8 @@ class FreeSessionController extends GetxController with WidgetsBindingObserver {
 
   /// Real-time decibel stream listener with frame-to-frame onset detection.
   Future<void> _startMicrophoneStream() async {
-    if (_audioLevelSubscription != null) return;
+    // fusionV2 owns the microphone through its native low-latency capture.
+    if (_audioLevelSubscription != null || isFusionV2) return;
 
     final bool started = await _audioLevelService.startMonitoring(
       sampleIntervalMs: audioSampleIntervalMs.value,
@@ -1505,7 +1891,10 @@ class FreeSessionController extends GetxController with WidgetsBindingObserver {
     int? atMs,
   }) {
     final int at = atMs ?? _clock();
-    if (state == CameraGateState.valid) _presence.noteValid(at);
+    if (state == CameraGateState.valid) {
+      _presence.noteValid(at);
+      _fusion?.person(at * 1000);
+    }
     final CameraGateState? previous = _cameraObservation?.state;
     _cameraObservation = _CameraObservation(
       state,
@@ -1881,6 +2270,7 @@ class FreeSessionController extends GetxController with WidgetsBindingObserver {
   void notifyPointerDown({int? atMs}) {
     final int touchMs = atMs ?? _clock();
     _touchLockout.addTouch(touchMs);
+    _fusion?.touch(touchMs * 1000);
     _recorder.count('touch.pointer_down');
     _recorder.record('touch', <String, Object?>{
       'phase': 'down',
@@ -2080,6 +2470,21 @@ class FreeSessionController extends GetxController with WidgetsBindingObserver {
       onOpened: notifySettingsViewOpened,
       onClosed: notifySettingsViewClosed,
       debugToggles: AppConstants.showAllFeatures ? _debugToggles : null,
+      debugInfo: isFusionV2 ? engineDebugText : null,
+      debugActions: isFusionV2
+          ? <SettingsDebugAction>[
+              SettingsDebugAction(
+                title: 'Quick calibration (10 s, optional)',
+                subtitle:
+                    'Throw 5 punches, 2 of them low. Learns lag, ring decay and '
+                    'your strength. Punches during it are not counted.',
+                onPressed: () {
+                  Navigator.of(context).maybePop();
+                  startQuickCalibration();
+                },
+              ),
+            ]
+          : null,
     );
   }
 
@@ -2325,6 +2730,7 @@ class FreeSessionController extends GetxController with WidgetsBindingObserver {
 
       await cameraController!.initialize();
       isCameraInitialized.value = true;
+      _fusion?.camera(true, _nowUs);
       _recorder.record('ui', <String, Object?>{
         'camera': 'initialized',
         'lens': _activeCamera?.lensDirection.name,
@@ -2352,6 +2758,7 @@ class FreeSessionController extends GetxController with WidgetsBindingObserver {
       _startImageStream();
     } catch (e) {
       isCameraUnavailable.value = true;
+      _fusion?.camera(false, _nowUs);
       _recorder.record('ui', <String, Object?>{
         'camera': 'unavailable',
         'error': e.toString(),
@@ -2393,6 +2800,7 @@ class FreeSessionController extends GetxController with WidgetsBindingObserver {
         }
         _isProcessingFrame = true;
         _cameraFramesAnalyzed++;
+        if (isFusionV2) _sendFrameToArmMotion(image, frameArrivalMs);
 
         // Capture image dimensions once for the validity gate normalisation.
         if (_cameraImageSize.width == 0) {
@@ -2520,6 +2928,7 @@ class FreeSessionController extends GetxController with WidgetsBindingObserver {
   ///   - Enforces an explosive velocity floor to eliminate false punches during rest
   ///   - Z-axis depth acceleration bonus for forward punches
   void _analyzeLivePose(Pose pose) {
+    if (isFusionV2) _sendPoseToArmMotion(pose);
     final rShoulder = pose.landmarks[PoseLandmarkType.rightShoulder];
     final lShoulder = pose.landmarks[PoseLandmarkType.leftShoulder];
     final nose = pose.landmarks[PoseLandmarkType.nose];
@@ -2911,6 +3320,7 @@ class FreeSessionController extends GetxController with WidgetsBindingObserver {
       1,
       ((nowMs - _sessionStartTimeMs) / 1000).round(),
     );
+    unawaited(_stopFusion());
     final String totalsText = buildSessionTotalsText(durationSec);
     _finishing = true;
     final String? eventsPath = _recorder.filePath;
@@ -2959,10 +3369,26 @@ class FreeSessionController extends GetxController with WidgetsBindingObserver {
   /// Set by [finishSession], which finalizes the recordings itself.
   bool _finishing = false;
 
+  Future<void> _stopFusion() async {
+    final FusionV2Session? session = _fusion;
+    if (session == null) return;
+    _recorder.record('ui', <String, Object?>{
+      'fusionStop': true,
+      'latency': fusionLatencyStats,
+      'pcm': session.pcm.diagnostics,
+    });
+    await session.stop();
+  }
+
   @override
   void onClose() {
     resetSettingsGate();
     WidgetsBinding.instance.removeObserver(this);
+    unawaited(_stopFusion());
+    for (final StreamSubscription<Object?> s in _fusionSubs) {
+      unawaited(s.cancel());
+    }
+    _fusionSubs.clear();
     if (!_finishing) {
       unawaited(() async {
         final String? eventsPath = _recorder.filePath;

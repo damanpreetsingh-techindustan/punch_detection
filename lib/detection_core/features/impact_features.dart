@@ -30,6 +30,10 @@ abstract final class F {
   static const String accelEnergy = 'accel_energy_log10';
   static const String accelStrengthRel = 'accel_strength_rel_log2';
   static const String crossLagDev = 'cross_lag_dev_ms';
+
+  /// Signed accel onset minus audio onset (ms); only when both candidates
+  /// exist. Logged and used by the quick calibration, not by the scorer.
+  static const String crossLag = 'cross_lag_ms';
   static const String crossStrengthRatio = 'cross_strength_log_ratio';
 }
 
@@ -209,5 +213,6 @@ Map<String, double> crossFeatures({
         ? mergeWindowMs
         : (lagMs - learnedLagMs).abs().clamp(0, 200).toDouble(),
     F.crossStrengthRatio: log2(accelRel / audioRel),
+    F.crossLag: ?lagMs,
   };
 }

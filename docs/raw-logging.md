@@ -195,3 +195,20 @@ per minute. Landmark events add about 1 MB per minute at 15 fps.
 - **Sharing too soon:** if you tap SHARE RAW DATA within a fraction of a second
   of the session ending, the WAV header may not be patched yet. Tools that
   ignore the size fields still read it.
+
+## fusionV2 additions (Phase 4)
+
+When the fusionV2 engine runs, `events.jsonl` also contains:
+
+| kind | what |
+|---|---|
+| `decision` with `path: FUSION_V2` | every fusionV2 decision: `onsetUs`, `decidedUs`, `latencyMs`, `accepted`, `p`, `pRaw`, `path` (fast / low / direct / waited / hard), `reason`, `mode`, `hand`, every feature, the context factors, `calibrating`, `receivedMs` |
+| `arm_motion` | output of the optical-flow prior per analysed frame (`flow`, `div`, left/right values, `pose`, `activity`, `hand`, `computeMs`, `mode`). The replay harness feeds these back as arm activity. |
+| `latency` | per counted punch: `onsetMs`, `decidedMs`, `receivedMs`, `renderedMs`, `coreMs`, `e2eMs` |
+| `quick_calibration` | result of the optional 10 s calibration |
+| `audio_service` with `mode: fusionV2_native` | native capture info (buffer size, source, read period) and the clock offset |
+
+In fusionV2 the raw WAV is recorded from the native low-latency capture. On iOS
+it is captured at the hardware rate and resampled to 16 kHz, as before.
+`session_meta.json` gets `engine: fusionV2` and `fusionLatency` (median and p95
+of the end-to-end and core latency).

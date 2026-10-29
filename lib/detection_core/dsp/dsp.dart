@@ -203,6 +203,16 @@ class RunningMedian {
 
   /// Real (non-seed) values currently held.
   int get count => math.min(_real, capacity);
+
+  /// Starts over from a new seed (e.g. after a quick calibration).
+  void reseed(double seed) {
+    _values.clear();
+    for (int i = 0; i < seedCount; i++) {
+      _values.addLast(seed);
+    }
+    _seedsLeft = seedCount;
+    _real = 0;
+  }
 }
 
 double dbFromPower(double meanSquare) =>

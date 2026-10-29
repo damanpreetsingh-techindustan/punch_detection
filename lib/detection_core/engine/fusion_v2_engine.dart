@@ -373,6 +373,34 @@ class FusionV2Engine {
     }
   }
 
+  /// Seeds the online-learned values (from a quick calibration). The engine
+  /// keeps learning from there.
+  void applySeeds({
+    double? lagMs,
+    double? decayDbPerS,
+    double? ringTauMs,
+    double? audioStrengthDb,
+    double? accelStrength,
+  }) {
+    if (lagMs != null) {
+      learnedLagMs = lagMs.clamp(-config.maxAbsLagMs, config.maxAbsLagMs);
+    }
+    if (decayDbPerS != null) {
+      audio.decayDbPerS = decayDbPerS.clamp(
+        config.minDecayDbPerS,
+        config.maxDecayDbPerS,
+      );
+    }
+    if (ringTauMs != null) {
+      shock.ringTauMs = ringTauMs.clamp(
+        config.minRingTauMs,
+        config.maxRingTauMs,
+      );
+    }
+    if (audioStrengthDb != null) _audioStrength.reseed(audioStrengthDb);
+    if (accelStrength != null) _accelStrength.reseed(accelStrength);
+  }
+
   /// Live values for the debug panel.
   Map<String, Object?> debugState() => <String, Object?>{
     'audioFloorsDb': audio.floorsDb.toList(),

@@ -24,6 +24,7 @@ class MainActivity : FlutterActivity() {
             }
         }
         EventChannel(messenger, RAW_ACCEL_CHANNEL).setStreamHandler(RawAccelStreamHandler(this))
+        EventChannel(messenger, PCM_CAPTURE_CHANNEL).setStreamHandler(PcmCaptureStreamHandler())
     }
 
     /** What the microphone stack supports; read before choosing an audio source. */
@@ -42,5 +43,6 @@ class MainActivity : FlutterActivity() {
         private const val AUDIO_SESSION_CHANNEL = "hyper_hitter/audio_session"
         private const val DEVICE_CHANNEL = "hyper_hitter/device"
         private const val RAW_ACCEL_CHANNEL = "hyper_hitter/raw_accel"
+        private const val PCM_CAPTURE_CHANNEL = "hyper_hitter/pcm_capture"
     }
 }

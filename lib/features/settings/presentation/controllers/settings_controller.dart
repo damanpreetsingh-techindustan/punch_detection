@@ -1,4 +1,5 @@
 import 'package:get/get.dart';
+import '../../../../core/enums/detection_enums.dart';
 import '../../../../core/services/config_service.dart';
 import '../../../../core/utils/constants.dart';
 
@@ -11,6 +12,17 @@ class SettingsController extends GetxController {
   void setRecordRawData(bool enabled) {
     AppConstants.recordRawSessionData = enabled;
     recordRawData.value = enabled;
+  }
+
+  /// Debug: run the fusionV2 detector in the next Free sessions.
+  final RxBool useFusionV2 =
+      (AppConstants.detectorEngine == DetectorEngine.fusionV2).obs;
+
+  void setUseFusionV2(bool enabled) {
+    AppConstants.detectorEngine = enabled
+        ? DetectorEngine.fusionV2
+        : DetectorEngine.legacy;
+    useFusionV2.value = enabled;
   }
 
   final RxDouble audioEnergyThreshold = 0.45.obs;

@@ -25,6 +25,19 @@ class SettingsDebugToggle {
   });
 }
 
+/// One button in the sheet's debug / experiments section.
+class SettingsDebugAction {
+  final String title;
+  final String subtitle;
+  final VoidCallback onPressed;
+
+  const SettingsDebugAction({
+    required this.title,
+    required this.subtitle,
+    required this.onPressed,
+  });
+}
+
 /// Opens an adaptive, live bottom sheet to adjust Audio, Vibration & Camera detection parameters.
 /// Automatically adapts with tailored layouts for Portrait and Landscape orientations.
 /// In Landscape, utilizes the full screen width with an executive two-column dashboard layout.
@@ -57,6 +70,8 @@ void showSessionDetectionSettingsSheet(
   VoidCallback? onOpened,
   VoidCallback? onClosed,
   List<SettingsDebugToggle>? debugToggles,
+  RxString? debugInfo,
+  List<SettingsDebugAction>? debugActions,
 }) async {
   onOpened?.call();
   try {
@@ -93,6 +108,8 @@ void showSessionDetectionSettingsSheet(
         onOpened: onOpened,
         onClosed: onClosed,
         debugToggles: debugToggles,
+        debugInfo: debugInfo,
+        debugActions: debugActions,
       ),
     );
   } finally {
@@ -128,6 +145,8 @@ class _SessionDetectionSettingsSheetContent extends StatelessWidget {
   final VoidCallback? onOpened;
   final VoidCallback? onClosed;
   final List<SettingsDebugToggle>? debugToggles;
+  final RxString? debugInfo;
+  final List<SettingsDebugAction>? debugActions;
 
   const _SessionDetectionSettingsSheetContent({
     required this.staticCalibratedAudioDb,
@@ -156,6 +175,8 @@ class _SessionDetectionSettingsSheetContent extends StatelessWidget {
     this.onOpened,
     this.onClosed,
     this.debugToggles,
+    this.debugInfo,
+    this.debugActions,
   });
 
   @override
@@ -1759,7 +1780,12 @@ class _SessionDetectionSettingsSheetContent extends StatelessWidget {
   Widget _buildDebugToggles(BuildContext context, {required bool isLandscape}) {
     final List<SettingsDebugToggle> toggles =
         debugToggles ?? const <SettingsDebugToggle>[];
-    if (toggles.isEmpty) return const SizedBox.shrink();
+    final List<SettingsDebugAction> actions =
+        debugActions ?? const <SettingsDebugAction>[];
+    final RxString? info = debugInfo;
+    if (toggles.isEmpty && actions.isEmpty && info == null) {
+      return const SizedBox.shrink();
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1773,6 +1799,66 @@ class _SessionDetectionSettingsSheetContent extends StatelessWidget {
             letterSpacing: 0.6,
           ),
         ),
+        if (info != null)
+          Obx(
+            () => info.value.isEmpty
+                ? const SizedBox.shrink()
+                : Container(
+                    width: double.infinity,
+                    margin: EdgeInsets.only(top: isLandscape ? 4.h : 6.h),
+                    padding: EdgeInsets.all(isLandscape ? 8.r : 10.r),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF0F172A),
+                      borderRadius: BorderRadius.circular(12.r),
+                      border: Border.all(color: AppColors.border),
+                    ),
+                    child: Text(
+                      info.value,
+                      style: TextStyle(
+                        color: AppColors.textPrimary,
+                        fontFamily: 'monospace',
+                        fontSize: isLandscape ? 8.ts(context) : 9.5.ts(context),
+                        height: 1.35,
+                      ),
+                    ),
+                  ),
+          ),
+        for (final SettingsDebugAction action in actions)
+          Container(
+            margin: EdgeInsets.only(top: isLandscape ? 4.h : 6.h),
+            width: double.infinity,
+            child: OutlinedButton(
+              style: OutlinedButton.styleFrom(
+                side: const BorderSide(color: AppColors.amber),
+                padding: EdgeInsets.symmetric(
+                  horizontal: 12.w,
+                  vertical: isLandscape ? 4.h : 8.h,
+                ),
+                alignment: Alignment.centerLeft,
+              ),
+              onPressed: action.onPressed,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    action.title,
+                    style: TextStyle(
+                      color: AppColors.amber,
+                      fontSize: isLandscape ? 10.ts(context) : 11.5.ts(context),
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  Text(
+                    action.subtitle,
+                    style: TextStyle(
+                      color: AppColors.textMuted,
+                      fontSize: isLandscape ? 8.ts(context) : 9.5.ts(context),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
         for (final SettingsDebugToggle toggle in toggles)
           Obx(
             () => Container(

@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import '../enums/detection_enums.dart';
+
 class AppConstants {
   static const String appName = 'Hyper Hitter';
   static const int calibrationDurationSeconds = 10;
@@ -176,6 +178,12 @@ class AppConstants {
   /// `<documents>/raw_sessions/session_<startMs>/`. Toggle in Settings → Debug
   /// or the session settings sheet. Format: docs/raw-logging.md.
   static bool recordRawSessionData = false;
+
+  // ─── Phase 4: detector engine selection ─────────────────────────────────────
+  /// Detector used by Free sessions (Settings → Debug). Stays `legacy` until
+  /// fusionV2 is signed off; the legacy engine's values (D12) are untouched.
+  /// The prompt session always uses the legacy logic.
+  static DetectorEngine detectorEngine = DetectorEngine.legacy;
 
   /// TESTING CONFIGURATION:
   /// Absolute minimum safety floor for punch audio detection.

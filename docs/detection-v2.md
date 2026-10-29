@@ -393,3 +393,152 @@ It runs with three noise seeds and the rig profile, and checks that:
 - fast-path latency inside the core is **< 45 ms** after onset (it measures
   34–35 ms);
 - the decay, ring τ and lag are learned.
+
+## Selecting the engine in the app
+
+- **Settings → Debug → "Detection engine: fusionV2".** This sets
+  `AppConstants.detectorEngine`. The default is `legacy` until fusionV2 is
+  signed off.
+- fusionV2 runs in **Free** sessions whose mode uses the microphone (fusion,
+  audio, audio+vibration). These keep the legacy logic:
+  - vibration-only and camera-only modes,
+  - the Prompt session.
+- **The legacy engine is untouched when selected.** Its values (D12: vibration
+  threshold, audio target formula) are unchanged.
+- **Mount mapping:** the app's `MountType.pole` maps to `rig`, `wall` to
+  `wall`. Unlike the legacy pole mode, fusionV2 *uses* the accelerometer on the
+  rig: the field data shows a strong shock there.
+- **Sensors per mode:**
+  - audio-only mode does not feed the accelerometer, so the audio-only scorer
+    is used;
+  - the camera prior is used only in modes that start the camera.
+
+## App runtime (`lib/core/services/fusion_v2/`)
+
+```
+native mic (10 ms) ──┐                     ┌─► fusion worker isolate ──► decisions ("punch at t")
+raw accelerometer ───┼─► UI isolate relay ─┤      (detector core)            │
+camera luma frames ──┘    (no detection)   └─► arm-motion isolate ─► armActivity ┘
+ML Kit pose (UI isolate) ─► presence + pose landmarks
+```
+
+**Microphone** (`NativePcmCapture`, `PcmCapture.kt`, `AppDelegate.swift`):
+
+- **Android:** `AudioRecord` at 16 kHz mono with the smallest buffer the device
+  allows, read in 10 ms pieces on an urgent-audio thread.
+  - Each piece carries `AudioRecord.getTimestamp(TIMEBASE_MONOTONIC)`
+    (frame ↔ ns), so sample times come from the audio HAL, not the arrival
+    time.
+  - Source: `MIC` by default, or `UNPROCESSED` with the debug "unprocessed"
+    experiment.
+  - No Oboe, no new dependency.
+- **iOS:** `AVAudioEngine` with an `AVAudioSinkNode` (a tap ignores small
+  buffers) and a 5 ms preferred IO buffer.
+  - It sends the hardware-rate PCM with the buffer's host time.
+  - The worker resamples to 16 kHz.
+  - `measurement` mode is used with the unprocessed experiment.
+- **Clock mapping:** native times map onto the detection clock with the
+  min-latency offset estimator.
+- **Fallbacks:** `hal` (Android), `buffer` (iOS host time) or `arrival` when
+  the platform gives no timestamp. The source used is logged in
+  `audio_service`.
+
+**Accelerometer:** the Phase 2 raw channel (Android `TYPE_ACCELEROMETER` at
+`SENSOR_DELAY_FASTEST`, iOS CoreMotion at 100 Hz), stamped with the sensor
+event time.
+
+**Isolates:**
+
+- `fusionWorkerMain` owns the engine. `armMotionWorkerMain` runs the optical
+  flow at the camera rate (frames are dropped while it is busy), so it never
+  blocks audio or the accelerometer.
+- The UI isolate only forwards buffers. Platform-channel events arrive there;
+  moving the channels to `BackgroundIsolateBinaryMessenger` would remove even
+  that relay. It then turns accepted decisions into punches through
+  `_registerPunch`, which still applies the touch lockout, the take-back of a
+  punch counted just before a touch, and the settings gate.
+- The engine assumes the audio and accelerometer streams reach it within
+  `accelStaleMs` (500 ms) of each other. Otherwise the accelerometer counts as
+  unavailable and the audio-only scorer is used.
+
+**Context relayed** from the session screen: pointer-downs, settings sheet
+open/close, camera initialised or failed, frames with a valid person
+(presence), pose landmarks (the arm prior) and luma frames.
+
+**Scorer:** loaded from `assets/detector/<mount>.json` at session start. The
+built-in defaults are used if the asset cannot be read.
+
+**Mic experiments** chosen in the debug sheet apply at session start in
+fusionV2. Changing them mid-session takes effect in the next session.
+
+## Quick calibration (optional, 10 s)
+
+Session settings sheet → *Debug / experiments* → **Quick calibration**: "throw
+5 punches, 2 of them low". Punches during the 10 s are not counted.
+
+`QuickCalibrator` (`detection_core/calibration/quick_calibration.dart`)
+collects every plausible hit. That includes rejected ones with both an audio
+and a shock candidate and p ≥ 0.2, so soft low hooks are captured. It then:
+
+- learns the audio–accelerometer **lag** (median of the signed
+  `cross_lag_ms`);
+- keeps the **ring decay** and **ring τ** that the engine learned online from
+  the isolated calibration hits;
+- seeds the user's **strength medians** (audio rise, peak jerk);
+- reports a **suggested mount** (heuristic: peak jerk ≥ 250 m/s³ or ring
+  τ ≥ 220 ms → rig). This is logged, not applied.
+
+With fewer than 3 punches it keeps the defaults. The session works fine
+without calibration, because the engine learns all of these online anyway.
+The result is logged as `quick_calibration` and shown in the punch log.
+
+## Debug panel
+
+In fusionV2 the session settings sheet (*Debug / experiments*) shows a live
+block, refreshed every 250 ms of data:
+
+- the engine and mount;
+- the audio floors per band and full band;
+- the jerk floor, learned decay, ring τ and lag;
+- the last p and the last core latency;
+- the latency medians and p95.
+
+The quick-calibration button is in the same section.
+
+## Latency
+
+| measure | from → to | where |
+|---|---|---|
+| `latency.core_ms` | impact onset → data time when the core could decide (the decision's `latencyMs`) | decision events, totals |
+| `latency.delivery_ms` | that decision time → the decision reaching the UI isolate (detection clock) | totals |
+| `latency.e2e_ms` | impact onset → end of the frame that renders the new count (post-frame callback) | `latency` events, totals, debug panel, `session_meta.fusionLatency` |
+
+The onset is the audio onset on the detection clock, from the HAL or buffer
+timestamp. The Session Totals block of the exported log prints the median and
+p95 of the e2e and core latencies.
+
+Targets:
+
+- ≈ 60–90 ms end to end when confident;
+- ≤ 150 ms when borderline (the 80 ms wait);
+- core fast path < 45 ms. On the synthetic golden session it is 34–35 ms.
+
+## Needs a real phone
+
+These cannot be measured in tests or the harness:
+
+- **Achieved sample rates:**
+  - accelerometer (`session_meta.accel.service.achievedRateHz`; 200 Hz expected
+    on Android 12+, 100 Hz on iOS);
+  - microphone read period and HAL timestamp availability
+    (`audio_service.info`, `timeSource`);
+  - camera fps (`session_meta.camera.deliveredFps` with 15 requested).
+- **Real capture latency:** `latency.delivery_ms`, `latency.e2e_ms`, and the
+  clock-offset spread `medianExtraLatencyUs`.
+- **Lucas–Kanade cost per frame on a mid-range Android:** `arm_motion.computeMs`;
+  it falls back to frame difference above 8 ms.
+- **iOS native code** (CoreMotion, `AVAudioSinkNode` capture, measurement mode).
+  It was written without Xcode here, so it is not compiled.
+- **Field accuracy:** label sessions and run `tool/replay.dart`. The hand-set
+  weights are a starting point. Retrain them per mount with
+  `tool/train_scorer.dart`.

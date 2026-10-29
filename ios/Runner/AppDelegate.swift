@@ -28,11 +28,16 @@ import UIKit
 /// lib/core/services/raw_sensors/raw_accelerometer_service.dart and device_info_channel.dart
 final class RawSensorChannels: NSObject {
   private static let accelHandler = RawAccelStreamHandler()
+  private static let pcmHandler = PcmCaptureStreamHandler()
 
   static func register(with registrar: FlutterPluginRegistrar) {
     let events = FlutterEventChannel(
       name: "hyper_hitter/raw_accel", binaryMessenger: registrar.messenger())
     events.setStreamHandler(accelHandler)
+
+    let pcm = FlutterEventChannel(
+      name: "hyper_hitter/pcm_capture", binaryMessenger: registrar.messenger())
+    pcm.setStreamHandler(pcmHandler)
 
     let device = FlutterMethodChannel(
       name: "hyper_hitter/device", binaryMessenger: registrar.messenger())
@@ -191,5 +196,98 @@ final class AudioSessionChannel: NSObject {
       "sampleRate": session.sampleRate,
       "ioBufferDuration": session.ioBufferDuration,
     ]
+  }
+}
+
+/// Low-latency microphone capture for the fusionV2 detector: AVAudioEngine with
+/// an AVAudioSinkNode (installTap ignores small buffer sizes) and a 5 ms
+/// preferred IO buffer (~256 frames at 48 kHz). Buffers are sent to Dart as
+/// {type: "pcm", data: PCM16 LE mono at the hardware rate, count,
+/// tsNs: buffer host time, now: mach_absolute_time, both in ns, sampleRate};
+/// the Dart worker resamples to 16 kHz. Arguments: {measurement: Bool}.
+final class PcmCaptureStreamHandler: NSObject, FlutterStreamHandler {
+  private var engine: AVAudioEngine?
+  private var sink: FlutterEventSink?
+  private var timebase = mach_timebase_info_data_t()
+
+  func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink)
+    -> FlutterError?
+  {
+    let args = arguments as? [String: Any]
+    let measurement = (args?["measurement"] as? Bool) ?? false
+    mach_timebase_info(&timebase)
+    let session = AVAudioSession.sharedInstance()
+    do {
+      try session.setCategory(
+        .playAndRecord, mode: measurement ? .measurement : .default, options: [.defaultToSpeaker])
+      try session.setPreferredIOBufferDuration(0.005)
+      try session.setActive(true)
+    } catch {
+      return FlutterError(code: "session", message: error.localizedDescription, details: nil)
+    }
+    sink = events
+    let engine = AVAudioEngine()
+    let input = engine.inputNode
+    let format = input.inputFormat(forBus: 0)
+    let rate = format.sampleRate
+    let interleaved = format.isInterleaved
+    let channels = Int(format.channelCount)
+    let numer = Int64(timebase.numer)
+    let denom = Int64(timebase.denom)
+    let sinkNode = AVAudioSinkNode { [weak self] timestamp, frameCount, audioBufferList -> OSStatus in
+      guard let self = self else { return noErr }
+      let buffers = UnsafeMutableAudioBufferListPointer(
+        UnsafeMutablePointer(mutating: audioBufferList))
+      guard let first = buffers.first, let raw = first.mData else { return noErr }
+      let n = Int(frameCount)
+      let floats = raw.assumingMemoryBound(to: Float.self)
+      let stride = interleaved ? max(1, channels) : 1
+      var bytes = Data(count: n * 2)
+      bytes.withUnsafeMutableBytes { (p: UnsafeMutableRawBufferPointer) in
+        let out = p.bindMemory(to: Int16.self)
+        for i in 0..<n {
+          let v = max(-1, min(1, floats[i * stride]))
+          out[i] = Int16(v * 32767).littleEndian
+        }
+      }
+      let tsNs = Int64(timestamp.pointee.mHostTime) * numer / denom
+      let nowNs = Int64(mach_absolute_time()) * numer / denom
+      let payload: [String: Any] = [
+        "type": "pcm",
+        "data": FlutterStandardTypedData(bytes: bytes),
+        "count": n,
+        "frame": -1,
+        "tsFrame": -1,
+        "tsNs": tsNs,
+        "now": nowNs,
+        "sampleRate": Int(rate),
+      ]
+      DispatchQueue.main.async { self.sink?(payload) }
+      return noErr
+    }
+    engine.attach(sinkNode)
+    engine.connect(input, to: sinkNode, format: format)
+    do {
+      try engine.start()
+    } catch {
+      return FlutterError(code: "engine", message: error.localizedDescription, details: nil)
+    }
+    self.engine = engine
+    events([
+      "type": "info",
+      "platform": "ios",
+      "sampleRate": Int(rate),
+      "channels": channels,
+      "ioBufferDuration": session.ioBufferDuration,
+      "mode": session.mode.rawValue,
+    ])
+    return nil
+  }
+
+  func onCancel(withArguments arguments: Any?) -> FlutterError? {
+    engine?.stop()
+    engine = nil
+    sink = nil
+    return nil
   }
 }
