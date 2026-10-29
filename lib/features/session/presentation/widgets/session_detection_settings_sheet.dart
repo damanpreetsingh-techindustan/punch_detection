@@ -41,6 +41,12 @@ void showSessionDetectionSettingsSheet(
   Function(bool)? onToggleCameraDistanceUnknownIsValid,
   Rx<VibrationGateType>? vibrationGateType,
   Function(VibrationGateType)? onSetVibrationGateType,
+  RxBool? isBodyMotionGateEnabled,
+  Function(bool)? onToggleBodyMotionGate,
+  Rx<BodyMotionLevel>? bodyMotionLevel,
+  Function(BodyMotionLevel)? onSetBodyMotionLevel,
+  RxDouble? bodyMotionMinScore,
+  Function(double)? onSetBodyMotionMinScore,
   RxBool? isVibrationDisabled,
   RxBool? isVibrationGateEnabled,
   Function(bool)? onToggleVibrationGate,
@@ -85,6 +91,12 @@ void showSessionDetectionSettingsSheet(
             onToggleCameraDistanceUnknownIsValid,
         vibrationGateType: vibrationGateType,
         onSetVibrationGateType: onSetVibrationGateType,
+        isBodyMotionGateEnabled: isBodyMotionGateEnabled,
+        onToggleBodyMotionGate: onToggleBodyMotionGate,
+        bodyMotionLevel: bodyMotionLevel,
+        onSetBodyMotionLevel: onSetBodyMotionLevel,
+        bodyMotionMinScore: bodyMotionMinScore,
+        onSetBodyMotionMinScore: onSetBodyMotionMinScore,
         isVibrationDisabled: isVibrationDisabled,
         isVibrationGateEnabled: isVibrationGateEnabled,
         onToggleVibrationGate: onToggleVibrationGate,
@@ -127,6 +139,12 @@ class _SessionDetectionSettingsSheetContent extends StatelessWidget {
   final Function(bool)? onToggleCameraDistanceUnknownIsValid;
   final Rx<VibrationGateType>? vibrationGateType;
   final Function(VibrationGateType)? onSetVibrationGateType;
+  final RxBool? isBodyMotionGateEnabled;
+  final Function(bool)? onToggleBodyMotionGate;
+  final Rx<BodyMotionLevel>? bodyMotionLevel;
+  final Function(BodyMotionLevel)? onSetBodyMotionLevel;
+  final RxDouble? bodyMotionMinScore;
+  final Function(double)? onSetBodyMotionMinScore;
   final RxBool? isVibrationDisabled;
   final RxBool? isVibrationGateEnabled;
   final Function(bool)? onToggleVibrationGate;
@@ -162,6 +180,12 @@ class _SessionDetectionSettingsSheetContent extends StatelessWidget {
     this.onToggleCameraDistanceUnknownIsValid,
     this.vibrationGateType,
     this.onSetVibrationGateType,
+    this.isBodyMotionGateEnabled,
+    this.onToggleBodyMotionGate,
+    this.bodyMotionLevel,
+    this.onSetBodyMotionLevel,
+    this.bodyMotionMinScore,
+    this.onSetBodyMotionMinScore,
     this.isVibrationDisabled,
     this.isVibrationGateEnabled,
     this.onToggleVibrationGate,
@@ -397,6 +421,10 @@ class _SessionDetectionSettingsSheetContent extends StatelessWidget {
                     ),
                     8.height,
                   ],
+                  if (isBodyMotionGateEnabled != null) ...[
+                    _buildBodyMotionGateTile(context, isLandscape: true),
+                    8.height,
+                  ],
                   _buildDeviceStabilityTile(context, isLandscape: true),
                 ],
               ),
@@ -467,6 +495,10 @@ class _SessionDetectionSettingsSheetContent extends StatelessWidget {
           ],
           if (cameraDistanceUnknownIsValid != null) ...[
             _buildCameraDistanceUnknownSettingTile(context, isLandscape: false),
+            10.height,
+          ],
+          if (isBodyMotionGateEnabled != null) ...[
+            _buildBodyMotionGateTile(context, isLandscape: false),
             10.height,
           ],
           _buildDeviceStabilityTile(context, isLandscape: false),
@@ -1626,25 +1658,35 @@ class _SessionDetectionSettingsSheetContent extends StatelessWidget {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Row(
-                      children: [
-                        Icon(
-                          Icons.bolt_rounded,
-                          color: const Color(0xFFA78BFA),
-                          size: isLandscape ? 15.w : 18.w,
-                        ),
-                        6.width,
-                        Text(
-                          'Vibration Gate Strategy',
-                          style: TextStyle(
-                            color: AppColors.textPrimary,
-                            fontSize:
-                                isLandscape ? 10.5.ts(context) : 12.ts(context),
-                            fontWeight: FontWeight.w700,
+                    // Title takes the space left by the badge and shrinks with
+                    // "…" on narrow sheets instead of overflowing the row.
+                    Expanded(
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.bolt_rounded,
+                            color: const Color(0xFFA78BFA),
+                            size: isLandscape ? 15.w : 18.w,
                           ),
-                        ),
-                      ],
+                          6.width,
+                          Flexible(
+                            child: Text(
+                              'Vibration Gate Strategy',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: AppColors.textPrimary,
+                                fontSize: isLandscape
+                                    ? 10.5.ts(context)
+                                    : 12.ts(context),
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
+                    6.width,
                     Container(
                       padding: EdgeInsets.symmetric(
                         horizontal: isLandscape ? 6.w : 8.w,
@@ -2403,6 +2445,342 @@ class _SessionDetectionSettingsSheetContent extends StatelessWidget {
     });
   }
 
+
+  // ─── BODY-MOTION GATE TILE ───
+  // Switch: ON = an impact only counts when the user's upper body moved.
+  // Level chips (Easy / Normal / Strict) = how much movement is needed.
+  // Inactive (dimmed) when camera confirmation is off, like the other camera
+  // settings, because the check needs the camera.
+  Widget _buildBodyMotionGateTile(
+    BuildContext context, {
+    required bool isLandscape,
+  }) {
+    if (isBodyMotionGateEnabled == null) return const SizedBox.shrink();
+
+    return Obx(() {
+      final bool disabled = !isVisionConfirmationRequired.value;
+      final bool enabled = isBodyMotionGateEnabled!.value;
+      final BodyMotionLevel level =
+          bodyMotionLevel?.value ?? AppConstants.bodyMotionLevel;
+      // Live value (preset or slider); falls back to the preset value.
+      final double minScore =
+          bodyMotionMinScore?.value ?? AppConstants.bodyMotionMinScore(level);
+
+      return Opacity(
+        opacity: disabled ? 0.45 : 1.0,
+        child: IgnorePointer(
+          ignoring: disabled,
+          child: Container(
+            margin: EdgeInsets.symmetric(vertical: isLandscape ? 2.h : 6.h),
+            padding: EdgeInsets.all(isLandscape ? 8.w : 10.w),
+            decoration: BoxDecoration(
+              color: AppColors.surface.withValues(alpha: 0.6),
+              borderRadius: BorderRadius.circular(12.r),
+              border: Border.all(
+                color: enabled && !disabled
+                    ? AppColors.lime.withValues(alpha: 0.5)
+                    : AppColors.border,
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      Icons.directions_run_rounded,
+                      color: AppColors.lime,
+                      size: isLandscape ? 15.w : 18.w,
+                    ),
+                    6.width,
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Body Motion Check',
+                            style: TextStyle(
+                              color: AppColors.textPrimary,
+                              fontSize: isLandscape
+                                  ? 10.5.ts(context)
+                                  : 12.ts(context),
+                              fontWeight: FontWeight.w600,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          1.5.height,
+                          Text(
+                            enabled
+                                ? 'ON — needs ≥ ${(minScore * 100).toStringAsFixed(1)}% body movement (${_bodyMotionLevelLabel(level).toUpperCase()})'
+                                : 'OFF — movement is only measured and logged',
+                            style: TextStyle(
+                              color: enabled
+                                  ? AppColors.lime
+                                  : AppColors.textMuted,
+                              fontSize: isLandscape
+                                  ? 7.8.ts(context)
+                                  : 9.ts(context),
+                              fontWeight: enabled
+                                  ? FontWeight.bold
+                                  : FontWeight.normal,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ),
+                    ),
+                    Transform.scale(
+                      scale: isLandscape ? 0.75 : 0.85,
+                      child: Switch(
+                        value: enabled,
+                        activeThumbColor: AppColors.lime,
+                        onChanged: (bool value) =>
+                            onToggleBodyMotionGate?.call(value),
+                      ),
+                    ),
+                  ],
+                ),
+                if (bodyMotionLevel != null) ...[
+                  6.height,
+                  Opacity(
+                    // Level can be chosen while OFF too; it then decides what
+                    // the log reports as "would pass / would reject".
+                    opacity: enabled ? 1.0 : 0.6,
+                    child: Row(
+                      children: [
+                        // Presets from most sensitive to strictest; "custom"
+                        // has no chip (it is what the slider produces).
+                        for (final BodyMotionLevel option in _bodyMotionPresets) ...[
+                          Expanded(
+                            child: _buildBodyMotionLevelChip(
+                              context,
+                              option: option,
+                              selected: option == level,
+                              isLandscape: isLandscape,
+                            ),
+                          ),
+                          if (option != _bodyMotionPresets.last)
+                            (isLandscape ? 4 : 5).width,
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+                if (bodyMotionMinScore != null) ...[
+                  4.height,
+                  Opacity(
+                    opacity: enabled ? 1.0 : 0.6,
+                    child: _buildBodyMotionSensitivitySlider(
+                      context,
+                      minScore: minScore,
+                      isLandscape: isLandscape,
+                    ),
+                  ),
+                ],
+                6.height,
+                Container(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: isLandscape ? 8.w : 10.w,
+                    vertical: isLandscape ? 5.h : 6.h,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppColors.panel.withValues(alpha: 0.5),
+                    borderRadius: BorderRadius.circular(8.r),
+                    border: Border.all(
+                      color: AppColors.lime.withValues(alpha: 0.15),
+                    ),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        Icons.info_outline_rounded,
+                        color: AppColors.lime,
+                        size: isLandscape ? 13.w : 15.w,
+                      ),
+                      6.width,
+                      Expanded(
+                        child: Text(
+                          disabled
+                              ? 'Camera confirmation is disabled, so the body motion check is inactive.'
+                              : 'How it works: the camera follows your face and shoulders (and elbows / wrists when visible) around each hit. If you stood still, a loud sound + a bump on the mount is NOT counted. Needs movement of at least ${(minScore * 100).round()}% of your body width. Easy = light jabs pass easily, Strict = only clear punching movement.',
+                          style: TextStyle(
+                            color: AppColors.textMuted,
+                            fontSize: isLandscape
+                                ? 7.8.ts(context)
+                                : 9.ts(context),
+                            height: 1.35,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    });
+  }
+
+  /// Preset chips shown in the sheet (every level except custom).
+  static final List<BodyMotionLevel> _bodyMotionPresets = BodyMotionLevel.values
+      .where((BodyMotionLevel l) => l != BodyMotionLevel.custom)
+      .toList();
+
+  static String _bodyMotionLevelLabel(BodyMotionLevel level) => switch (level) {
+    BodyMotionLevel.veryLight => 'Very Light',
+    BodyMotionLevel.light => 'Light',
+    BodyMotionLevel.easy => 'Easy',
+    BodyMotionLevel.normal => 'Normal',
+    BodyMotionLevel.strict => 'Strict',
+    BodyMotionLevel.custom => 'Custom',
+  };
+
+  // ─── BODY-MOTION SENSITIVITY SLIDER ───
+  // Fine control between / beyond the presets. LEFT = more sensitive (less
+  // movement needed), RIGHT = stricter. Moving it to a preset value
+  // highlights that chip; any other value shows "Custom".
+  Widget _buildBodyMotionSensitivitySlider(
+    BuildContext context, {
+    required double minScore,
+    required bool isLandscape,
+  }) {
+    final double fontSmall = isLandscape ? 7.5.ts(context) : 8.5.ts(context);
+    final String percentLabel = '${(minScore * 100).toStringAsFixed(1)}%';
+    final bool nearJitter =
+        minScore < AppConstants.bodyMotionMinScoreVeryLight;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text(
+              'Sensitivity',
+              style: TextStyle(
+                color: AppColors.textPrimary,
+                fontSize: isLandscape ? 9.ts(context) : 10.5.ts(context),
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const Spacer(),
+            Text(
+              'needs ≥ $percentLabel movement',
+              style: TextStyle(
+                color: AppColors.lime,
+                fontSize: isLandscape ? 8.5.ts(context) : 9.5.ts(context),
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+        SliderTheme(
+          data: SliderTheme.of(context).copyWith(
+            trackHeight: isLandscape ? 2.5.h : 3.5.h,
+            thumbShape: RoundSliderThumbShape(
+              enabledThumbRadius: isLandscape ? 6.r : 8.r,
+            ),
+          ),
+          child: Slider(
+            value: minScore.clamp(
+              AppConstants.bodyMotionSliderMin,
+              AppConstants.bodyMotionSliderMax,
+            ),
+            min: AppConstants.bodyMotionSliderMin,
+            max: AppConstants.bodyMotionSliderMax,
+            divisions:
+                ((AppConstants.bodyMotionSliderMax -
+                            AppConstants.bodyMotionSliderMin) /
+                        AppConstants.bodyMotionSliderStep)
+                    .round(),
+            activeColor: AppColors.lime,
+            inactiveColor: AppColors.border,
+            label: percentLabel,
+            onChanged: (double value) =>
+                onSetBodyMotionMinScore?.call(value),
+          ),
+        ),
+        Row(
+          children: [
+            Text(
+              '◀ More sensitive',
+              style: TextStyle(color: AppColors.textMuted, fontSize: fontSmall),
+            ),
+            const Spacer(),
+            Text(
+              'Stricter ▶',
+              style: TextStyle(color: AppColors.textMuted, fontSize: fontSmall),
+            ),
+          ],
+        ),
+        if (nearJitter) ...[
+          2.height,
+          Text(
+            '⚠ Below 3%: standing still (breathing / camera jitter) may pass.',
+            style: TextStyle(
+              color: AppColors.amber,
+              fontSize: fontSmall,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildBodyMotionLevelChip(
+    BuildContext context, {
+    required BodyMotionLevel option,
+    required bool selected,
+    required bool isLandscape,
+  }) {
+    final String label = _bodyMotionLevelLabel(option);
+    // One decimal only when needed (e.g. "3%", "4.5%").
+    final double pct = AppConstants.bodyMotionMinScore(option) * 100;
+    final String percent = (pct - pct.roundToDouble()).abs() < 0.01
+        ? pct.round().toString()
+        : pct.toStringAsFixed(1);
+    return GestureDetector(
+      onTap: () => onSetBodyMotionLevel?.call(option),
+      child: Container(
+        padding: EdgeInsets.symmetric(vertical: isLandscape ? 4.h : 6.h),
+        decoration: BoxDecoration(
+          color: selected
+              ? AppColors.lime.withValues(alpha: 0.18)
+              : AppColors.panel.withValues(alpha: 0.5),
+          borderRadius: BorderRadius.circular(8.r),
+          border: Border.all(
+            color: selected ? AppColors.lime : AppColors.border,
+          ),
+        ),
+        child: Column(
+          children: [
+            // Five chips share one row: shrink the label instead of wrapping.
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                label,
+                maxLines: 1,
+                style: TextStyle(
+                  color: selected ? AppColors.lime : AppColors.textPrimary,
+                  fontSize: isLandscape ? 9.ts(context) : 10.5.ts(context),
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            Text(
+              '≥ $percent%',
+              style: TextStyle(
+                color: AppColors.textMuted,
+                fontSize: isLandscape ? 7.5.ts(context) : 8.5.ts(context),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   // ─── DEVICE STABILITY TILE ───
   Widget _buildDeviceStabilityTile(

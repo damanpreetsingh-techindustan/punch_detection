@@ -13,6 +13,7 @@ import '../controllers/free_session_controller.dart';
 import '../widgets/live_telemetry_sheet.dart';
 import '../widgets/pose_skeleton_painter.dart';
 import '../../../../core/widgets/animated_punch_count_text.dart';
+import '../../../fusion/domain/services/impact_gate_evaluator.dart';
 
 class FreeSessionPage extends GetView<FreeSessionController> {
   const FreeSessionPage({super.key});
@@ -391,9 +392,37 @@ class FreeSessionPage extends GetView<FreeSessionController> {
                                           'Pose Invalid',
                                         );
 
-                                    final String text;
-                                    final Color color;
-                                    if (!isCamInit || !isBodyVisibleInFrame) {
+                                    String text;
+                                    Color color;
+                                    if (controller.isCameraGateShownOnScreen) {
+                                      // Fusion mode: show the SAME person /
+                                      // distance check a punch must pass, live.
+                                      // (The old label used the camera's arm-
+                                      // motion detector, which is "false" between
+                                      // punches, so a valid user saw "Reject".)
+                                      switch (controller
+                                          .liveCameraGateState
+                                          .value) {
+                                        case CameraGateState.valid:
+                                          text = '🟢 Confirm';
+                                          color = AppColors.cyan;
+                                        case CameraGateState.tooFar:
+                                          text = '🔴 Too far';
+                                          color = Colors.redAccent;
+                                        case CameraGateState.noPerson:
+                                          text = '🔴 No user';
+                                          color = Colors.redAccent;
+                                        case CameraGateState.notReady:
+                                        case CameraGateState.notRequired:
+                                          text = '⚪ Starting';
+                                          color = AppColors.textMuted;
+                                      }
+                                      if (!isCamInit) {
+                                        text = '⚪ Unavail';
+                                        color = AppColors.textMuted;
+                                      }
+                                    } else if (!isCamInit ||
+                                        !isBodyVisibleInFrame) {
                                       text = '⚪ Unavail';
                                       color = AppColors.textMuted;
                                     } else if (evalResult.isPunchConfirmed) {

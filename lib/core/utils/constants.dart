@@ -8,6 +8,29 @@ enum VibrationGateType {
   peakThreshold,
 }
 
+/// How much upper-body movement a punch must show (body-motion gate).
+/// Ordered from most sensitive (least movement needed) to strictest.
+enum BodyMotionLevel {
+  /// Lowest preset: almost any movement passes. Close to the standing-still
+  /// jitter (1-3 %), so use only if light punches are still rejected.
+  veryLight,
+
+  /// Light jabs with very little shoulder / head movement pass.
+  light,
+
+  /// Light jabs pass easily; still blocks a user standing still.
+  easy,
+
+  /// Recommended balance.
+  normal,
+
+  /// Highest bar: only clear punching movement passes.
+  strict,
+
+  /// Value set with the slider that matches none of the presets.
+  custom,
+}
+
 class AppConstants {
   static const String appName = 'Hyper Hitter';
   static const int calibrationDurationSeconds = 10;
@@ -58,6 +81,29 @@ class AppConstants {
   /// Free session (the Prompt session still has its own copy of 160).
   /// Value unchanged; whether to lower it waits for measured punch cadence.
   static const int audioRefractoryMs = 160;
+
+  /// Shorter lockout used ONLY when every punch must also bring its own fresh
+  /// vibration knock (fusion / audio+vibration mode, vibration on, Fresh Knock
+  /// gate). The knock is what stops one hit being counted twice, so the audio
+  /// lockout can be short enough for fast combos (1-2 at ~120 ms apart).
+  /// Pole mount, vibration off or the Legacy Peak gate keep [audioRefractoryMs].
+  /// How to tune: look at `msSinceLastSpike` of `spike_suppressed` lines in the
+  /// session log; real combo punches should land above this value.
+  static const int audioRefractoryKnockMs = 100;
+
+  /// Impacts that may wait for their vibration / camera at the same time.
+  /// More than one is only possible with the short knock lockout above; each
+  /// waiting impact claims a different knock, so they cannot share one hit.
+  static const int maxPendingImpacts = 3;
+
+  /// Hard punch → soft punch combo: for this long after a confirmed punch, a
+  /// spike slightly below the audio target may still count (see below).
+  static const int comboSoftPunchWindowMs = 700;
+
+  /// How many dB below the audio target a combo follow-up punch may be.
+  /// Safe because it still needs its own fresh vibration knock (a voice cannot
+  /// make one) and the camera, and never goes below [minAudioSafetyFloorDb].
+  static const double comboSoftPunchAudioRelaxDb = 6.0;
 
   /// When true the Free session reads the microphone as 10 ms blocks computed
   /// from the raw PCM stream, with real timestamps, instead of the plugin's
@@ -136,6 +182,13 @@ class AppConstants {
   /// so one noisy frame from a far user cannot confirm a punch.
   static const int cameraMinConsecutiveNearFrames = 1;
 
+  /// Once the user is confirmed near, this many "too far" frames in a row are
+  /// needed before the camera says too far. A hook or side stance turns the
+  /// body for ~200 ms and makes the shoulders look narrow (= far); this keeps
+  /// those punches counting while a user who really walks away is still
+  /// rejected after ~1/3 s (at 30 processed frames per second).
+  static const int cameraFarFramesToLeaveNear = 10;
+
   /// Approximate distance from a shoulder ratio: metres ≈ factor / ratio
   /// (matches the guide above: 0.20 ≈ 0.8 m, 0.08 ≈ 2 m). The default slider
   /// value is cameraDistanceMetresFactor / cameraMinShoulderWidthRatio.
@@ -202,6 +255,20 @@ class AppConstants {
   /// Merge window (ms) to group multi-axis jerk oscillations of the same hit into one knock
   static const int knockMergeMs = 40;
 
+  /// After a hit the mount keeps shaking for ~100 ms with SHRINKING jerks.
+  /// A jerk only counts as a new knock when it is at least this many times
+  /// larger than the biggest jerk of the last [knockRingDownWindowMs]; the
+  /// fading tail never is, a new punch landing on it is.
+  static const double knockRiseFactor = 1.5;
+
+  /// How far back (ms) the "recent jerk" used by [knockRiseFactor] looks.
+  static const int knockRingDownWindowMs = 60;
+
+  /// A gap between two sensor readings longer than this (ms) means the sensor
+  /// was paused or restarted; the next reading only becomes the new starting
+  /// point and can never be a knock by itself.
+  static const int knockReseedGapMs = 200;
+
   /// Impact Sensitivity Slider bounds in session detection settings (0.05 m/s² to 1.0 m/s²)
   static double minImpactVibrationSlider = 0.05;
   static double maxImpactVibrationSlider = 1.0;
@@ -219,7 +286,97 @@ class AppConstants {
     postSettingsCooldownMs = 1000;
     vibrationGateType = VibrationGateType.knock;
     cameraDistanceUnknownIsValid = true;
+    bodyMotionGateEnabled = bodyMotionGateEnabledDefault;
+    bodyMotionLevel = BodyMotionLevel.normal;
+    bodyMotionMinScoreValue = bodyMotionMinScoreNormal;
   }
+
+  // ─── Body-motion gate (camera) ──────────────────────────────────────────────
+  // Problem it solves: user standing still + a loud background sound + a bump on
+  // the mount = audio, a fresh knock and "person in frame" all pass, so a punch
+  // was counted although the user did not move. This gate also asks the camera
+  // "did the user's upper body move around the impact?".
+  //
+  // It needs only what is always visible: face + shoulders (one shoulder is
+  // enough). Elbows / wrists are used too when ML Kit sees them.
+  //
+  // Score = how far the most-moved body point went from its usual position in
+  // the window, divided by the user's body width (shoulder span), so the same
+  // number works near or far from the camera. Standing still (breathing +
+  // ML Kit jitter) ≈ 0.01-0.03; a punch moves head / shoulders ≈ 0.08-0.30.
+  //
+  // How to tune: every impact in the log has `motionScore` (also when the gate
+  // is OFF). Compare scores of real punches with the scores of
+  // "standing still + noise" impacts and pick the level between them.
+
+  /// Default of the settings switch at the start of every session.
+  /// false = the score is only LOGGED, nothing is rejected (safe first test).
+  /// Flip to true once the logged scores confirm the chosen level.
+  static const bool bodyMotionGateEnabledDefault = false;
+
+  /// Live value of the settings switch (reset by [changeSettingToDefault]).
+  static bool bodyMotionGateEnabled = bodyMotionGateEnabledDefault;
+
+  /// Live difficulty level (reset by [changeSettingToDefault]).
+  static BodyMotionLevel bodyMotionLevel = BodyMotionLevel.normal;
+
+  /// Minimum motion score per preset (fraction of the body width).
+  static const double bodyMotionMinScoreVeryLight = 0.03;
+  static const double bodyMotionMinScoreLight = 0.04;
+  static const double bodyMotionMinScoreEasy = 0.05;
+  static const double bodyMotionMinScoreNormal = 0.08;
+  static const double bodyMotionMinScoreStrict = 0.12;
+
+  /// Live minimum score actually used by the gate (single source of truth).
+  /// A preset sets it to the preset value; the sensitivity slider sets any
+  /// value in [bodyMotionSliderMin]..[bodyMotionSliderMax].
+  static double bodyMotionMinScoreValue = bodyMotionMinScoreNormal;
+
+  /// Sensitivity slider range and step (2 % .. 20 % of the body width,
+  /// 0.5 % steps). Below ~3 % standing still can start to pass.
+  static const double bodyMotionSliderMin = 0.02;
+  static const double bodyMotionSliderMax = 0.20;
+  static const double bodyMotionSliderStep = 0.005;
+
+  /// Preset value, or the live slider value for [BodyMotionLevel.custom].
+  static double bodyMotionMinScore(BodyMotionLevel level) => switch (level) {
+    BodyMotionLevel.veryLight => bodyMotionMinScoreVeryLight,
+    BodyMotionLevel.light => bodyMotionMinScoreLight,
+    BodyMotionLevel.easy => bodyMotionMinScoreEasy,
+    BodyMotionLevel.normal => bodyMotionMinScoreNormal,
+    BodyMotionLevel.strict => bodyMotionMinScoreStrict,
+    BodyMotionLevel.custom => bodyMotionMinScoreValue,
+  };
+
+  /// The preset whose value equals [score], or custom when none does
+  /// (used to highlight the matching chip when the slider moves).
+  static BodyMotionLevel bodyMotionLevelFor(double score) {
+    for (final BodyMotionLevel level in BodyMotionLevel.values) {
+      if (level == BodyMotionLevel.custom) continue;
+      if ((bodyMotionMinScore(level) - score).abs() < 0.0001) return level;
+    }
+    return BodyMotionLevel.custom;
+  }
+
+  /// Motion window around the audio spike: a punch moves the body during the
+  /// wind-up BEFORE the impact, so the window starts well before the sound.
+  static const int bodyMotionBeforeMs = 300;
+  static const int bodyMotionAfterMs = 150;
+
+  /// Fewer camera frames than this in the window = motion "unknown".
+  static const int bodyMotionMinFrames = 3;
+
+  /// Body points below this ML Kit confidence are ignored (weak points jump
+  /// around and would look like movement).
+  static const double bodyMotionMinLikelihood = 0.5;
+
+  /// When the motion cannot be measured (too few frames, e.g. the camera
+  /// dropped frames): true = let the impact through, so a slow camera never
+  /// loses real punches. The person / distance gates still apply.
+  static const bool bodyMotionUnknownIsValid = true;
+
+  /// How long camera frames are kept for the motion check (ms).
+  static const int bodyMotionHistoryMs = 2000;
 
   /// Official Fighter Callout Combo List
   static const List<List<int>> comboList = [

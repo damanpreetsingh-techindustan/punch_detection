@@ -177,6 +177,28 @@ void main() {
     });
   });
 
+  group('CAM status on screen', () {
+    test('shows the live camera gate in fusion mode (valid user = Confirm)', () {
+      expect(controller.isCameraGateShownOnScreen, isTrue);
+      camera(CameraGateState.valid, 10);
+      expect(controller.liveCameraGateState.value, CameraGateState.valid);
+      camera(CameraGateState.tooFar, 20);
+      expect(controller.liveCameraGateState.value, CameraGateState.tooFar);
+      camera(CameraGateState.noPerson, 30);
+      expect(controller.liveCameraGateState.value, CameraGateState.noPerson);
+    });
+
+    test('camera-only mode keeps the arm-motion status', () {
+      controller.sessionMode.value = DetectionMode.camera;
+      expect(controller.isCameraGateShownOnScreen, isFalse);
+    });
+
+    test('vision confirmation off: camera gate not shown', () {
+      controller.isVisionConfirmationRequired.value = false;
+      expect(controller.isCameraGateShownOnScreen, isFalse);
+    });
+  });
+
   group('camera hard gate', () {
     test('user too far -> rejected even with audio and vibration', () {
       quiet(0, 60);

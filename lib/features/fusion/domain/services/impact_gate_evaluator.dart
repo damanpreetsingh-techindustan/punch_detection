@@ -28,6 +28,21 @@ enum CameraGateState {
   valid,
 }
 
+/// Body-motion gate state for one impact (did the user's upper body move?).
+enum BodyMotionGateState {
+  /// Gate is off, or the camera is not used for this impact.
+  notRequired,
+
+  /// The body moved enough around the impact.
+  moved,
+
+  /// Camera frames were seen but the body did not move enough (standing still).
+  still,
+
+  /// Too few camera frames to measure movement.
+  unknown,
+}
+
 enum ImpactOutcome { valid, rejected, pending }
 
 class ImpactGateResult {
@@ -36,6 +51,7 @@ class ImpactGateResult {
   final String reasonLabel;
   final VibrationGateState vibration;
   final CameraGateState camera;
+  final BodyMotionGateState motion;
 
   const ImpactGateResult({
     required this.outcome,
@@ -43,6 +59,7 @@ class ImpactGateResult {
     required this.reasonLabel,
     required this.vibration,
     required this.camera,
+    this.motion = BodyMotionGateState.notRequired,
   });
 
   bool get isValid => outcome == ImpactOutcome.valid;
@@ -55,7 +72,8 @@ class ImpactGateResult {
 /// Rule: an audio spike that reached its target becomes a punch only when every
 /// gate that is in use also confirms it:
 ///   - vibration (unless not required),
-///   - camera (unless not required).
+///   - camera (unless not required),
+///   - body motion (unless not required; on top of the camera person check).
 /// A gate that is not in use is skipped, so with the camera disabled the punch is
 /// decided by audio + vibration, and with vibration disabled by audio + camera.
 ///
@@ -67,17 +85,35 @@ class ImpactGateResult {
 class ImpactGateEvaluator {
   const ImpactGateEvaluator();
 
+  /// [motion] defaults to notRequired, so callers without the body-motion
+  /// gate behave exactly as before. [motionUnknownIsValid]: what an
+  /// unmeasurable motion means once the window has closed.
   ImpactGateResult evaluate({
     required VibrationGateState vibration,
     required CameraGateState camera,
     required bool windowClosed,
+    BodyMotionGateState motion = BodyMotionGateState.notRequired,
+    bool motionUnknownIsValid = true,
   }) {
     final bool vibrationOk = vibration != VibrationGateState.missing;
     final bool cameraOk =
         camera == CameraGateState.notRequired ||
         camera == CameraGateState.valid;
+    // "unknown" only passes once the window closed: until then more camera
+    // frames can still arrive and show the movement.
+    final bool motionOk =
+        motion == BodyMotionGateState.notRequired ||
+        motion == BodyMotionGateState.moved ||
+        (motion == BodyMotionGateState.unknown &&
+            motionUnknownIsValid &&
+            windowClosed);
+    final String motionSuffix = switch (motion) {
+      BodyMotionGateState.moved => ' + Body Motion',
+      BodyMotionGateState.unknown => ' (body motion not measurable)',
+      _ => '',
+    };
 
-    if (vibrationOk && cameraOk) {
+    if (vibrationOk && cameraOk && motionOk) {
       final bool usesVibration = vibration == VibrationGateState.present;
       final bool usesCamera = camera == CameraGateState.valid;
       final String code;
@@ -98,9 +134,10 @@ class ImpactGateEvaluator {
       return ImpactGateResult(
         outcome: ImpactOutcome.valid,
         code: code,
-        reasonLabel: label,
+        reasonLabel: '$label$motionSuffix',
         vibration: vibration,
         camera: camera,
+        motion: motion,
       );
     }
 
@@ -108,12 +145,16 @@ class ImpactGateEvaluator {
       return ImpactGateResult(
         outcome: ImpactOutcome.pending,
         code: 'IMPACT_PENDING',
-        reasonLabel: 'Waiting for ${_missing(vibrationOk, camera)}',
+        reasonLabel:
+            'Waiting for ${_missing(vibrationOk, camera, motionOk)}',
         vibration: vibration,
         camera: camera,
+        motion: motion,
       );
     }
 
+    // Vibration / camera problems are reported first (unchanged codes); the
+    // body-motion code only appears when those two passed.
     final String code;
     final String label;
     if (!vibrationOk && !cameraOk) {
@@ -122,13 +163,19 @@ class ImpactGateEvaluator {
     } else if (!vibrationOk) {
       code = 'IMPACT_REJECTED_NO_VIBRATION';
       label = 'Rejected — no physical vibration at the impact';
-    } else {
+    } else if (!cameraOk) {
       code = switch (camera) {
         CameraGateState.tooFar => 'IMPACT_REJECTED_CAMERA_TOO_FAR',
         CameraGateState.notReady => 'IMPACT_REJECTED_CAMERA_NOT_READY',
         _ => 'IMPACT_REJECTED_CAMERA_NO_PERSON',
       };
       label = 'Rejected — ${_cameraProblem(camera)}';
+    } else if (motion == BodyMotionGateState.unknown) {
+      code = 'IMPACT_REJECTED_MOTION_UNKNOWN';
+      label = 'Rejected — body motion could not be measured';
+    } else {
+      code = 'IMPACT_REJECTED_NO_BODY_MOTION';
+      label = 'Rejected — user did not move (standing still)';
     }
     return ImpactGateResult(
       outcome: ImpactOutcome.rejected,
@@ -136,15 +183,21 @@ class ImpactGateEvaluator {
       reasonLabel: label,
       vibration: vibration,
       camera: camera,
+      motion: motion,
     );
   }
 
-  static String _missing(bool vibrationOk, CameraGateState camera) {
+  static String _missing(
+    bool vibrationOk,
+    CameraGateState camera,
+    bool motionOk,
+  ) {
     final List<String> parts = <String>[
       if (!vibrationOk) 'vibration',
       if (camera != CameraGateState.notRequired &&
           camera != CameraGateState.valid)
         'camera',
+      if (!motionOk) 'body motion',
     ];
     return parts.join(' and ');
   }

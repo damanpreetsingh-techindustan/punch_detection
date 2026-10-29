@@ -25,6 +25,12 @@ class SessionSummaryTable {
     'face_conf',
     'shoulder_conf',
     'distance_ratio',
+    // Body-motion gate: score (fraction of body width), state ("moved",
+    // "still", "unknown", or "off(moved|still|unknown)" when the gate is off)
+    // and the body point that moved most.
+    'motion_score',
+    'motion_state',
+    'motion_top_point',
     'decided_after_ms',
     'detail',
   ];

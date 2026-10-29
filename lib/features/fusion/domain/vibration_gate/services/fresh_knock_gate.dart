@@ -1,3 +1,4 @@
+import '../../../../../core/utils/constants.dart';
 import '../../services/impact_gate_evaluator.dart';
 import '../i_vibration_gate.dart';
 import '../models/vibration_gate_evaluation.dart';
@@ -19,6 +20,9 @@ class FreshKnockGate implements IVibrationGate {
 
   @override
   String get name => 'FreshKnockGate';
+
+  @override
+  VibrationGateType get type => VibrationGateType.knock;
 
   @override
   void addRawSample({
@@ -43,9 +47,11 @@ class FreshKnockGate implements IVibrationGate {
     required int arrivalMs,
     required double magnitude,
   }) {
-    // If raw accelerometer stream is not running (e.g. in test suites or simulations),
-    // synthesize knock from envelope samples so existing tests and fallbacks continue to work.
-    if (_lastRawSampleMs == 0 || (arrivalMs - _lastRawSampleMs).abs() > 100) {
+    // Only when NO raw accelerometer reading has ever arrived (test suites or
+    // simulations): synthesize knocks from envelope samples. In the app the raw
+    // stream always runs, and mixing the two streams would mix sensor time
+    // with arrival time and create fake knocks.
+    if (_lastRawSampleMs == 0) {
       tracker.addSample(sensorMs: arrivalMs, rawMag: magnitude);
     }
   }

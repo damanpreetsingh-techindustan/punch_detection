@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:punch_detection_demo/core/enums/detection_enums.dart';
 import 'package:punch_detection_demo/core/services/audio_level/audio_level_sample.dart';
 import 'package:punch_detection_demo/core/services/audio_level/i_audio_level_service.dart';
+import 'package:punch_detection_demo/core/services/device_vibration/i_device_vibration_service.dart';
 import 'package:punch_detection_demo/core/utils/constants.dart';
 import 'package:punch_detection_demo/features/fusion/domain/vibration_gate/services/fresh_knock_gate.dart';
 import 'package:punch_detection_demo/features/fusion/domain/vibration_gate/services/peak_threshold_gate.dart';
@@ -52,8 +53,13 @@ class _MockAudioLevelService implements IAudioLevelService {
     _monitoring = false;
   }
 
+  /// Last interval pushed to the microphone (null = never changed).
+  int? lastSampleIntervalMs;
+
   @override
-  Future<void> updateSampleInterval(int sampleIntervalMs) async {}
+  Future<void> updateSampleInterval(int sampleIntervalMs) async {
+    lastSampleIntervalMs = sampleIntervalMs;
+  }
 
   void emitDecibels(double db) {
     _mockDb = db;
@@ -63,6 +69,62 @@ class _MockAudioLevelService implements IAudioLevelService {
   @override
   void dispose() {
     _controller.close();
+  }
+}
+
+/// Vibration service that records start / stop calls instead of touching the
+/// real accelerometer plugin (not available in unit tests).
+class _FakeVibrationService implements IDeviceVibrationService {
+  final StreamController<double> _magnitudes =
+      StreamController<double>.broadcast();
+  final StreamController<VibrationRawSample> _raw =
+      StreamController<VibrationRawSample>.broadcast();
+
+  bool isMonitoring = false;
+  int startCalls = 0;
+  double? lastThreshold;
+
+  @override
+  Stream<double> get vibrationMagnitudeStream => _magnitudes.stream;
+
+  @override
+  Stream<VibrationRawSample> get rawSampleStream => _raw.stream;
+
+  @override
+  double get currentVibrationMagnitude => 0.0;
+
+  @override
+  double get recentPeakVibrationMagnitude => 0.0;
+
+  @override
+  int get lastVibrationTimestampMs => 0;
+
+  @override
+  int get recentPeakTimestampMs => 0;
+
+  @override
+  bool hasRecentVibration(int nowMs, {int maxAgeMs = 350}) => false;
+
+  @override
+  void startMonitoring({double minVibrationThreshold = 0.35}) {
+    isMonitoring = true;
+    startCalls++;
+    lastThreshold = minVibrationThreshold;
+  }
+
+  @override
+  void stopMonitoring() => isMonitoring = false;
+
+  @override
+  void consumeRecentPeak() {}
+
+  @override
+  void resetMagnitude() {}
+
+  @override
+  void dispose() {
+    _magnitudes.close();
+    _raw.close();
   }
 }
 
@@ -81,13 +143,18 @@ void main() {
 
   group('FreeSessionController Settings Gate Lifecycle & Rejection', () {
     late _MockAudioLevelService mockAudio;
+    late _FakeVibrationService fakeVibration;
     late FreeSessionController controller;
 
     setUp(() {
       AppConstants.changeSettingToDefault();
       AppConstants.warmUpDurationInMiliSeconds = 0;
       mockAudio = _MockAudioLevelService();
-      controller = FreeSessionController(audioLevelService: mockAudio);
+      fakeVibration = _FakeVibrationService();
+      controller = FreeSessionController(
+        audioLevelService: mockAudio,
+        vibrationService: fakeVibration,
+      );
     });
 
     tearDown(() {
@@ -233,6 +300,55 @@ void main() {
       expect(controller.maxCameraDistanceM.value, equals(FreeSessionController.defaultMaxCameraDistanceM));
       expect(AppConstants.vibrationGateType, equals(VibrationGateType.knock));
       expect(AppConstants.cameraDistanceUnknownIsValid, isTrue);
+    });
+
+    test('Defaults restarts the accelerometer when vibration had been turned off', () {
+      controller.mountType.value = MountType.wall;
+      controller.toggleVibrationGate(false);
+      expect(fakeVibration.isMonitoring, isFalse);
+
+      controller.resetAllSettingsToDefault();
+
+      // Before the fix only the switch flipped back on; the sensor stayed
+      // stopped and every punch was rejected for missing vibration.
+      expect(controller.isVibrationGateEnabled.value, isTrue);
+      expect(fakeVibration.isMonitoring, isTrue);
+      expect(
+        fakeVibration.lastThreshold,
+        equals(AppConstants.defaultImpactVibrationThreshold),
+      );
+    });
+
+    test('Defaults pushes the default audio interval to the microphone', () {
+      controller.setAudioSampleInterval(80);
+      expect(mockAudio.lastSampleIntervalMs, equals(80));
+
+      controller.resetAllSettingsToDefault();
+
+      expect(controller.audioSampleIntervalMs.value, AppConstants.globalStaticAudioMsg);
+      expect(mockAudio.lastSampleIntervalMs, AppConstants.globalStaticAudioMsg);
+    });
+
+    test('Defaults keeps the vibration gate on pole mount OFF', () {
+      controller.mountType.value = MountType.pole;
+      controller.toggleVibrationGate(false);
+
+      controller.resetAllSettingsToDefault();
+
+      expect(controller.isVibrationGateEnabled.value, isFalse);
+      expect(fakeVibration.isMonitoring, isFalse);
+    });
+
+    test('Defaults keeps an injected gate of the default type (no silent swap)', () {
+      final FreshKnockGate injected = FreshKnockGate();
+      final FreeSessionController withGate = FreeSessionController(
+        audioLevelService: _MockAudioLevelService(),
+        vibrationService: _FakeVibrationService(),
+        vibrationGate: injected,
+      );
+      withGate.resetAllSettingsToDefault();
+      expect(identical(withGate.vibrationGate, injected), isTrue);
+      withGate.onClose();
     });
 
     test('restarting session / onClose restores AppConstants to default', () {

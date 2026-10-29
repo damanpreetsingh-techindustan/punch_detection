@@ -1,3 +1,4 @@
+import '../../../../../core/utils/constants.dart';
 import '../../services/impact_gate_evaluator.dart';
 import '../i_vibration_gate.dart';
 import '../models/vibration_gate_evaluation.dart';
@@ -20,6 +21,9 @@ class PeakThresholdGate implements IVibrationGate {
 
   @override
   String get name => 'PeakThresholdGate';
+
+  @override
+  VibrationGateType get type => VibrationGateType.peakThreshold;
 
   @override
   void addRawSample({

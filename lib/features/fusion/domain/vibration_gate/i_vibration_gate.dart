@@ -1,3 +1,4 @@
+import '../../../../core/utils/constants.dart';
 import 'models/vibration_gate_evaluation.dart';
 
 /// Abstract contract for vibration gating strategies (DIP & ISP).
@@ -7,6 +8,11 @@ import 'models/vibration_gate_evaluation.dart';
 abstract class IVibrationGate {
   /// Descriptive name of the gating strategy (e.g. 'FreshKnockGate', 'PeakThresholdGate').
   String get name;
+
+  /// Which strategy this is. The session uses it to know whether every punch
+  /// is guaranteed its own knock (only [VibrationGateType.knock]), which is
+  /// what allows the short audio lockout for fast combos.
+  VibrationGateType get type;
 
   /// Evaluates whether physical vibration validates an impact whose acoustic spike occurred at [audioTsMs].
   ///

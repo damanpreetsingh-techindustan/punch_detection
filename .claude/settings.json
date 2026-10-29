@@ -28,7 +28,8 @@
       "Bash(python3 -I /private/tmp/claude-501/-Users-damanpreetsingh-Projects-official-punch-detection-demo/52921b6a-f313-4da7-a96b-40cbbea0930e/scratchpad/window_sim.py)",
       "WebFetch(domain:media.isbweb.org)",
       "WebFetch(domain:ojs.ub.uni-konstanz.de)",
-      "Bash(sort -t\"'\" -k2 -u)"
+      "Bash(sort -t\"'\" -k2 -u)",
+      "Bash(git stash *)"
     ]
   }
 }
