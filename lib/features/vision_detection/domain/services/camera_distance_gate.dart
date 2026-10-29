@@ -67,13 +67,16 @@ class CameraDistanceGate {
   });
 
   /// Gate configured from the common constants file.
-  factory CameraDistanceGate.fromConstants() => const CameraDistanceGate(
+  factory CameraDistanceGate.fromConstants() => CameraDistanceGate(
     enabled: AppConstants.cameraDistanceGateEnabled,
     minShoulderWidthRatio: AppConstants.cameraMinShoulderWidthRatio,
     minEyeSpanRatio: AppConstants.cameraMinEyeSpanRatio,
     unknownIsValid: AppConstants.cameraDistanceUnknownIsValid,
+    minLikelihood: AppConstants.cameraDistanceMinLikelihood,
   );
 
+  /// [minShoulderRatio] / [minEyeRatio] override the configured minimums
+  /// (used by the live "Max Camera Distance" setting).
   CameraDistanceResult evaluate({
     DistanceLandmark? leftShoulder,
     DistanceLandmark? rightShoulder,
@@ -81,7 +84,12 @@ class CameraDistanceGate {
     DistanceLandmark? rightEye,
     required double imageWidth,
     required double imageHeight,
+    double? minShoulderRatio,
+    double? minEyeRatio,
+    bool? unknownIsValid,
   }) {
+    final double shoulderMin = minShoulderRatio ?? minShoulderWidthRatio;
+    final double eyeMin = minEyeRatio ?? minEyeSpanRatio;
     if (!enabled) {
       return const CameraDistanceResult(
         withinRange: true,
@@ -92,33 +100,33 @@ class CameraDistanceGate {
     }
 
     final double diagonal = sqrt(imageWidth * imageWidth + imageHeight * imageHeight);
-    if (diagonal <= 0) return _unknown();
+    if (diagonal <= 0) return _unknown(unknownIsValid);
 
     if (_visible(leftShoulder) && _visible(rightShoulder)) {
       final double ratio = _distance(leftShoulder!, rightShoulder!) / diagonal;
       return CameraDistanceResult(
-        withinRange: ratio >= minShoulderWidthRatio,
+        withinRange: ratio >= shoulderMin,
         ratio: ratio,
         source: 'shoulders',
-        minRatio: minShoulderWidthRatio,
+        minRatio: shoulderMin,
       );
     }
 
     if (_visible(leftEye) && _visible(rightEye)) {
       final double ratio = _distance(leftEye!, rightEye!) / diagonal;
       return CameraDistanceResult(
-        withinRange: ratio >= minEyeSpanRatio,
+        withinRange: ratio >= eyeMin,
         ratio: ratio,
         source: 'eyes',
-        minRatio: minEyeSpanRatio,
+        minRatio: eyeMin,
       );
     }
 
-    return _unknown();
+    return _unknown(unknownIsValid);
   }
 
-  CameraDistanceResult _unknown() => CameraDistanceResult(
-    withinRange: unknownIsValid,
+  CameraDistanceResult _unknown([bool? override]) => CameraDistanceResult(
+    withinRange: override ?? unknownIsValid,
     ratio: null,
     source: 'unknown',
     minRatio: null,

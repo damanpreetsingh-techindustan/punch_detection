@@ -50,20 +50,30 @@ class _MockAudioLevelService implements IAudioLevelService {
   void dispose() => _controller.close();
 }
 
-PoseLandmark lm(PoseLandmarkType type, double y, double likelihood) =>
-    PoseLandmark(type: type, x: 200, y: y, z: 0, likelihood: likelihood);
+PoseLandmark lm(
+  PoseLandmarkType type,
+  double y,
+  double likelihood, {
+  double x = 200,
+}) => PoseLandmark(type: type, x: x, y: y, z: 0, likelihood: likelihood);
 
 /// A real user: confident nose and eyes above confident shoulders.
 Pose personPose() => Pose(
   landmarks: <PoseLandmarkType, PoseLandmark>{
     PoseLandmarkType.nose: lm(PoseLandmarkType.nose, 100, 0.95),
-    PoseLandmarkType.leftEye: lm(PoseLandmarkType.leftEye, 90, 0.9),
-    PoseLandmarkType.rightEye: lm(PoseLandmarkType.rightEye, 90, 0.9),
-    PoseLandmarkType.leftShoulder: lm(PoseLandmarkType.leftShoulder, 250, 0.85),
+    PoseLandmarkType.leftEye: lm(PoseLandmarkType.leftEye, 90, 0.9, x: 180),
+    PoseLandmarkType.rightEye: lm(PoseLandmarkType.rightEye, 90, 0.9, x: 220),
+    PoseLandmarkType.leftShoulder: lm(
+      PoseLandmarkType.leftShoulder,
+      250,
+      0.85,
+      x: 100,
+    ),
     PoseLandmarkType.rightShoulder: lm(
       PoseLandmarkType.rightShoulder,
       250,
       0.8,
+      x: 300,
     ),
   },
 );

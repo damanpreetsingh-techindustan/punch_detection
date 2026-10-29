@@ -1,5 +1,13 @@
 import 'dart:io';
 
+enum VibrationGateType {
+  /// Impulsive high-frequency jerk delta knock with single-use knock ledger
+  knock,
+
+  /// Legacy envelope peak magnitude threshold
+  peakThreshold,
+}
+
 class AppConstants {
   static const String appName = 'Hyper Hitter';
   static const int calibrationDurationSeconds = 10;
@@ -40,6 +48,7 @@ class AppConstants {
   /// Global runtime audio capture interval in milliseconds (Default: 20ms).
   /// Single source of truth: change here or mutate dynamically via settings.
   static int globalAudioSampleIntervalMs = AppConstants.globalStaticAudioMsg;
+  static const int cameraTargetFps = 30;
 
   /// Number of consecutive audio frames used for the rolling moving average (Default: 3 frames, ~60ms).
   /// Averages out transient micro-noises (breath pops, mouth clicks) while keeping punch strike energy intact.
@@ -112,16 +121,33 @@ class AppConstants {
 
   /// Minimum shoulder width as a fraction of the image diagonal. A person
   /// farther than this (smaller ratio) is NOT a valid user.
-  /// Rough guide for a ~90° front camera: 0.20 ≈ 0.8 m, 0.11 ≈ 1.5 m, 0.08 ≈ 2 m.
-  static const double cameraMinShoulderWidthRatio = 0.09;
+  /// Rough guide for a ~90° front camera: 0.20 ≈ 0.8 m, 0.11 ≈ 1.5 m, 0.08 ≈ 2 m. // by default 0.09
+  static const double cameraMinShoulderWidthRatio = 0.20;
 
   /// Same rule used when both shoulders are not visible but both eyes are.
-  /// Eye span is about 1/6 of shoulder width, so this is ~1/6 of the value above.
-  static const double cameraMinEyeSpanRatio = 0.014;
+  /// Eye span is about 1/6 of shoulder width, so this is ~1/6 of the value above. // by default 0.014;
+  static const double cameraMinEyeSpanRatio = 0.031;
+
+  /// Shoulders / eyes below this confidence are not used to measure distance.
+  /// Far users get weak, jumpy points that can fake a wide shoulder span.
+  static const double cameraDistanceMinLikelihood = 0.5;
+
+  /// Consecutive close-enough frames needed before the user counts as near,
+  /// so one noisy frame from a far user cannot confirm a punch.
+  static const int cameraMinConsecutiveNearFrames = 1;
+
+  /// Approximate distance from a shoulder ratio: metres ≈ factor / ratio
+  /// (matches the guide above: 0.20 ≈ 0.8 m, 0.08 ≈ 2 m). The default slider
+  /// value is cameraDistanceMetresFactor / cameraMinShoulderWidthRatio.
+  static const double cameraDistanceMetresFactor = 0.16;
+
+  /// Range of the "Max Camera Distance" slider in the session settings (metres).
+  static const double minCameraDistanceSliderM = 0.4;
+  static const double maxCameraDistanceSliderM = 3.0;
 
   /// What to do when the distance cannot be measured (for example only one
   /// shoulder visible and no eyes): true = treat as valid (never miss a punch).
-  static const bool cameraDistanceUnknownIsValid = true;
+  static bool cameraDistanceUnknownIsValid = true;
 
   /// A camera observation older than this (milliseconds) no longer counts.
   static const int cameraObservationStaleMs = 700;
@@ -167,6 +193,15 @@ class AppConstants {
   /// Default threshold for physical impact detection.
   static double defaultImpactVibrationThreshold = Platform.isIOS ? 0.18 : 0.06;
 
+  /// Strategy type for vibration gating (knock: impulsive jerk; peakThreshold: legacy envelope)
+  static VibrationGateType vibrationGateType = VibrationGateType.knock;
+
+  /// Minimum sample-to-sample jerk (m/s²) to identify a collision knock
+  static const double knockMinJerk = 0.15;
+
+  /// Merge window (ms) to group multi-axis jerk oscillations of the same hit into one knock
+  static const int knockMergeMs = 40;
+
   /// Impact Sensitivity Slider bounds in session detection settings (0.05 m/s² to 1.0 m/s²)
   static double minImpactVibrationSlider = 0.05;
   static double maxImpactVibrationSlider = 1.0;
@@ -182,6 +217,8 @@ class AppConstants {
     enableDeviceStabilityCheck = false;
     enableExtraFaceRestrictions = false;
     postSettingsCooldownMs = 1000;
+    vibrationGateType = VibrationGateType.knock;
+    cameraDistanceUnknownIsValid = true;
   }
 
   /// Official Fighter Callout Combo List

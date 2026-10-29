@@ -10,6 +10,15 @@ class CandidateSpike {
   final double prevFrameDb;
   final bool isTargetMet;
 
+  /// Rise from the previous 10 ms block (dB).
+  final double frameJump;
+
+  /// Rise over the last 4 blocks / 40 ms (dB).
+  final double windowRise;
+
+  /// Which onset rule passed: 'jump6', 'rise10' or 'rise8jump4'.
+  final String onsetRule;
+
   CandidateSpike({
     required this.timestampMs,
     required this.peakDb,
@@ -17,6 +26,29 @@ class CandidateSpike {
     required this.spikeHeight,
     required this.prevFrameDb,
     this.isTargetMet = true,
+    this.frameJump = 0.0,
+    this.windowRise = 0.0,
+    this.onsetRule = '',
+  });
+}
+
+/// A sharp sound that arrived during the post-spike lockout and was ignored.
+/// Logging only: detection never reads it.
+class SuppressedSpike {
+  final int timestampMs;
+  final double db;
+  final double frameJump;
+  final double windowRise;
+  final int msSinceLastSpike;
+  final bool wouldMeetTarget;
+
+  const SuppressedSpike({
+    required this.timestampMs,
+    required this.db,
+    required this.frameJump,
+    required this.windowRise,
+    required this.msSinceLastSpike,
+    required this.wouldMeetTarget,
   });
 }
 
@@ -76,6 +108,9 @@ class AdaptiveAudioBaseline {
   /// Pending candidate spike waiting for fast decay verification.
   CandidateSpike? _pendingCandidateSpike;
 
+  /// Last sharp sound ignored because of the lockout (see [takeSuppressedSpike]).
+  SuppressedSpike? _suppressedSpike;
+
   /// Fixed 4-frame history (40ms) to measure true onset rise across slow and fast punches with zero allocations.
   double _onsetHistory0 = 48.0;
   double _onsetHistory1 = 48.0;
@@ -126,6 +161,22 @@ class AdaptiveAudioBaseline {
     _lastSpikeTimestampMs = 0;
   }
 
+  /// Returns, and clears, the sharp sound the last [processFrame] call ignored
+  /// because it fell inside the lockout. Null when there was none.
+  SuppressedSpike? takeSuppressedSpike() {
+    final SuppressedSpike? spike = _suppressedSpike;
+    _suppressedSpike = null;
+    return spike;
+  }
+
+  /// Name of the onset rule a rise passes, or null when it passes none.
+  static String? _onsetRule(double frameJump, double windowRise) {
+    if (frameJump >= 6.0) return 'jump6';
+    if (windowRise >= 10.0) return 'rise10';
+    if (windowRise >= 8.0 && frameJump >= 4.0) return 'rise8jump4';
+    return null;
+  }
+
   /// Average of recent samples in the rolling window.
   double get windowAverage {
     if (_recentSamples.isEmpty) return _smoothedBaseline;
@@ -169,9 +220,29 @@ class AdaptiveAudioBaseline {
 
     // 1. Continuous Leaky Baseline Adaptation
     feedSample(db);
+    _suppressedSpike = null;
 
     // 2. Refractory Window Check (Dynamic per mode, default 110ms)
     if (currentMs - _lastSpikeTimestampMs < refractoryMs) {
+      // Logging only: note a sharp sound the lockout is hiding.
+      final double lockedTrough = min(
+        min(_onsetHistory0, _onsetHistory1),
+        min(_onsetHistory2, _onsetHistory3),
+      );
+      final double lockedJump = db - prevFrameDb;
+      final double lockedRise = db - lockedTrough;
+      if (_onsetRule(lockedJump, lockedRise) != null &&
+          db >= calibratedAmbientDb + 4.0) {
+        _suppressedSpike = SuppressedSpike(
+          timestampMs: currentMs,
+          db: db,
+          frameJump: lockedJump,
+          windowRise: lockedRise,
+          msSinceLastSpike: currentMs - _lastSpikeTimestampMs,
+          wouldMeetTarget:
+              db >= (fixedAudioTargetDb ?? (calibratedAmbientDb + spikeThresholdDb)),
+        );
+      }
       _onsetHistory3 = _onsetHistory2;
       _onsetHistory2 = _onsetHistory1;
       _onsetHistory1 = _onsetHistory0;
@@ -213,9 +284,8 @@ class AdaptiveAudioBaseline {
     // Strict percussive impact onset verification:
     // Physical punches produce explosive shockwaves (>= +6.0 dB jump in 20ms or steep onset).
     // Human voices, speech, and background movement ramp up gradually (1-3 dB) and are completely filtered out.
-    final bool isOnsetMet = frameJump >= 6.0 ||
-        windowRise >= 10.0 ||
-        (windowRise >= 8.0 && frameJump >= 4.0);
+    final String? onsetRule = _onsetRule(frameJump, windowRise);
+    final bool isOnsetMet = onsetRule != null;
 
     // Condition 1: Target Met (Valid punch threshold achieved)
     final bool isThresholdMet = db >= targetDb && db >= effectiveMinFloor;
@@ -237,6 +307,9 @@ class AdaptiveAudioBaseline {
           spikeHeight: baselineSpike,
           prevFrameDb: onsetTrough,
           isTargetMet: true,
+          frameJump: frameJump,
+          windowRise: windowRise,
+          onsetRule: onsetRule,
         );
       } else if (isAboveCalibrationCandidate) {
         // Sharp percussive onset above calibration baseline, but below current target.
@@ -250,6 +323,9 @@ class AdaptiveAudioBaseline {
           spikeHeight: baselineSpike,
           prevFrameDb: onsetTrough,
           isTargetMet: false,
+          frameJump: frameJump,
+          windowRise: windowRise,
+          onsetRule: onsetRule,
         );
       }
     }
@@ -268,6 +344,7 @@ class AdaptiveAudioBaseline {
     _lastSpikeTimestampMs = 0;
     _elevatedFrameCount = 0;
     _pendingCandidateSpike = null;
+    _suppressedSpike = null;
     _onsetHistory0 = initialBaseline;
     _onsetHistory1 = initialBaseline;
     _onsetHistory2 = initialBaseline;

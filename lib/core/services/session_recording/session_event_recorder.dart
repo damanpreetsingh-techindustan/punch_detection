@@ -14,9 +14,23 @@ class SessionEventRecorder {
     Future<Directory> Function()? directoryProvider,
     this.flushIntervalMs = 1000,
     this.maxBufferedChars = 2000000,
-  }) : _directoryProvider = directoryProvider ?? getTemporaryDirectory;
+    this.maxKeptFiles = 20,
+  }) : _directoryProvider = directoryProvider ?? defaultLogDirectory;
 
   final Future<Directory> Function() _directoryProvider;
+
+  /// Raw files kept in the log folder; older ones are deleted when a new
+  /// session starts (0 = keep all).
+  final int maxKeptFiles;
+
+  static const String _filePrefix = 'hyper_hitter_raw_events_';
+
+  /// `<app documents>/session_logs`: unlike the temporary folder, the OS does
+  /// not clear it, so a session can still be exported days later.
+  static Future<Directory> defaultLogDirectory() async {
+    final Directory docs = await getApplicationDocumentsDirectory();
+    return Directory('${docs.path}/session_logs').create(recursive: true);
+  }
 
   /// Minimum time between flushes of the file sink (checked on each record, no timer).
   final int flushIntervalMs;
@@ -88,8 +102,7 @@ class SessionEventRecorder {
   Future<void> _openSink() async {
     try {
       final Directory dir = await _directoryProvider();
-      final String path =
-          '${dir.path}/hyper_hitter_raw_events_$_startEpochMs.jsonl';
+      final String path = '${dir.path}/$_filePrefix$_startEpochMs.jsonl';
       final IOSink sink = File(path).openWrite();
       if (_pending.isNotEmpty) {
         sink.write(_pending.toString());
@@ -97,10 +110,31 @@ class SessionEventRecorder {
       }
       _sink = sink;
       _filePath = path;
+      await _deleteOldFiles(dir, keep: path);
     } catch (_) {
       _sink = null;
       _filePath = null;
     }
+  }
+
+  /// Keeps the newest [maxKeptFiles] raw files (names sort by start time).
+  Future<void> _deleteOldFiles(Directory dir, {required String keep}) async {
+    if (maxKeptFiles <= 0) return;
+    try {
+      final List<File> files = dir
+          .listSync()
+          .whereType<File>()
+          .where((File f) {
+            final String name = f.uri.pathSegments.last;
+            return name.startsWith(_filePrefix) && name.endsWith('.jsonl');
+          })
+          .toList()
+        ..sort((File a, File b) => a.path.compareTo(b.path));
+      final int excess = files.length - maxKeptFiles;
+      for (int i = 0; i < excess; i++) {
+        if (files[i].path != keep) await files[i].delete();
+      }
+    } catch (_) {}
   }
 
   /// Records one event. [atEpochMs] lets callers stamp an event with the time the

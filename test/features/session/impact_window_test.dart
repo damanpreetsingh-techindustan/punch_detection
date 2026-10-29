@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:punch_detection_demo/core/enums/detection_enums.dart';
 import 'package:punch_detection_demo/core/services/audio_level/audio_level_sample.dart';
 import 'package:punch_detection_demo/core/services/audio_level/i_audio_level_service.dart';
+import 'package:punch_detection_demo/core/services/session_recording/session_summary_table.dart';
 import 'package:punch_detection_demo/core/utils/constants.dart';
 import 'package:punch_detection_demo/features/fusion/domain/services/impact_gate_evaluator.dart';
 import 'package:punch_detection_demo/features/session/presentation/controllers/free_session_controller.dart';
@@ -260,6 +261,75 @@ void main() {
       vibe(0.6, 60);
       frame(95.0, 60);
       expect(controller.punchCount.value, 1);
+    });
+  });
+
+  group('debug log details', () {
+    /// Summary CSV rows of one kind, as column -> cell maps.
+    List<Map<String, String>> rows(String kind) {
+      final List<String> lines = controller.summaryTable.toCsv().trim().split(
+        '\n',
+      );
+      return lines
+          .skip(1)
+          .map((String line) => line.split(','))
+          .where((List<String> cells) => cells[1] == kind)
+          .map(
+            (List<String> cells) => <String, String>{
+              for (int i = 0; i < SessionSummaryTable.columns.length; i++)
+                SessionSummaryTable.columns[i]: cells[i],
+            },
+          )
+          .toList();
+    }
+
+    test('a hit hidden by the lockout is logged as suppressed', () {
+      quiet(0, 60);
+      camera(CameraGateState.valid, 50);
+      vibe(0.6, 60);
+      frame(95.0, 60);
+      quiet(70, 130);
+      frame(95.0, 130); // 70 ms later: inside the 160 ms lockout
+      quiet(140, 300);
+      expect(controller.punchCount.value, 1);
+      expect(
+        controller.recorder.totals.counter('audio.spikes_suppressed'),
+        greaterThanOrEqualTo(1),
+      );
+      final List<Map<String, String>> suppressed = rows('SUPPRESSED');
+      expect(suppressed, hasLength(1));
+      expect(suppressed.single['code'], 'SPIKE_SUPPRESSED_LOCKOUT');
+      expect(
+        controller.summaryTable.toCsv(),
+        contains('70 ms after previous spike, above target'),
+      );
+    });
+
+    test('impact row carries rise values and vibration offset', () {
+      quiet(0, 60);
+      camera(CameraGateState.valid, 40);
+      vibe(0.6, 40); // 20 ms before the audio spike
+      frame(95.0, 60);
+      final Map<String, String> row = rows('IMPACT').single;
+      expect(row['vibe_offset_ms'], '-20');
+      expect(row['vibe_rose'], 'yes');
+      expect(double.parse(row['window_rise']!), greaterThanOrEqualTo(10.0));
+    });
+
+    test('vibration that is only the previous punch tail is flagged', () {
+      quiet(0, 60);
+      camera(CameraGateState.valid, 50);
+      vibe(0.6, 60);
+      frame(95.0, 60);
+      vibe(0.3, 170); // fading tail of the first hit, no new rise
+      vibe(0.25, 200);
+      quiet(70, 260);
+      camera(CameraGateState.valid, 250);
+      frame(95.0, 260);
+      quiet(270, 430);
+      expect(controller.punchCount.value, 2);
+      expect(rows('IMPACT').last['vibe_rose'], 'no');
+      expect(controller.recorder.totals.counter('impact.vibe_tail_only'), 1);
     });
   });
 

@@ -11,6 +11,8 @@ class DeviceVibrationService implements IDeviceVibrationService {
   StreamSubscription<UserAccelerometerEvent>? _accelSubscription;
   final StreamController<double> _vibrationStreamController =
       StreamController<double>.broadcast();
+  final StreamController<VibrationRawSample> _rawSampleStreamController =
+      StreamController<VibrationRawSample>.broadcast();
 
   double _currentVibrationMagnitude = 0.0;
   double _recentPeakMagnitude = 0.0;
@@ -32,6 +34,10 @@ class DeviceVibrationService implements IDeviceVibrationService {
   @override
   Stream<double> get vibrationMagnitudeStream =>
       _vibrationStreamController.stream;
+
+  @override
+  Stream<VibrationRawSample> get rawSampleStream =>
+      _rawSampleStreamController.stream;
 
   @override
   double get currentVibrationMagnitude => _currentVibrationMagnitude;
@@ -123,6 +129,23 @@ class DeviceVibrationService implements IDeviceVibrationService {
               _recentPeakTimestampMs = nowMs;
             }
 
+            // Every reading with its sensor time, for the session log only.
+            if (_rawSampleStreamController.hasListener &&
+                !_rawSampleStreamController.isClosed) {
+              _rawSampleStreamController.add(
+                VibrationRawSample(
+                  sensorMs: event.timestamp.millisecondsSinceEpoch,
+                  arrivalMs: nowMs,
+                  rawMag: dynamicMag,
+                  effectiveMag: effectiveMag,
+                  envelope: _currentVibrationMagnitude,
+                  x: acX,
+                  y: acY,
+                  z: acZ,
+                ),
+              );
+            }
+
             // 5. Throttled UI Streaming (~30 FPS or on notable impact changes >= 0.02)
             // Prevents Choreographer frame drops while providing instantaneous punch response.
             final bool shouldEmit =
@@ -183,5 +206,6 @@ class DeviceVibrationService implements IDeviceVibrationService {
   void dispose() {
     stopMonitoring();
     _vibrationStreamController.close();
+    _rawSampleStreamController.close();
   }
 }

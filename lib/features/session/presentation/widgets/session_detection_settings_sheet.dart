@@ -34,11 +34,19 @@ void showSessionDetectionSettingsSheet(
   required Function({required double spikeDb, required double vibrationMag})
   onApplyEnvironmentPreset,
   required Function(double) onSpikeDbChanged,
+  RxDouble? maxCameraDistanceM,
+  double? defaultMaxCameraDistanceM,
+  Function(double)? onMaxCameraDistanceChanged,
+  RxBool? cameraDistanceUnknownIsValid,
+  Function(bool)? onToggleCameraDistanceUnknownIsValid,
+  Rx<VibrationGateType>? vibrationGateType,
+  Function(VibrationGateType)? onSetVibrationGateType,
   RxBool? isVibrationDisabled,
   RxBool? isVibrationGateEnabled,
   Function(bool)? onToggleVibrationGate,
   AutoConfigResult Function()? onEvaluateAutoConfig,
   Function(AutoConfigResult)? onApplyAutoConfig,
+  VoidCallback? onResetToDefaults,
   VoidCallback? onOpened,
   VoidCallback? onClosed,
 }) async {
@@ -69,11 +77,20 @@ void showSessionDetectionSettingsSheet(
         onToggleDeviceStability: onToggleDeviceStability,
         onApplyEnvironmentPreset: onApplyEnvironmentPreset,
         onSpikeDbChanged: onSpikeDbChanged,
+        maxCameraDistanceM: maxCameraDistanceM,
+        defaultMaxCameraDistanceM: defaultMaxCameraDistanceM,
+        onMaxCameraDistanceChanged: onMaxCameraDistanceChanged,
+        cameraDistanceUnknownIsValid: cameraDistanceUnknownIsValid,
+        onToggleCameraDistanceUnknownIsValid:
+            onToggleCameraDistanceUnknownIsValid,
+        vibrationGateType: vibrationGateType,
+        onSetVibrationGateType: onSetVibrationGateType,
         isVibrationDisabled: isVibrationDisabled,
         isVibrationGateEnabled: isVibrationGateEnabled,
         onToggleVibrationGate: onToggleVibrationGate,
         onEvaluateAutoConfig: onEvaluateAutoConfig,
         onApplyAutoConfig: onApplyAutoConfig,
+        onResetToDefaults: onResetToDefaults,
         onOpened: onOpened,
         onClosed: onClosed,
       ),
@@ -103,11 +120,19 @@ class _SessionDetectionSettingsSheetContent extends StatelessWidget {
   final Function({required double spikeDb, required double vibrationMag})
   onApplyEnvironmentPreset;
   final Function(double) onSpikeDbChanged;
+  final RxDouble? maxCameraDistanceM;
+  final double? defaultMaxCameraDistanceM;
+  final Function(double)? onMaxCameraDistanceChanged;
+  final RxBool? cameraDistanceUnknownIsValid;
+  final Function(bool)? onToggleCameraDistanceUnknownIsValid;
+  final Rx<VibrationGateType>? vibrationGateType;
+  final Function(VibrationGateType)? onSetVibrationGateType;
   final RxBool? isVibrationDisabled;
   final RxBool? isVibrationGateEnabled;
   final Function(bool)? onToggleVibrationGate;
   final AutoConfigResult Function()? onEvaluateAutoConfig;
   final Function(AutoConfigResult)? onApplyAutoConfig;
+  final VoidCallback? onResetToDefaults;
   final VoidCallback? onOpened;
   final VoidCallback? onClosed;
 
@@ -130,11 +155,19 @@ class _SessionDetectionSettingsSheetContent extends StatelessWidget {
     required this.onToggleDeviceStability,
     required this.onApplyEnvironmentPreset,
     required this.onSpikeDbChanged,
+    this.maxCameraDistanceM,
+    this.defaultMaxCameraDistanceM,
+    this.onMaxCameraDistanceChanged,
+    this.cameraDistanceUnknownIsValid,
+    this.onToggleCameraDistanceUnknownIsValid,
+    this.vibrationGateType,
+    this.onSetVibrationGateType,
     this.isVibrationDisabled,
     this.isVibrationGateEnabled,
     this.onToggleVibrationGate,
     this.onEvaluateAutoConfig,
     this.onApplyAutoConfig,
+    this.onResetToDefaults,
     this.onOpened,
     this.onClosed,
   });
@@ -206,6 +239,44 @@ class _SessionDetectionSettingsSheetContent extends StatelessWidget {
                   ),
                 ),
                 10.width,
+                if (onResetToDefaults != null) ...[
+                  GestureDetector(
+                    onTap: onResetToDefaults,
+                    child: Container(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: isLandscape ? 8.w : 10.w,
+                        vertical: 3.h,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppColors.panel,
+                        borderRadius: BorderRadius.circular(8.r),
+                        border: Border.all(color: AppColors.border),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.refresh_rounded,
+                            color: AppColors.amber,
+                            size: isLandscape ? 12.w : 14.w,
+                          ),
+                          4.width,
+                          Text(
+                            'Defaults',
+                            style: TextStyle(
+                              color: AppColors.amber,
+                              fontSize: isLandscape
+                                  ? 9.ts(context)
+                                  : 10.5.ts(context),
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  8.width,
+                ],
                 IconButton(
                   padding: EdgeInsets.zero,
                   constraints: const BoxConstraints(),
@@ -300,6 +371,13 @@ class _SessionDetectionSettingsSheetContent extends StatelessWidget {
                   _buildVibrationTargetBanner(context, isLandscape: true),
                   8.height,
                   _buildVibrationThresholdSlider(context, isLandscape: true),
+                  if (vibrationGateType != null) ...[
+                    8.height,
+                    _buildVibrationGateStrategySelector(
+                      context,
+                      isLandscape: true,
+                    ),
+                  ],
                   10.height,
                   _buildCameraHeader(context, isLandscape: true),
                   8.height,
@@ -308,6 +386,17 @@ class _SessionDetectionSettingsSheetContent extends StatelessWidget {
                     isLandscape: true,
                   ),
                   8.height,
+                  if (maxCameraDistanceM != null) ...[
+                    _buildCameraDistanceSlider(context, isLandscape: true),
+                    8.height,
+                  ],
+                  if (cameraDistanceUnknownIsValid != null) ...[
+                    _buildCameraDistanceUnknownSettingTile(
+                      context,
+                      isLandscape: true,
+                    ),
+                    8.height,
+                  ],
                   _buildDeviceStabilityTile(context, isLandscape: true),
                 ],
               ),
@@ -358,6 +447,10 @@ class _SessionDetectionSettingsSheetContent extends StatelessWidget {
           _buildVibrationTargetBanner(context, isLandscape: false),
           10.height,
           _buildVibrationThresholdSlider(context, isLandscape: false),
+          if (vibrationGateType != null) ...[
+            10.height,
+            _buildVibrationGateStrategySelector(context, isLandscape: false),
+          ],
 
           14.height,
           Divider(color: AppColors.border, height: 1.h),
@@ -368,6 +461,14 @@ class _SessionDetectionSettingsSheetContent extends StatelessWidget {
           10.height,
           _buildVisionConfirmationModeSelector(context, isLandscape: false),
           10.height,
+          if (maxCameraDistanceM != null) ...[
+            _buildCameraDistanceSlider(context, isLandscape: false),
+            10.height,
+          ],
+          if (cameraDistanceUnknownIsValid != null) ...[
+            _buildCameraDistanceUnknownSettingTile(context, isLandscape: false),
+            10.height,
+          ],
           _buildDeviceStabilityTile(context, isLandscape: false),
 
           // ─── OPTIONAL: OPEN FULL APP SETTINGS BUTTON (COMMENTED OUT) ───
@@ -1496,6 +1597,316 @@ class _SessionDetectionSettingsSheetContent extends StatelessWidget {
     });
   }
 
+  // ─── VIBRATION GATE STRATEGY SELECTOR ───
+  Widget _buildVibrationGateStrategySelector(
+    BuildContext context, {
+    required bool isLandscape,
+  }) {
+    if (vibrationGateType == null) return const SizedBox.shrink();
+
+    return Obx(() {
+      final bool disabled = isVibrationDisabled?.value ?? false;
+      final VibrationGateType currentType = vibrationGateType!.value;
+      final bool isKnock = currentType == VibrationGateType.knock;
+
+      return Opacity(
+        opacity: disabled ? 0.45 : 1.0,
+        child: IgnorePointer(
+          ignoring: disabled,
+          child: Container(
+            padding: EdgeInsets.all(isLandscape ? 8.w : 10.w),
+            decoration: BoxDecoration(
+              color: AppColors.surface.withValues(alpha: 0.5),
+              borderRadius: BorderRadius.circular(12.r),
+              border: Border.all(color: AppColors.border),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.bolt_rounded,
+                          color: const Color(0xFFA78BFA),
+                          size: isLandscape ? 15.w : 18.w,
+                        ),
+                        6.width,
+                        Text(
+                          'Vibration Gate Strategy',
+                          style: TextStyle(
+                            color: AppColors.textPrimary,
+                            fontSize:
+                                isLandscape ? 10.5.ts(context) : 12.ts(context),
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
+                    Container(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: isLandscape ? 6.w : 8.w,
+                        vertical: 2.h,
+                      ),
+                      decoration: BoxDecoration(
+                        color: isKnock
+                            ? AppColors.lime.withValues(alpha: 0.15)
+                            : AppColors.amber.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(6.r),
+                        border: Border.all(
+                          color: isKnock ? AppColors.lime : AppColors.amber,
+                          width: 1.w,
+                        ),
+                      ),
+                      child: Text(
+                        isKnock ? 'RECOMMENDED' : 'LEGACY',
+                        style: TextStyle(
+                          color: isKnock ? AppColors.lime : AppColors.amber,
+                          fontSize:
+                              isLandscape ? 7.5.ts(context) : 8.5.ts(context),
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                8.height,
+                Row(
+                  children: [
+                    // Option 1: Fresh Knock (Jerk Delta)
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: () => onSetVibrationGateType?.call(
+                          VibrationGateType.knock,
+                        ),
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 180),
+                          padding: EdgeInsets.symmetric(
+                            horizontal: isLandscape ? 8.w : 10.w,
+                            vertical: isLandscape ? 6.h : 8.h,
+                          ),
+                          decoration: BoxDecoration(
+                            color: isKnock
+                                ? const Color(0xFF8B5CF6).withValues(alpha: 0.2)
+                                : AppColors.panel,
+                            borderRadius: BorderRadius.circular(10.r),
+                            border: Border.all(
+                              color: isKnock
+                                  ? const Color(0xFFA78BFA)
+                                  : AppColors.border,
+                              width: isKnock ? 1.5.w : 1.w,
+                            ),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Container(
+                                    width: isLandscape ? 14.w : 16.w,
+                                    height: isLandscape ? 14.w : 16.w,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      border: Border.all(
+                                        color: isKnock
+                                            ? const Color(0xFFA78BFA)
+                                            : AppColors.border,
+                                        width: 2.w,
+                                      ),
+                                    ),
+                                    alignment: Alignment.center,
+                                    child: isKnock
+                                        ? Container(
+                                            width: isLandscape ? 7.w : 8.w,
+                                            height: isLandscape ? 7.w : 8.w,
+                                            decoration: const BoxDecoration(
+                                              shape: BoxShape.circle,
+                                              color: Color(0xFFA78BFA),
+                                            ),
+                                          )
+                                        : null,
+                                  ),
+                                  6.width,
+                                  Expanded(
+                                    child: Text(
+                                      'Fresh Knock',
+                                      style: TextStyle(
+                                        color: AppColors.textPrimary,
+                                        fontSize: isLandscape
+                                            ? 10.ts(context)
+                                            : 11.5.ts(context),
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              3.height,
+                              Text(
+                                'Jerk Δ ≥ 0.15 m/s²',
+                                style: TextStyle(
+                                  color: isKnock
+                                      ? const Color(0xFFA78BFA)
+                                      : AppColors.textMuted,
+                                  fontSize: isLandscape
+                                      ? 8.ts(context)
+                                      : 9.ts(context),
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    8.width,
+                    // Option 2: Legacy Peak Threshold
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: () => onSetVibrationGateType?.call(
+                          VibrationGateType.peakThreshold,
+                        ),
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 180),
+                          padding: EdgeInsets.symmetric(
+                            horizontal: isLandscape ? 8.w : 10.w,
+                            vertical: isLandscape ? 6.h : 8.h,
+                          ),
+                          decoration: BoxDecoration(
+                            color: !isKnock
+                                ? AppColors.amber.withValues(alpha: 0.15)
+                                : AppColors.panel,
+                            borderRadius: BorderRadius.circular(10.r),
+                            border: Border.all(
+                              color: !isKnock
+                                  ? AppColors.amber
+                                  : AppColors.border,
+                              width: !isKnock ? 1.5.w : 1.w,
+                            ),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Container(
+                                    width: isLandscape ? 14.w : 16.w,
+                                    height: isLandscape ? 14.w : 16.w,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      border: Border.all(
+                                        color: !isKnock
+                                            ? AppColors.amber
+                                            : AppColors.border,
+                                        width: 2.w,
+                                      ),
+                                    ),
+                                    alignment: Alignment.center,
+                                    child: !isKnock
+                                        ? Container(
+                                            width: isLandscape ? 7.w : 8.w,
+                                            height: isLandscape ? 7.w : 8.w,
+                                            decoration: const BoxDecoration(
+                                              shape: BoxShape.circle,
+                                              color: AppColors.amber,
+                                            ),
+                                          )
+                                        : null,
+                                  ),
+                                  6.width,
+                                  Expanded(
+                                    child: Text(
+                                      'Legacy Peak',
+                                      style: TextStyle(
+                                        color: AppColors.textPrimary,
+                                        fontSize: isLandscape
+                                            ? 10.ts(context)
+                                            : 11.5.ts(context),
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              3.height,
+                              Text(
+                                'Envelope Threshold',
+                                style: TextStyle(
+                                  color: !isKnock
+                                      ? AppColors.amber
+                                      : AppColors.textMuted,
+                                  fontSize: isLandscape
+                                      ? 8.ts(context)
+                                      : 9.ts(context),
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                8.height,
+                // Informational container on how it works
+                Container(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: isLandscape ? 8.w : 10.w,
+                    vertical: isLandscape ? 6.h : 8.h,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppColors.panel.withValues(alpha: 0.6),
+                    borderRadius: BorderRadius.circular(8.r),
+                    border: Border.all(
+                      color: isKnock
+                          ? const Color(0xFF8B5CF6).withValues(alpha: 0.25)
+                          : AppColors.amber.withValues(alpha: 0.25),
+                    ),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        isKnock
+                            ? Icons.info_outline_rounded
+                            : Icons.warning_amber_rounded,
+                        color: isKnock
+                            ? const Color(0xFFA78BFA)
+                            : AppColors.amber,
+                        size: isLandscape ? 13.w : 15.w,
+                      ),
+                      6.width,
+                      Expanded(
+                        child: Text(
+                          isKnock
+                              ? 'How it works: Detects sudden sample-to-sample jerk (Δ ≥ 0.15 m/s²) on raw 50Hz sensor data. It ignores smooth bag swing pendulum motion (averaging 0.24 m/s²), eliminates false punch counts from loud gym talking while bag is swinging, and enables rapid combos (120–160ms apart).'
+                              : 'How it works: Triggers whenever the smoothed vibration envelope exceeds the threshold. Note: After hard punches, heavy bag swings above threshold for 2–3s, which can cause loud voices to falsely register as punches during swings.',
+                          style: TextStyle(
+                            color: AppColors.textMuted,
+                            fontSize:
+                                isLandscape ? 7.8.ts(context) : 9.ts(context),
+                            height: 1.35,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    });
+  }
+
+
   // ─── VISION CONFIRMATION MODE SELECTOR ───
   Widget _buildVisionConfirmationModeSelector(
     BuildContext context, {
@@ -1733,6 +2144,265 @@ class _SessionDetectionSettingsSheetContent extends StatelessWidget {
       ),
     );
   }
+
+  // ─── MAX CAMERA DISTANCE SLIDER ───
+  Widget _buildCameraDistanceSlider(
+    BuildContext context, {
+    required bool isLandscape,
+  }) {
+    return Obx(() {
+      final double metres = maxCameraDistanceM!.value;
+      final double? defaultMetres = defaultMaxCameraDistanceM;
+      final bool isDefault =
+          defaultMetres == null || (metres - defaultMetres).abs() < 0.05;
+      final bool disabled = !isVisionConfirmationRequired.value;
+      final String metresLabel = '≈ ${metres.toStringAsFixed(1)} m';
+
+      return Opacity(
+        opacity: disabled ? 0.45 : 1.0,
+        child: IgnorePointer(
+          ignoring: disabled,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Max Camera Distance',
+                      style: TextStyle(
+                        color: AppColors.textPrimary,
+                        fontSize:
+                            isLandscape ? 10.5.ts(context) : 12.ts(context),
+                        fontWeight: FontWeight.w600,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  if (!isDefault) ...[
+                    GestureDetector(
+                      onTap: () =>
+                          onMaxCameraDistanceChanged?.call(defaultMetres),
+                      child: Text(
+                        'Reset',
+                        style: TextStyle(
+                          color: AppColors.amber,
+                          fontSize:
+                              isLandscape ? 9.ts(context) : 10.5.ts(context),
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    8.width,
+                  ],
+                  Container(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: isLandscape ? 8.w : 10.w,
+                      vertical: 2.5.h,
+                    ),
+                    decoration: BoxDecoration(
+                      color: disabled
+                          ? AppColors.panel
+                          : AppColors.blue.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(8.r),
+                      border: Border.all(
+                        color: disabled ? AppColors.border : AppColors.blue,
+                      ),
+                    ),
+                    child: Text(
+                      disabled ? 'OFF' : metresLabel,
+                      style: TextStyle(
+                        color: disabled ? AppColors.textMuted : AppColors.blue,
+                        fontSize: isLandscape ? 11.ts(context) : 13.ts(context),
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              3.height,
+              Text(
+                disabled
+                    ? 'Camera confirmation is disabled, so distance is not checked.'
+                    : 'Camera counts a punch only when you stand within this distance. Lower = stand closer. '
+                          'Default ≈ ${(defaultMetres ?? metres).toStringAsFixed(1)} m (approximate, depends on camera lens).',
+                style: TextStyle(
+                  color: AppColors.textMuted,
+                  fontSize: isLandscape ? 8.5.ts(context) : 9.5.ts(context),
+                ),
+              ),
+              SliderTheme(
+                data: SliderTheme.of(context).copyWith(
+                  trackHeight: isLandscape ? 2.5.h : 3.5.h,
+                  thumbShape: RoundSliderThumbShape(
+                    enabledThumbRadius: isLandscape ? 6.r : 8.r,
+                  ),
+                ),
+                child: Slider(
+                  value: metres.clamp(
+                    AppConstants.minCameraDistanceSliderM,
+                    AppConstants.maxCameraDistanceSliderM,
+                  ),
+                  min: AppConstants.minCameraDistanceSliderM,
+                  max: AppConstants.maxCameraDistanceSliderM,
+                  divisions:
+                      ((AppConstants.maxCameraDistanceSliderM -
+                                  AppConstants.minCameraDistanceSliderM) *
+                              10)
+                          .round(),
+                  activeColor: disabled ? AppColors.textMuted : AppColors.blue,
+                  inactiveColor: AppColors.border,
+                  label: metresLabel,
+                  onChanged: (double value) =>
+                      onMaxCameraDistanceChanged?.call(value),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    });
+  }
+
+  // ─── CAMERA DISTANCE SIDE-PROFILE / UNKNOWN STANCE TILE ───
+  Widget _buildCameraDistanceUnknownSettingTile(
+    BuildContext context, {
+    required bool isLandscape,
+  }) {
+    if (cameraDistanceUnknownIsValid == null) return const SizedBox.shrink();
+
+    return Obx(() {
+      final bool disabled = !isVisionConfirmationRequired.value;
+      final bool allowSideProfile = cameraDistanceUnknownIsValid!.value;
+
+      return Opacity(
+        opacity: disabled ? 0.45 : 1.0,
+        child: IgnorePointer(
+          ignoring: disabled,
+          child: Container(
+            margin: EdgeInsets.symmetric(vertical: isLandscape ? 2.h : 6.h),
+            padding: EdgeInsets.all(isLandscape ? 8.w : 10.w),
+            decoration: BoxDecoration(
+              color: AppColors.surface.withValues(alpha: 0.6),
+              borderRadius: BorderRadius.circular(12.r),
+              border: Border.all(
+                color: allowSideProfile && !disabled
+                    ? AppColors.blue.withValues(alpha: 0.5)
+                    : AppColors.border,
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.sports_mma_rounded,
+                            color: AppColors.blue,
+                            size: isLandscape ? 15.w : 18.w,
+                          ),
+                          6.width,
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Allow Side-Profile / Hook Stance',
+                                  style: TextStyle(
+                                    color: AppColors.textPrimary,
+                                    fontSize: isLandscape
+                                        ? 10.5.ts(context)
+                                        : 12.ts(context),
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                1.5.height,
+                                Text(
+                                  allowSideProfile
+                                      ? 'ENABLED — Side-angle & single-shoulder punches allowed'
+                                      : 'STRICT — Requires both shoulders visible to measure span',
+                                  style: TextStyle(
+                                    color: allowSideProfile
+                                        ? AppColors.lime
+                                        : AppColors.textMuted,
+                                    fontSize: isLandscape
+                                        ? 7.8.ts(context)
+                                        : 9.ts(context),
+                                    fontWeight: allowSideProfile
+                                        ? FontWeight.bold
+                                        : FontWeight.normal,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Transform.scale(
+                      scale: isLandscape ? 0.75 : 0.85,
+                      child: Switch(
+                        value: allowSideProfile,
+                        activeThumbColor: AppColors.blue,
+                        onChanged: (bool value) =>
+                            onToggleCameraDistanceUnknownIsValid?.call(value),
+                      ),
+                    ),
+                  ],
+                ),
+                6.height,
+                Container(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: isLandscape ? 8.w : 10.w,
+                    vertical: isLandscape ? 5.h : 6.h,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppColors.panel.withValues(alpha: 0.5),
+                    borderRadius: BorderRadius.circular(8.r),
+                    border: Border.all(
+                      color: AppColors.blue.withValues(alpha: 0.15),
+                    ),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        Icons.info_outline_rounded,
+                        color: AppColors.blue,
+                        size: isLandscape ? 13.w : 15.w,
+                      ),
+                      6.width,
+                      Expanded(
+                        child: Text(
+                          disabled
+                              ? 'Camera confirmation is disabled, so distance check is inactive.'
+                              : 'How it works: When turning into side stance or throwing hooks, your rear shoulder is occluded from the camera. In STRICT mode, ML Kit cannot measure dual-shoulder span and rejects valid punches as "too far". Enabling this allows side punches while still protecting against background people via person size ratio, audio sync, and bag vibration knock.',
+                          style: TextStyle(
+                            color: AppColors.textMuted,
+                            fontSize:
+                                isLandscape ? 7.8.ts(context) : 9.ts(context),
+                            height: 1.35,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    });
+  }
+
 
   // ─── DEVICE STABILITY TILE ───
   Widget _buildDeviceStabilityTile(

@@ -1,0 +1,34 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -I /private/tmp/claude-501/-Users-damanpreetsingh-Projects-official-punch-detection-demo/52921b6a-f313-4da7-a96b-40cbbea0930e/scratchpad/scripts/offsets.py \"/Users/damanpreetsingh/Downloads/hyper_hitter_raw_events_1792671137259.jsonl\")",
+      "Bash(cp /private/tmp/claude-501/-Users-damanpreetsingh-Projects-official-punch-detection-demo/52921b6a-f313-4da7-a96b-40cbbea0930e/scratchpad/controller.orig.dart /private/tmp/claude-501/-Users-damanpreetsingh-Projects-official-punch-detection-demo/52921b6a-f313-4da7-a96b-40cbbea0930e/scratchpad/repo_copy/lib/features/session/presentation/controllers/free_session_controller.dart)",
+      "WebFetch(domain:source.android.com)",
+      "Bash(D=/Users/damanpreetsingh/sdk_install/flutter/engine/src/flutter/shell; sed -n 522,552p $D/common/switches.cc; echo \"--- android_shell_holder:\"; sed -n 88,100p $D/platform/android/android_shell_holder.cc; sed -n 140,150p $D/platform/android/android_shell_holder.cc; echo \"--- default in settings.h:\"; grep -nE \"merged_platform_ui_thread\\\\s*=\" $D/../common/settings.h)",
+      "Read(//Users/damanpreetsingh/sdk_install/flutter/engine/src/flutter/common/**)",
+      "WebSearch",
+      "Bash(mkdir -p /private/tmp/claude-501/-Users-damanpreetsingh-Projects-official-punch-detection-demo/52921b6a-f313-4da7-a96b-40cbbea0930e/scratchpad)",
+      "WebFetch(domain:archives.ismir.net)",
+      "WebFetch(domain:www.cs.bu.edu)",
+      "Bash(mkdir -p /private/tmp/claude-501/-Users-damanpreetsingh-Projects-official-punch-detection-demo/52921b6a-f313-4da7-a96b-40cbbea0930e/scratchpad/pdf_boeck)",
+      "Bash(cp /Users/damanpreetsingh/.claude/projects/-Users-damanpreetsingh-Projects-official-punch-detection-demo/52921b6a-f313-4da7-a96b-40cbbea0930e/tool-results/webfetch-1793256564007-9iegon.pdf /private/tmp/claude-501/-Users-damanpreetsingh-Projects-official-punch-detection-demo/52921b6a-f313-4da7-a96b-40cbbea0930e/scratchpad/pdf_boeck/boeck2012.pdf)",
+      "Bash(python3 -I -c \"import importlib.util as u; print\\([m for m in \\('pypdf','PyPDF2','fitz','pdfminer'\\) if u.find_spec\\(m\\)]\\)\")",
+      "Bash(python3 -I /private/tmp/claude-501/-Users-damanpreetsingh-Projects-official-punch-detection-demo/52921b6a-f313-4da7-a96b-40cbbea0930e/scratchpad/scripts/pdftext.py /private/tmp/claude-501/-Users-damanpreetsingh-Projects-official-punch-detection-demo/52921b6a-f313-4da7-a96b-40cbbea0930e/scratchpad/pdf_boeck/boeck2012.pdf)",
+      "Bash(python3 -I /private/tmp/claude-501/-Users-damanpreetsingh-Projects-official-punch-detection-demo/52921b6a-f313-4da7-a96b-40cbbea0930e/scratchpad/analyze_log2.py)",
+      "WebFetch(domain:gfzpublic.gfz-potsdam.de)",
+      "WebFetch(domain:cuseistut.readthedocs.io)",
+      "Bash(python3 -I /private/tmp/claude-501/-Users-damanpreetsingh-Projects-official-punch-detection-demo/52921b6a-f313-4da7-a96b-40cbbea0930e/scratchpad/audio_jitter.py)",
+      "WebFetch(domain:static.roland.com)",
+      "WebFetch(domain:www.manualslib.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(gh api *)",
+      "WebFetch(domain:www.mdpi.com)",
+      "WebFetch(domain:rcastoragev2.blob.core.windows.net)",
+      "Bash(python3 -I /private/tmp/claude-501/-Users-damanpreetsingh-Projects-official-punch-detection-demo/52921b6a-f313-4da7-a96b-40cbbea0930e/scratchpad/window_sim.py)",
+      "WebFetch(domain:media.isbweb.org)",
+      "WebFetch(domain:ojs.ub.uni-konstanz.de)",
+      "Bash(sort -t\"'\" -k2 -u)"
+    ]
+  }
+}

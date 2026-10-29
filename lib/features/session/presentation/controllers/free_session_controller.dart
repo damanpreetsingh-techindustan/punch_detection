@@ -14,6 +14,9 @@ import '../../../vision_detection/data/geometric_rules/shoulder_stability_tracke
 import '../../../vision_detection/domain/entities/temporal_punch_detector.dart';
 import '../../../vision_detection/domain/entities/punch_detection_config.dart';
 import '../../../fusion/domain/services/impact_gate_evaluator.dart';
+import '../../../fusion/domain/vibration_gate/i_vibration_gate.dart';
+import '../../../fusion/domain/vibration_gate/models/vibration_gate_evaluation.dart';
+import '../../../fusion/domain/vibration_gate/vibration_gate_factory.dart';
 import '../../../vision_detection/domain/services/camera_distance_gate.dart';
 import '../../../vision_detection/domain/services/camera_person_gate.dart';
 import '../../../fusion/domain/services/fast_combo_fusion_synchronizer.dart';
@@ -56,6 +59,31 @@ class FreeSessionController extends GetxController {
   final RxDouble minVibrationThreshold =
       AppConstants.defaultImpactVibrationThreshold.obs;
   StreamSubscription<double>? _vibrationSubscription;
+  StreamSubscription<VibrationRawSample>? _vibrationRawSubscription;
+
+  // Vibration Gate Strategy (SOLID: Open/Closed & Dependency Inversion)
+  IVibrationGate _vibrationGate;
+  IVibrationGate get vibrationGate => _vibrationGate;
+  final Rx<VibrationGateType> vibrationGateType =
+      AppConstants.vibrationGateType.obs;
+
+  void setVibrationGateType(VibrationGateType type) {
+    vibrationGateType.value = type;
+    AppConstants.vibrationGateType = type;
+    _vibrationGate.reset();
+    _vibrationGate = VibrationGateFactory.create(type: type);
+    _recordConfigChange('vibration_gate_type');
+  }
+
+  // Camera Distance Gate Unknown Tolerance (Side-Profile & Hooks)
+  final RxBool cameraDistanceUnknownIsValid =
+      AppConstants.cameraDistanceUnknownIsValid.obs;
+
+  void toggleCameraDistanceUnknownIsValid(bool value) {
+    cameraDistanceUnknownIsValid.value = value;
+    AppConstants.cameraDistanceUnknownIsValid = value;
+    _recordConfigChange('camera_distance_unknown_is_valid');
+  }
 
   /// Returns true if physical vibration is disabled due to mount type (pole),
   /// manual toggle switch OFF, or non-vibration detection mode.
@@ -76,6 +104,7 @@ class FreeSessionController extends GetxController {
     IAudioLevelService? audioLevelService,
     IDeviceStabilityService? stabilityService,
     IDeviceVibrationService? vibrationService,
+    IVibrationGate? vibrationGate,
     TemporalPunchDetector? temporalPunchDetector,
     FastComboFusionSynchronizer? fusionSynchronizer,
     PoseValidityGate? validityGate,
@@ -92,6 +121,7 @@ class FreeSessionController extends GetxController {
            ),
        _stabilityService = stabilityService ?? DeviceStabilityService(),
        _vibrationService = vibrationService ?? DeviceVibrationService(),
+       _vibrationGate = vibrationGate ?? VibrationGateFactory.create(),
        _temporalPunchDetector =
            temporalPunchDetector ?? TemporalPunchDetector(),
        _fusionSynchronizer =
@@ -133,6 +163,7 @@ class FreeSessionController extends GetxController {
     punchCount.value = 0;
     leftPunchCount.value = 0;
     rightPunchCount.value = 0;
+    _vibrationGate.reset();
     detectionStatusText.value = 'Count reset to 0';
   }
 
@@ -172,6 +203,7 @@ class FreeSessionController extends GetxController {
   int _lastAudioValueChangeMs = 0;
   double _lastAudioStreamDb = -1.0;
   int _lastCameraTrackMs = 0;
+  int _lastCameraFrameMs = 0;
   int _prevRegisteredPunchMs = 0;
 
   static const String _punchLogMarker = '🥊 [CONFIRMED PUNCH';
@@ -214,6 +246,9 @@ class FreeSessionController extends GetxController {
     'vibeThreshold': minVibrationThreshold.value,
     'vibeGate': isVibrationGateEnabled.value,
     'visionRequired': isVisionConfirmationRequired.value,
+    'cameraMaxDistanceM': maxCameraDistanceM.value,
+    'cameraDistanceUnknownIsValid': cameraDistanceUnknownIsValid.value,
+    'vibeGateType': vibrationGateType.value.name,
     'extraFaceRestrictions': AppConstants.enableExtraFaceRestrictions,
     'audioIntervalMs': audioSampleIntervalMs.value,
     'audioRefractoryMs': AppConstants.audioRefractoryMs,
@@ -460,6 +495,30 @@ class FreeSessionController extends GetxController {
   /// Whether camera vision confirmation is strictly required in Fusion mode
   /// true = Strict (Punch only counts if camera confirms), false = Optional (Audio+Vibe dual counts)
   final RxBool isVisionConfirmationRequired = true.obs;
+  /// Default "Max Camera Distance" (approx. metres) from AppConstants.cameraMinShoulderWidthRatio.
+  static const double defaultMaxCameraDistanceM =
+      AppConstants.cameraDistanceMetresFactor /
+      AppConstants.cameraMinShoulderWidthRatio;
+
+  /// Farthest distance (approx. metres) at which the camera still counts the
+  /// user as near. Lower = user must stand closer.
+  final RxDouble maxCameraDistanceM = defaultMaxCameraDistanceM.obs;
+
+  double get _cameraMinShoulderRatio =>
+      AppConstants.cameraDistanceMetresFactor / maxCameraDistanceM.value;
+
+  /// Eye minimum scaled with the shoulder minimum (keeps the constants' ratio).
+  double get _cameraMinEyeRatio =>
+      _cameraMinShoulderRatio *
+      (AppConstants.cameraMinEyeSpanRatio /
+          AppConstants.cameraMinShoulderWidthRatio);
+
+  void updateMaxCameraDistance(double metres) {
+    maxCameraDistanceM.value = metres;
+    _consecutiveNearFrames = 0;
+    _recordConfigChange('camera_max_distance');
+  }
+
   final RxDouble minPunchVisionConfidence = 80.0
       .obs; // Minimum vision confidence % for punch (Default: Loud/Heavy 80%)
   final RxDouble visionScoreThreshold =
@@ -529,8 +588,11 @@ class FreeSessionController extends GetxController {
     }
   }
 
-  /// Image dimensions captured from the first camera frame.
-  Size _cameraImageSize = Size.zero;
+  /// Image dimensions captured from the first camera frame (default: 480x640 standard portrait).
+  Size _cameraImageSize = const Size(480, 640);
+
+  /// Close-enough frames in a row (see AppConstants.cameraMinConsecutiveNearFrames).
+  int _consecutiveNearFrames = 0;
 
   Timer? _elapsedTimer;
   final RxInt elapsedSeconds = 0.obs;
@@ -553,6 +615,8 @@ class FreeSessionController extends GetxController {
   @override
   void onInit() {
     super.onInit();
+    AppConstants.changeSettingToDefault();
+    _applyDefaultDetectionSettings();
     _sessionStartTimeMs = DateTime.now().millisecondsSinceEpoch;
     _startElapsedTimer();
     _readRouteArguments();
@@ -577,6 +641,7 @@ class FreeSessionController extends GetxController {
   }
 
   void _startDeviceVibrationMonitor() {
+    if (isVibrationEffectivelyDisabled) return;
     _vibrationSubscription?.cancel();
     _vibrationService.startMonitoring(
       minVibrationThreshold: minVibrationThreshold.value,
@@ -584,6 +649,35 @@ class FreeSessionController extends GetxController {
     _vibrationSubscription = _vibrationService.vibrationMagnitudeStream.listen(
       _handleVibrationSample,
     );
+    _vibrationRawSubscription?.cancel();
+    _vibrationRawSubscription = _vibrationService.rawSampleStream.listen(
+      _traceVibrationRawSample,
+    );
+  }
+
+  /// Records every accelerometer reading at the time the sensor measured it
+  /// (the `vibe` events are throttled and stamped on arrival).
+  void _traceVibrationRawSample(VibrationRawSample sample) {
+    _vibrationGate.addRawSample(
+      sensorMs: sample.sensorMs,
+      rawMag: sample.rawMag,
+      rawX: sample.x,
+      rawY: sample.y,
+      rawZ: sample.z,
+    );
+    _recorder.stat(
+      'lag.vibe_sensor_to_dart_ms',
+      (sample.arrivalMs - sample.sensorMs).toDouble(),
+    );
+    _recorder.record('vibe_raw', <String, Object?>{
+      'raw': sample.rawMag,
+      'eff': sample.effectiveMag,
+      'env': sample.envelope,
+      'x': sample.x,
+      'y': sample.y,
+      'z': sample.z,
+      'lagMs': sample.arrivalMs - sample.sensorMs,
+    }, atEpochMs: sample.sensorMs);
   }
 
   /// Handles one vibration stream sample. Every sample is kept in a short
@@ -596,6 +690,7 @@ class FreeSessionController extends GetxController {
     final int nowMs = atEpochMs ?? DateTime.now().millisecondsSinceEpoch;
     _noteEventClock(nowMs);
     _appendVibrationHistory(nowMs, mag);
+    _vibrationGate.addEnvelopeSample(arrivalMs: nowMs, magnitude: mag);
     final bool vibeRisingEdge = _traceVibrationSample(mag, nowMs);
     // Audio + vibration (+ camera) modes: a pending impact may now be complete.
     if (_usesImpactWindow) _evaluatePendingImpact();
@@ -652,6 +747,8 @@ class FreeSessionController extends GetxController {
       _startDeviceVibrationMonitor();
     } else {
       _vibrationSubscription?.cancel();
+      _vibrationRawSubscription?.cancel();
+      _vibrationRawSubscription = null;
       _vibrationService.stopMonitoring();
       liveVibrationMagnitude.value = 0.0;
     }
@@ -721,6 +818,8 @@ class FreeSessionController extends GetxController {
     if (mountType.value.isVibrationDisabled) {
       isVibrationGateEnabled.value = false;
       _vibrationSubscription?.cancel();
+      _vibrationRawSubscription?.cancel();
+      _vibrationRawSubscription = null;
       _vibrationService.stopMonitoring();
       liveVibrationMagnitude.value = 0.0;
     }
@@ -879,6 +978,46 @@ class FreeSessionController extends GetxController {
     );
   }
 
+  /// Gap from the previous spike above which a lockout-hidden sound is likely
+  /// a separate hit (not the tail of the same one) and gets a summary row.
+  static const int _suppressedSummaryMinGapMs = 60;
+
+  /// Logs a sharp sound the post-spike lockout ignored (it never reaches a
+  /// decision, so without this line a lost combo punch leaves no trace).
+  void _recordSuppressedSpike(SuppressedSpike spike) {
+    final int? msSinceLastPunch = _lastPunchTimestampMs > 0
+        ? spike.timestampMs - _lastPunchTimestampMs
+        : null;
+    _recorder.count('audio.spikes_suppressed');
+    if (spike.wouldMeetTarget) {
+      _recorder.count('audio.spikes_suppressed_target_met');
+    }
+    _recorder.record('spike_suppressed', <String, Object?>{
+      'db': spike.db,
+      'frameJump': spike.frameJump,
+      'windowRise': spike.windowRise,
+      'targetMet': spike.wouldMeetTarget,
+      'msSinceLastSpike': spike.msSinceLastSpike,
+      'msSinceLastPunch': msSinceLastPunch,
+    }, atEpochMs: spike.timestampMs);
+    if (spike.msSinceLastSpike >= _suppressedSummaryMinGapMs) {
+      summaryTable.addRow(<String, Object?>{
+        'time': SessionEventRecorder.formatElapsed(
+          _recorder.elapsedForEpoch(spike.timestampMs),
+        ),
+        'kind': 'SUPPRESSED',
+        'code': 'SPIKE_SUPPRESSED_LOCKOUT',
+        'valid': false,
+        'audio_db': spike.db,
+        'frame_jump': spike.frameJump,
+        'window_rise': spike.windowRise,
+        'detail':
+            '${spike.msSinceLastSpike} ms after previous spike'
+            '${spike.wouldMeetTarget ? ', above target' : ', below target'}',
+      });
+    }
+  }
+
   int _dbToConfidence(double db) {
     if (db <= 40.0) return 5;
     if (db <= 55.0) return 15;
@@ -916,6 +1055,9 @@ class FreeSessionController extends GetxController {
 
     liveBaselineDb.value = _adaptiveBaseline.currentBaseline;
     liveSpikeThresholdDb.value = _adaptiveBaseline.effectiveSpikeThresholdDb;
+
+    final SuppressedSpike? suppressed = _adaptiveBaseline.takeSuppressedSpike();
+    if (suppressed != null) _recordSuppressedSpike(suppressed);
 
     if (confirmedSpike == null) {
       return false;
@@ -1110,6 +1252,9 @@ class FreeSessionController extends GetxController {
       'baselineDb': confirmedSpike.baselineDb,
       'liveBaselineDb': liveBaselineDb.value,
       'riseDb': spikeIntensity,
+      'frameJump': confirmedSpike.frameJump,
+      'windowRise': confirmedSpike.windowRise,
+      'onsetRule': confirmedSpike.onsetRule,
       'targetDb': effectiveTargetDb,
       'targetMet': isAudioTargetReached,
       'refractory': isAudioInRefractory,
@@ -1210,15 +1355,24 @@ class FreeSessionController extends GetxController {
     }
   }
 
-  /// Largest vibration magnitude seen between [fromMs] and [toMs] (0 if none).
-  double _vibrationWindowPeak(int fromMs, int toMs) {
+  /// Largest vibration magnitude seen between [fromMs] and [toMs], when it
+  /// arrived, and whether the window holds a new rise above [threshold].
+  _VibeWindowInfo _vibrationWindow(int fromMs, int toMs, double threshold) {
     double peak = 0.0;
+    int peakAtMs = 0;
+    bool rose = false;
+    double previous = 0.0;
     for (final _VibeSample sample in _vibeHistory) {
-      if (sample.tMs >= fromMs && sample.tMs <= toMs && sample.mag > peak) {
-        peak = sample.mag;
+      if (sample.tMs >= fromMs && sample.tMs <= toMs) {
+        if (sample.mag > peak) {
+          peak = sample.mag;
+          peakAtMs = sample.tMs;
+        }
+        if (sample.mag >= threshold && sample.mag > previous) rose = true;
       }
+      previous = sample.mag;
     }
-    return peak;
+    return _VibeWindowInfo(peak, peakAtMs, rose);
   }
 
   /// True when the camera takes part in the decision: the mode uses a camera,
@@ -1287,6 +1441,9 @@ class FreeSessionController extends GetxController {
       baselineDb: spike.baselineDb,
       riseDb: spike.spikeHeight,
       targetDb: effectiveTargetDb,
+      frameJump: spike.frameJump,
+      windowRise: spike.windowRise,
+      onsetRule: spike.onsetRule,
     );
 
     String? rejectCode;
@@ -1348,15 +1505,39 @@ class FreeSessionController extends GetxController {
     }
 
     final bool vibeRequired = !isVibrationEffectivelyDisabled;
-    final double vibePeak = _vibrationWindowPeak(
-      impact.audioTsMs - AppConstants.impactVibrationBeforeMs,
-      impact.audioTsMs + _impactAfterMs,
+    final int windowStartMs =
+        impact.audioTsMs - AppConstants.impactVibrationBeforeMs;
+    final int windowEndMs = impact.audioTsMs + _impactAfterMs;
+
+    final VibrationGateEvaluation vibeEval = _vibrationGate.evaluate(
+      audioTsMs: impact.audioTsMs,
+      fromMs: windowStartMs,
+      toMs: windowEndMs,
+      threshold: minVibrationThreshold.value,
+      windowClosed: windowClosed,
+      isVibrationDisabled: !vibeRequired,
     );
-    final VibrationGateState vibeState = !vibeRequired
-        ? VibrationGateState.notRequired
-        : (vibePeak >= minVibrationThreshold.value
-              ? VibrationGateState.present
-              : VibrationGateState.missing);
+
+    final _VibeWindowInfo legacyVibeWindow = _vibrationWindow(
+      windowStartMs,
+      windowEndMs,
+      minVibrationThreshold.value,
+    );
+    final _VibeWindowInfo vibeWindow = vibeEval.matchedKnock != null
+        ? _VibeWindowInfo(
+            vibeEval.matchedKnock!.rawMag > 0
+                ? vibeEval.matchedKnock!.rawMag
+                : (vibeEval.peakMagnitude > 0
+                      ? vibeEval.peakMagnitude
+                      : legacyVibeWindow.peak),
+            vibeEval.matchedKnock!.timestampMs,
+            legacyVibeWindow.rose,
+          )
+        : legacyVibeWindow;
+    final double vibePeak = vibeEval.peakMagnitude > 0.0
+        ? vibeEval.peakMagnitude
+        : vibeWindow.peak;
+    final VibrationGateState vibeState = vibeEval.state;
     final CameraGateState cameraState = _cameraGateState();
 
     final ImpactGateResult result = _impactGates.evaluate(
@@ -1375,6 +1556,8 @@ class FreeSessionController extends GetxController {
       vibration: vibeState,
       camera: cameraState,
       vibePeak: vibePeak,
+      vibeWindow: vibeWindow,
+      vibeDetailOverride: vibeEval.detail,
     );
   }
 
@@ -1388,6 +1571,8 @@ class FreeSessionController extends GetxController {
     VibrationGateState? vibration,
     CameraGateState? camera,
     double vibePeak = 0.0,
+    _VibeWindowInfo? vibeWindow,
+    String? vibeDetailOverride,
   }) {
     final TemporalPunchEvaluationResult? evalResult =
         liveEvaluationResult.value;
@@ -1409,9 +1594,9 @@ class FreeSessionController extends GetxController {
             VibrationGateState.notRequired =>
               'Vibe: not used (${mountType.value.isVibrationDisabled ? "Pole Mount" : "gate off"})',
             VibrationGateState.missing =>
-              'Vibe: none in window (peak ${vibePeak.toStringAsFixed(2)} < ${minVibrationThreshold.value.toStringAsFixed(2)} m/s²)',
+              'Vibe: none in window (${vibeDetailOverride?.isNotEmpty == true ? vibeDetailOverride! : "peak ${vibePeak.toStringAsFixed(2)} < ${minVibrationThreshold.value.toStringAsFixed(2)} m/s²"})',
             VibrationGateState.present =>
-              'Vibe: Peak ${vibePeak.toStringAsFixed(2)} m/s² (Thresh: ${minVibrationThreshold.value.toStringAsFixed(2)} m/s²)',
+              'Vibe: ${vibeDetailOverride?.isNotEmpty == true ? vibeDetailOverride! : "Peak ${vibePeak.toStringAsFixed(2)} m/s² (Thresh: ${minVibrationThreshold.value.toStringAsFixed(2)} m/s²)"}',
           };
 
     final PunchTelemetryEvent telemetryEvent = PunchTelemetryEvent(
@@ -1454,9 +1639,17 @@ class FreeSessionController extends GetxController {
           ? 'impact.valid'
           : (candidate ? 'impact.candidate' : 'impact.rejected'),
     );
-    if (vibration == VibrationGateState.present) {
-      // Where the vibration sat relative to the audio spike (negative = before).
-      _recorder.stat('lag.impact_decided_after_ms', decidedAfterMs.toDouble());
+    _recorder.stat('lag.impact_decided_after_ms', decidedAfterMs.toDouble());
+    // Where the strongest vibration sat relative to the audio spike
+    // (negative = before; vibration time is arrival time).
+    final int? vibeOffsetMs = vibeWindow != null && vibeWindow.peakAtMs > 0
+        ? vibeWindow.peakAtMs - impact.audioTsMs
+        : null;
+    if (vibration == VibrationGateState.present && vibeOffsetMs != null) {
+      _recorder.stat('lag.vibe_peak_minus_audio_ms', vibeOffsetMs.toDouble());
+      if (vibeWindow?.rose == false) {
+        _recorder.count('impact.vibe_tail_only');
+      }
     }
     _recorder.record('decision', <String, Object?>{
       'path': 'IMPACT',
@@ -1466,9 +1659,17 @@ class FreeSessionController extends GetxController {
       'peakDb': impact.peakDb,
       'baselineDb': impact.baselineDb,
       'riseDb': impact.riseDb,
+      'frameJump': impact.frameJump,
+      'windowRise': impact.windowRise,
+      'onsetRule': impact.onsetRule,
       'targetDb': impact.targetDb,
       'vibeState': vibration?.name,
       'vibeWindowPeak': vibePeak,
+      'vibePeakAtMs': vibeWindow != null && vibeWindow.peakAtMs > 0
+          ? vibeWindow.peakAtMs
+          : null,
+      'vibePeakOffsetMs': vibeOffsetMs,
+      'vibeRoseInWindow': vibeWindow?.rose,
       'vibeThreshold': minVibrationThreshold.value,
       'cameraState': camera?.name,
       'cameraRatio': observation?.ratio,
@@ -1493,6 +1694,10 @@ class FreeSessionController extends GetxController {
       'target_db': impact.targetDb,
       'vibe_peak': vibration == null ? null : vibePeak,
       'vibe_threshold': minVibrationThreshold.value,
+      'vibe_offset_ms': vibeOffsetMs,
+      'vibe_rose': vibeWindow?.rose,
+      'frame_jump': impact.frameJump,
+      'window_rise': impact.windowRise,
       'camera_state': camera?.name,
       'face_conf': camera == null ? null : observation?.faceConf,
       'shoulder_conf': camera == null ? null : observation?.shoulderConf,
@@ -1502,6 +1707,7 @@ class FreeSessionController extends GetxController {
     });
 
     if (!valid) {
+      _vibrationGate.onImpactRejected(audioTsMs: impact.audioTsMs);
       addSummaryRow();
       if (candidate) {
         detectionStatusText.value = 'Candidate Impact ($reason)';
@@ -1523,6 +1729,10 @@ class FreeSessionController extends GetxController {
       arm: activeArm,
       telemetryLog:
           'Mode: ${sessionMode.value.name.toUpperCase()} ($reason) | Audio: ${impact.peakDb.toStringAsFixed(1)} dB (Base: ${impact.baselineDb.toStringAsFixed(1)} dB, Rise: +${impact.riseDb.toStringAsFixed(1)} dB, Target: ${impact.targetDb.round()} dB) | $vibeDetail | $cameraDetail',
+    );
+    _vibrationGate.onPunchConfirmed(
+      audioTsMs: impact.audioTsMs,
+      punchNo: punchCount.value,
     );
     addSummaryRow(punchNo: punchCount.value);
     _triggerPunchHaptic();
@@ -1634,6 +1844,14 @@ class FreeSessionController extends GetxController {
       isVisionConfirmationRequired: isVisionConfirmationRequired,
       isDeviceStabilityEnabled: isDeviceStabilityEnabled,
       onToggleDeviceStability: toggleDeviceStability,
+      maxCameraDistanceM: maxCameraDistanceM,
+      defaultMaxCameraDistanceM: defaultMaxCameraDistanceM,
+      onMaxCameraDistanceChanged: updateMaxCameraDistance,
+      cameraDistanceUnknownIsValid: cameraDistanceUnknownIsValid,
+      onToggleCameraDistanceUnknownIsValid: toggleCameraDistanceUnknownIsValid,
+      vibrationGateType: vibrationGateType,
+      onSetVibrationGateType: setVibrationGateType,
+      onResetToDefaults: resetAllSettingsToDefault,
       onApplyEnvironmentPreset: applyEnvironmentPreset,
       onSpikeDbChanged: (double value) {
         minAudioPunchSpikeDb.value = value;
@@ -1706,8 +1924,11 @@ class FreeSessionController extends GetxController {
     minVibrationThreshold.value = result.recommendedVibrationThreshold;
     toggleVibrationGate(result.recommendedVibrationGateEnabled);
 
-    // 3. Vision Confirmation
-    isVisionConfirmationRequired.value = result.recommendedVisionRequired;
+    // 3. Vision Confirmation: auto-config may turn the camera on, never off
+    // (a far user makes the camera reject punches, which must not disable it).
+    if (result.recommendedVisionRequired) {
+      isVisionConfirmationRequired.value = true;
+    }
 
     final String logMsg =
         '⚙️ [AUTO-CONFIG APPLIED] Audio Target: ${finalTarget.round()} dB '
@@ -1875,14 +2096,14 @@ class FreeSessionController extends GetxController {
       final ResolutionPreset targetResolution =
           AppConstants.enableExtraFaceRestrictions
           ? ResolutionPreset.medium
-          : ResolutionPreset.low;
+          : ResolutionPreset.medium;
 
       cameraController = CameraController(
         _activeCamera!,
         targetResolution,
         enableAudio: false,
         imageFormatGroup: ImageFormatGroup.nv21,
-        fps: AppConstants.globalAudioSampleIntervalMs,
+        fps: AppConstants.cameraTargetFps,
       );
 
       await cameraController!.initialize();
@@ -1934,6 +2155,15 @@ class FreeSessionController extends GetxController {
 
     try {
       cameraController!.startImageStream((CameraImage image) async {
+        final int arrivalMs = DateTime.now().millisecondsSinceEpoch;
+        if (_lastCameraFrameMs > 0) {
+          _recorder.stat(
+            'interval.camera_frame_ms',
+            (arrivalMs - _lastCameraFrameMs).toDouble(),
+          );
+        }
+        _lastCameraFrameMs = arrivalMs;
+
         if (cameraController == null ||
             _isProcessingFrame ||
             isCameraUnavailable.value) {
@@ -1969,6 +2199,7 @@ class FreeSessionController extends GetxController {
                 _analyzeLivePose(poses.first);
               } else {
                 // Camera covered or no body visible -> Reset pose & evaluation scores to 0!
+                _consecutiveNearFrames = 0;
                 _noteCameraObservation(
                   CameraGateState.noPerson,
                   detail: 'no pose detected',
@@ -2089,7 +2320,26 @@ class FreeSessionController extends GetxController {
     _recorder.stat('cam.best_face_conf', person.bestFaceConfidence);
     _recorder.stat('cam.best_shoulder_conf', person.bestShoulderConfidence);
 
-    // ─── USER IN FRAME & FACE / SHOULDER VALIDATION ───────────────────────
+    // Real-person check (runs with or without extra face restrictions): at
+    // least one face point AND one shoulder, each with enough confidence, face
+    // above shoulder (AppConstants.cameraMin*Confidence). Objects such as a
+    // bottle can create a weak pose; they fail here.
+    if (!person.isPerson) {
+      _recorder.count('cam.not_person_frames');
+      _setInvalidEvaluationResult(
+        'Not a person: ${person.description}',
+        noteCamera: false,
+      );
+      _noteCameraObservation(
+        CameraGateState.noPerson,
+        detail: 'not a person: ${person.description}',
+        faceConf: person.bestFaceConfidence,
+        shoulderConf: person.bestShoulderConfidence,
+      );
+      return;
+    }
+
+    // ─── EXTRA FACE / SHOULDER VALIDATION ─────────────────────────────────
     if (AppConstants.enableExtraFaceRestrictions) {
       // Basic Shoulder Guard: Left & Right Shoulders must be present (likelihood >= 0.35)
       if (rShoulder == null ||
@@ -2136,24 +2386,6 @@ class FreeSessionController extends GetxController {
         );
         return;
       }
-    } else {
-      // Real-person check: at least one face point AND one shoulder, each with
-      // enough confidence, face above shoulder (AppConstants.cameraMin*Confidence).
-      // Objects such as a bottle can create a weak pose; they fail here.
-      if (!person.isPerson) {
-        _recorder.count('cam.not_person_frames');
-        _setInvalidEvaluationResult(
-          'Not a person: ${person.description}',
-          noteCamera: false,
-        );
-        _noteCameraObservation(
-          CameraGateState.noPerson,
-          detail: 'not a person: ${person.description}',
-          faceConf: person.bestFaceConfidence,
-          shoulderConf: person.bestShoulderConfidence,
-        );
-        return;
-      }
     }
 
     // ─── DISTANCE GATE ─────────────────────────────────────────────────────
@@ -2182,6 +2414,9 @@ class FreeSessionController extends GetxController {
           : DistanceLandmark(x: rEye.x, y: rEye.y, likelihood: rEye.likelihood),
       imageWidth: _cameraImageSize.width,
       imageHeight: _cameraImageSize.height,
+      minShoulderRatio: _cameraMinShoulderRatio,
+      minEyeRatio: _cameraMinEyeRatio,
+      unknownIsValid: cameraDistanceUnknownIsValid.value,
     );
     if (distance.ratio != null) {
       _recorder.stat(
@@ -2204,10 +2439,17 @@ class FreeSessionController extends GetxController {
       );
       return;
     }
+    // Near only after several close frames in a row (one noisy frame from a
+    // far user must not confirm a punch).
+    _consecutiveNearFrames++;
+    final bool isNearConfirmed =
+        _consecutiveNearFrames >= AppConstants.cameraMinConsecutiveNearFrames;
     _noteCameraObservation(
-      CameraGateState.valid,
+      isNearConfirmed ? CameraGateState.valid : CameraGateState.tooFar,
       ratio: distance.ratio,
-      detail: distance.description,
+      detail: isNearConfirmed
+          ? distance.description
+          : '${distance.description} (near $_consecutiveNearFrames/${AppConstants.cameraMinConsecutiveNearFrames} frames)',
       faceConf: person.bestFaceConfidence,
       shoulderConf: person.bestShoulderConfidence,
     );
@@ -2352,6 +2594,7 @@ class FreeSessionController extends GetxController {
   /// [noteCamera] false lets the caller record a more specific camera state
   /// (too far, not a person) with its numbers instead of a plain "no person".
   void _setInvalidEvaluationResult(String reason, {bool noteCamera = true}) {
+    _consecutiveNearFrames = 0;
     _recorder.count('cam.invalid_frames');
     _recorder.record('cam_invalid', <String, Object?>{'reason': reason});
     if (noteCamera) {
@@ -2490,14 +2733,45 @@ class FreeSessionController extends GetxController {
     AppNavigator.toResults(result);
   }
 
+  /// Resets all detection settings back to official system defaults.
+  void resetAllSettingsToDefault() {
+    AppConstants.changeSettingToDefault();
+    _applyDefaultDetectionSettings();
+    _recordConfigChange('reset_to_defaults');
+  }
+
+  void _applyDefaultDetectionSettings() {
+    vibrationGateType.value = AppConstants.vibrationGateType;
+    _vibrationGate.reset();
+    _vibrationGate = VibrationGateFactory.create(
+      type: AppConstants.vibrationGateType,
+    );
+    cameraDistanceUnknownIsValid.value =
+        AppConstants.cameraDistanceUnknownIsValid;
+    minVibrationThreshold.value =
+        AppConstants.defaultImpactVibrationThreshold;
+    isDeviceStabilityEnabled.value =
+        AppConstants.enableDeviceStabilityCheck;
+    audioSampleIntervalMs.value =
+        AppConstants.globalAudioSampleIntervalMs;
+    isVisionConfirmationRequired.value = true;
+    isVibrationGateEnabled.value = !mountType.value.isVibrationDisabled;
+    maxCameraDistanceM.value = defaultMaxCameraDistanceM;
+  }
+
   @override
   void onClose() {
+    AppConstants.changeSettingToDefault();
     resetSettingsGate();
     unawaited(_recorder.dispose());
     _elapsedTimer?.cancel();
     _audioLevelSubscription?.cancel();
     _audioLevelService.dispose();
     _stabilitySubscription?.cancel();
+    _vibrationSubscription?.cancel();
+    _vibrationRawSubscription?.cancel();
+    _vibrationService.stopMonitoring();
+    _vibrationGate.reset();
     _stabilityService.dispose();
     _poseDetector?.close();
     _stopAndDisposeCamera();
@@ -2513,6 +2787,9 @@ class _PendingImpact {
   final double baselineDb;
   final double riseDb;
   final double targetDb;
+  final double frameJump;
+  final double windowRise;
+  final String onsetRule;
 
   const _PendingImpact({
     required this.audioTsMs,
@@ -2520,7 +2797,25 @@ class _PendingImpact {
     required this.baselineDb,
     required this.riseDb,
     required this.targetDb,
+    this.frameJump = 0.0,
+    this.windowRise = 0.0,
+    this.onsetRule = '',
   });
+}
+
+/// What the vibration in one impact window looked like.
+class _VibeWindowInfo {
+  /// Highest value in the window (0 if none).
+  final double peak;
+
+  /// Arrival time of that highest value (0 if none).
+  final int peakAtMs;
+
+  /// True when some value in the window was at or above the threshold AND
+  /// higher than the sample before it, i.e. a new rise, not only a fading tail.
+  final bool rose;
+
+  const _VibeWindowInfo(this.peak, this.peakAtMs, this.rose);
 }
 
 /// One vibration stream sample kept for timestamp lookups.

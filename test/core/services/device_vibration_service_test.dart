@@ -14,6 +14,10 @@ class MockDeviceVibrationService implements IDeviceVibrationService {
   Stream<double> get vibrationMagnitudeStream => _controller.stream;
 
   @override
+  Stream<VibrationRawSample> get rawSampleStream =>
+      const Stream<VibrationRawSample>.empty();
+
+  @override
   double get currentVibrationMagnitude => _currentVibration;
 
   @override

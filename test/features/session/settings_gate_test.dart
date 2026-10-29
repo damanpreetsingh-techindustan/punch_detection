@@ -4,6 +4,8 @@ import 'package:punch_detection_demo/core/enums/detection_enums.dart';
 import 'package:punch_detection_demo/core/services/audio_level/audio_level_sample.dart';
 import 'package:punch_detection_demo/core/services/audio_level/i_audio_level_service.dart';
 import 'package:punch_detection_demo/core/utils/constants.dart';
+import 'package:punch_detection_demo/features/fusion/domain/vibration_gate/services/fresh_knock_gate.dart';
+import 'package:punch_detection_demo/features/fusion/domain/vibration_gate/services/peak_threshold_gate.dart';
 import 'package:punch_detection_demo/features/session/presentation/controllers/free_session_controller.dart';
 import 'package:punch_detection_demo/features/session/presentation/controllers/prompt_session_controller.dart';
 
@@ -177,6 +179,72 @@ void main() {
 
       await Future.delayed(const Duration(milliseconds: 120));
       expect(controller.isSettingsViewActive, isFalse);
+    });
+
+    test('setVibrationGateType updates observable and swaps active IVibrationGate instance', () {
+      expect(controller.vibrationGateType.value, equals(VibrationGateType.knock));
+      expect(controller.vibrationGate, isA<FreshKnockGate>());
+
+      controller.setVibrationGateType(VibrationGateType.peakThreshold);
+      expect(controller.vibrationGateType.value, equals(VibrationGateType.peakThreshold));
+      expect(AppConstants.vibrationGateType, equals(VibrationGateType.peakThreshold));
+      expect(controller.vibrationGate, isA<PeakThresholdGate>());
+
+      controller.setVibrationGateType(VibrationGateType.knock);
+      expect(controller.vibrationGateType.value, equals(VibrationGateType.knock));
+      expect(AppConstants.vibrationGateType, equals(VibrationGateType.knock));
+      expect(controller.vibrationGate, isA<FreshKnockGate>());
+    });
+
+    test('toggleCameraDistanceUnknownIsValid updates observable and AppConstants', () {
+      final initialVal = controller.cameraDistanceUnknownIsValid.value;
+      controller.toggleCameraDistanceUnknownIsValid(!initialVal);
+      expect(controller.cameraDistanceUnknownIsValid.value, equals(!initialVal));
+      expect(AppConstants.cameraDistanceUnknownIsValid, equals(!initialVal));
+
+      controller.toggleCameraDistanceUnknownIsValid(initialVal);
+      expect(controller.cameraDistanceUnknownIsValid.value, equals(initialVal));
+      expect(AppConstants.cameraDistanceUnknownIsValid, equals(initialVal));
+    });
+
+    test('resetAllSettingsToDefault restores all detection settings to official defaults', () {
+      // Mutate settings away from defaults
+      controller.setVibrationGateType(VibrationGateType.peakThreshold);
+      controller.toggleCameraDistanceUnknownIsValid(false);
+      controller.minVibrationThreshold.value = 0.55;
+      controller.isVisionConfirmationRequired.value = false;
+      controller.audioSampleIntervalMs.value = 80;
+      controller.maxCameraDistanceM.value = 2.5;
+
+      expect(controller.vibrationGateType.value, equals(VibrationGateType.peakThreshold));
+      expect(controller.cameraDistanceUnknownIsValid.value, isFalse);
+      expect(controller.minVibrationThreshold.value, equals(0.55));
+      expect(controller.isVisionConfirmationRequired.value, isFalse);
+      expect(controller.maxCameraDistanceM.value, equals(2.5));
+
+      // Reset to defaults
+      controller.resetAllSettingsToDefault();
+
+      expect(controller.vibrationGateType.value, equals(VibrationGateType.knock));
+      expect(controller.vibrationGate, isA<FreshKnockGate>());
+      expect(controller.cameraDistanceUnknownIsValid.value, isTrue);
+      expect(controller.minVibrationThreshold.value, equals(AppConstants.defaultImpactVibrationThreshold));
+      expect(controller.isVisionConfirmationRequired.value, isTrue);
+      expect(controller.maxCameraDistanceM.value, equals(FreeSessionController.defaultMaxCameraDistanceM));
+      expect(AppConstants.vibrationGateType, equals(VibrationGateType.knock));
+      expect(AppConstants.cameraDistanceUnknownIsValid, isTrue);
+    });
+
+    test('restarting session / onClose restores AppConstants to default', () {
+      controller.setVibrationGateType(VibrationGateType.peakThreshold);
+      controller.toggleCameraDistanceUnknownIsValid(false);
+      expect(AppConstants.vibrationGateType, equals(VibrationGateType.peakThreshold));
+      expect(AppConstants.cameraDistanceUnknownIsValid, isFalse);
+
+      controller.onClose();
+
+      expect(AppConstants.vibrationGateType, equals(VibrationGateType.knock));
+      expect(AppConstants.cameraDistanceUnknownIsValid, isTrue);
     });
   });
 

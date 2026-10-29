@@ -12,26 +12,22 @@ class TTSPromptDatasource implements ITTSPromptDatasource {
   final FlutterTts flutterTts;
   final MonotonicClockService clockService;
 
-  TTSPromptDatasource({
-    FlutterTts? tts,
-    required this.clockService,
-  }) : flutterTts = tts ?? FlutterTts();
+  TTSPromptDatasource({FlutterTts? tts, required this.clockService})
+    : flutterTts = tts ?? FlutterTts();
 
   @override
   Future<PromptCombo> speak(String id, String text, PromptConfig config) async {
+    await flutterTts.setVolume(1.0);
     await flutterTts.setSpeechRate(config.speechRate);
     await flutterTts.setPitch(config.pitch);
     await flutterTts.setLanguage('en-US');
-    await flutterTts.setIosAudioCategory(
-      IosTextToSpeechAudioCategory.playback,
-      [
-        IosTextToSpeechAudioCategoryOptions.allowBluetooth,
-        IosTextToSpeechAudioCategoryOptions.allowBluetoothA2DP,
-        IosTextToSpeechAudioCategoryOptions.defaultToSpeaker,
-        IosTextToSpeechAudioCategoryOptions.mixWithOthers,
-      ],
-      IosTextToSpeechAudioMode.defaultMode,
-    );
+    await flutterTts
+        .setIosAudioCategory(IosTextToSpeechAudioCategory.playback, [
+          IosTextToSpeechAudioCategoryOptions.allowBluetooth,
+          IosTextToSpeechAudioCategoryOptions.allowBluetoothA2DP,
+          IosTextToSpeechAudioCategoryOptions.defaultToSpeaker,
+          IosTextToSpeechAudioCategoryOptions.mixWithOthers,
+        ], IosTextToSpeechAudioMode.defaultMode);
 
     final int startUs = clockService.nowUs();
     await flutterTts.speak(text);

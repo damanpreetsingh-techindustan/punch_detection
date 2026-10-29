@@ -1,10 +1,47 @@
 import 'dart:async';
 
+/// One accelerometer reading, before throttling, for the session log.
+class VibrationRawSample {
+  /// Time the sensor measured it (epoch ms, from the sensor event).
+  final int sensorMs;
+
+  /// Time the reading reached Dart (epoch ms).
+  final int arrivalMs;
+
+  /// Magnitude after gravity / drift removal, before the deadband (m/s²).
+  final double rawMag;
+
+  /// Magnitude after the deadband (m/s²).
+  final double effectiveMag;
+
+  /// Smoothed envelope that detection uses (m/s²).
+  final double envelope;
+
+  /// Dynamic AC acceleration components along device axes (m/s²).
+  final double x;
+  final double y;
+  final double z;
+
+  const VibrationRawSample({
+    required this.sensorMs,
+    required this.arrivalMs,
+    required this.rawMag,
+    required this.effectiveMag,
+    required this.envelope,
+    this.x = 0.0,
+    this.y = 0.0,
+    this.z = 0.0,
+  });
+}
+
 /// Abstract Contract interface for Device Impact Vibration Detection.
 /// Adheres to Dependency Inversion (DIP) & Interface Segregation (ISP).
 abstract class IDeviceVibrationService {
   /// Stream of real-time linear acceleration magnitude spikes (in m/s^2).
   Stream<double> get vibrationMagnitudeStream;
+
+  /// Every accelerometer reading (not throttled), for logging only.
+  Stream<VibrationRawSample> get rawSampleStream;
 
   /// Current smoothed vibration acceleration magnitude (in m/s^2).
   double get currentVibrationMagnitude;
