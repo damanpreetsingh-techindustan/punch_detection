@@ -287,7 +287,7 @@ class AppConstants {
     vibrationGateType = VibrationGateType.knock;
     cameraDistanceUnknownIsValid = true;
     bodyMotionGateEnabled = bodyMotionGateEnabledDefault;
-    bodyMotionLevel = BodyMotionLevel.normal;
+    bodyMotionLevel = BodyMotionLevel.easy;
     bodyMotionMinScoreValue = bodyMotionMinScoreNormal;
   }
 
