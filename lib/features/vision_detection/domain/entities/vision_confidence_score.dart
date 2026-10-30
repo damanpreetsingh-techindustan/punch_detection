@@ -17,10 +17,10 @@ class VisionConfidenceScore extends Equatable {
 
   @override
   List<Object?> get props => [
-        score,
-        isPunchMotionDetected,
-        timestampMicroseconds,
-        ruleResults,
-        metrics,
-      ];
+    score,
+    isPunchMotionDetected,
+    timestampMicroseconds,
+    ruleResults,
+    metrics,
+  ];
 }

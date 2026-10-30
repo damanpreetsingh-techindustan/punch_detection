@@ -99,7 +99,9 @@ class CameraDistanceGate {
       );
     }
 
-    final double diagonal = sqrt(imageWidth * imageWidth + imageHeight * imageHeight);
+    final double diagonal = sqrt(
+      imageWidth * imageWidth + imageHeight * imageHeight,
+    );
     if (diagonal <= 0) return _unknown(unknownIsValid);
 
     if (_visible(leftShoulder) && _visible(rightShoulder)) {

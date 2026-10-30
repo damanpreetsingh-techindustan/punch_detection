@@ -35,7 +35,8 @@ class CameraDirectionRestrictionGuard implements PunchRestrictionGuard {
       }
     }
 
-    final bool hasMovement = tracker.shoulderMovement >= 0.025 ||
+    final bool hasMovement =
+        tracker.shoulderMovement >= 0.025 ||
         tracker.wristVelocity >= 0.40 ||
         tracker.motionVelocity >= 0.40 ||
         tracker.armExtension >= 0.45;

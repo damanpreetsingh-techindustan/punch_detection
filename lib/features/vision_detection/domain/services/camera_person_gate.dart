@@ -78,7 +78,8 @@ class CameraPersonGate {
 
     if (!enabled) {
       final bool legacy =
-          faceConf >= legacyMinConfidence || shoulderConf >= legacyMinConfidence;
+          faceConf >= legacyMinConfidence ||
+          shoulderConf >= legacyMinConfidence;
       return CameraPersonResult(
         isPerson: legacy,
         reason: legacy ? 'old_rule' : 'no_face_no_shoulder',

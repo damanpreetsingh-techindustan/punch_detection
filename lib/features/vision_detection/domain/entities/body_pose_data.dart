@@ -30,7 +30,11 @@ class BodyPoseData extends Equatable {
   });
 
   /// Calculates the 3D joint angle (in degrees) formed by three points p1 -> vertex -> p3.
-  static double calculateAngle(PoseLandmark p1, PoseLandmark vertex, PoseLandmark p3) {
+  static double calculateAngle(
+    PoseLandmark p1,
+    PoseLandmark vertex,
+    PoseLandmark p3,
+  ) {
     final double v1x = p1.x - vertex.x;
     final double v1y = p1.y - vertex.y;
     final double v1z = p1.z - vertex.z;
@@ -52,15 +56,15 @@ class BodyPoseData extends Equatable {
 
   @override
   List<Object?> get props => [
-        nose,
-        leftShoulder,
-        rightShoulder,
-        leftElbow,
-        rightElbow,
-        leftWrist,
-        rightWrist,
-        leftHip,
-        rightHip,
-        timestampMicroseconds,
-      ];
+    nose,
+    leftShoulder,
+    rightShoulder,
+    leftElbow,
+    rightElbow,
+    leftWrist,
+    rightWrist,
+    leftHip,
+    rightHip,
+    timestampMicroseconds,
+  ];
 }

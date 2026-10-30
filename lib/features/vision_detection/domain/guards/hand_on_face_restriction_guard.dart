@@ -8,7 +8,7 @@ class HandOnFaceRestrictionGuard implements PunchRestrictionGuard {
 
   @override
   bool evaluate(ArmKineticTracker tracker, PunchDetectionContext context) {
-    // NOTE: Wrist to face check is commented out because mobile cameras are mounted directly above punching bags where wrist/hands are occluded or out of frame. 
+    // NOTE: Wrist to face check is commented out because mobile cameras are mounted directly above punching bags where wrist/hands are occluded or out of frame.
     // Detection logic relies strictly on Shoulder -> Elbow (Upper Arm) metrics.
     /*
     final history = tracker.history;

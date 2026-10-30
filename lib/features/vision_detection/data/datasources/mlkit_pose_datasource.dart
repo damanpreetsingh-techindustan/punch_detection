@@ -1,5 +1,6 @@
 import 'dart:async';
-import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart' as mlkit;
+import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart'
+    as mlkit;
 import '../../../../core/services/monotonic_clock_service.dart';
 import '../../domain/entities/body_pose_data.dart';
 import '../../domain/entities/pose_landmark.dart';
@@ -23,7 +24,9 @@ class MLKitPoseDatasource {
   /// Processes a camera frame InputImage using Google ML Kit Pose Detector and converts to domain BodyPoseData
   Future<BodyPoseData?> processInputImage(mlkit.InputImage inputImage) async {
     try {
-      final List<mlkit.Pose> poses = await poseDetector.processImage(inputImage);
+      final List<mlkit.Pose> poses = await poseDetector.processImage(
+        inputImage,
+      );
       if (poses.isEmpty) return null;
 
       final pose = poses.first;
@@ -37,7 +40,8 @@ class MLKitPoseDatasource {
   BodyPoseData convertMlKitPoseToDomain(mlkit.Pose pose) {
     PoseLandmark extractLandmark(mlkit.PoseLandmarkType type) {
       final lm = pose.landmarks[type];
-      if (lm == null) return const PoseLandmark(x: 0, y: 0, z: 0, likelihood: 0);
+      if (lm == null)
+        return const PoseLandmark(x: 0, y: 0, z: 0, likelihood: 0);
       return PoseLandmark(x: lm.x, y: lm.y, z: lm.z, likelihood: lm.likelihood);
     }
 

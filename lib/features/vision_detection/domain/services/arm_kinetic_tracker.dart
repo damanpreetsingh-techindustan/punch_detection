@@ -36,7 +36,8 @@ class ArmKineticTracker {
   double shoulderMovement = 0.0; // fraction of shoulder-width
   double headMovement = 0.0; // fraction of shoulder-width
   double relativeDepthMovement = 0.0; // Z-axis forward thrust
-  double minRecentGuardExtension = 0.45; // Lowest extension reach observed in recent guard stance
+  double minRecentGuardExtension =
+      0.45; // Lowest extension reach observed in recent guard stance
 
   ArmKineticTracker({required this.side});
 
@@ -156,7 +157,8 @@ class ArmKineticTracker {
 
     double anchorShoulderDisp = 0.0;
     if (_hasBaselineShoulderAnchor) {
-      anchorShoulderDisp = sqrt(
+      anchorShoulderDisp =
+          sqrt(
             pow(latest.shoulder.dx - _baselineShoulderX, 2) +
                 pow(latest.shoulder.dy - _baselineShoulderY, 2),
           ) /
@@ -174,9 +176,14 @@ class ArmKineticTracker {
     if (_prevShoulderVel < 0.10 && rawShoulderDisp > 0.060) {
       // Single-frame MLKit camera landmark noise jump — dampen false spike
       effectiveShoulderDisp = rawShoulderDisp * 0.25;
-    } else if (shoulderAccel >= 0.80 && rawShoulderDisp >= 0.040 && _prevShoulderVel >= 0.12) {
+    } else if (shoulderAccel >= 0.80 &&
+        rawShoulderDisp >= 0.040 &&
+        _prevShoulderVel >= 0.12) {
       // Explosive acceleration surge on genuine physical punch movement
-      effectiveShoulderDisp = max(effectiveShoulderDisp, rawShoulderDisp * 1.25);
+      effectiveShoulderDisp = max(
+        effectiveShoulderDisp,
+        rawShoulderDisp * 1.25,
+      );
     }
     _prevShoulderVel = shoulderVel;
 

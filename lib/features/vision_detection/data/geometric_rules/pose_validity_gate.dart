@@ -200,7 +200,8 @@ class PoseValidityGate {
     // ── Relaxed Single-Point Validation when extra face restrictions are disabled ──
     if (!AppConstants.enableExtraFaceRestrictions) {
       final bool hasShoulder = lsLikelihood >= 0.20 || rsLikelihood >= 0.20;
-      final bool hasFace = noseLikelihood >= 0.20 ||
+      final bool hasFace =
+          noseLikelihood >= 0.20 ||
           leftEyeLikelihood >= 0.20 ||
           rightEyeLikelihood >= 0.20 ||
           leftEarLikelihood >= 0.20 ||
@@ -210,8 +211,9 @@ class PoseValidityGate {
         return PoseValidityResult(
           isValid: true,
           failReason: null,
-          normShoulderWidth:
-              imageWidth > 0 ? (lsX - rsX).abs() / imageWidth : 0.0,
+          normShoulderWidth: imageWidth > 0
+              ? (lsX - rsX).abs() / imageWidth
+              : 0.0,
           nosePresent: noseLikelihood >= 0.20,
           areEyesVisible:
               leftEyeLikelihood >= 0.20 || rightEyeLikelihood >= 0.20,

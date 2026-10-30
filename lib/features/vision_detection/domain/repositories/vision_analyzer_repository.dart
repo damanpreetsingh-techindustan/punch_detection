@@ -7,5 +7,8 @@ abstract class VisionAnalyzerRepository {
   Stream<BodyPoseData> streamPoseData();
 
   /// Analyzes a single 3D pose against geometric punch motion rules
-  VisionConfidenceScore analyzePose(BodyPoseData pose, VisionFilterConfig config);
+  VisionConfidenceScore analyzePose(
+    BodyPoseData pose,
+    VisionFilterConfig config,
+  );
 }

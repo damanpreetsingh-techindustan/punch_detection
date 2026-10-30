@@ -8,13 +8,11 @@ class AnalyzeVisionPoseParams {
   final BodyPoseData pose;
   final VisionFilterConfig config;
 
-  const AnalyzeVisionPoseParams({
-    required this.pose,
-    required this.config,
-  });
+  const AnalyzeVisionPoseParams({required this.pose, required this.config});
 }
 
-class AnalyzeVisionPose implements UseCase<VisionConfidenceScore, AnalyzeVisionPoseParams> {
+class AnalyzeVisionPose
+    implements UseCase<VisionConfidenceScore, AnalyzeVisionPoseParams> {
   final VisionAnalyzerRepository repository;
 
   AnalyzeVisionPose(this.repository);

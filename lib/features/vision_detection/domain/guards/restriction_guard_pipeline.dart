@@ -31,9 +31,7 @@ class RestrictionGuardPipeline {
     } else {
       // Default Active Guards Suite:
       // Device Stability Guard (Rejects handheld shaking/camera motion via sensors_plus)
-      _guards.addAll([
-        DeviceStabilityRestrictionGuard(),
-      ]);
+      _guards.addAll([DeviceStabilityRestrictionGuard()]);
     }
   }
 

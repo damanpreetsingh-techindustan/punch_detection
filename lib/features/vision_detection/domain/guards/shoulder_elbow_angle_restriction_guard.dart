@@ -37,7 +37,9 @@ class ShoulderElbowAngleRestrictionGuard implements PunchRestrictionGuard {
     final double dy = latest.shoulder.dy - latest.elbow!.dy;
 
     // 1. Reject if arm is hanging downwards toward ground/lap while sitting (dy < -0.45 SW when arm is UN-EXTENDED)
-    if (tracker.armExtension < 0.50 && shoulderWidth > 0 && (-dy / shoulderWidth) > 0.45) {
+    if (tracker.armExtension < 0.50 &&
+        shoulderWidth > 0 &&
+        (-dy / shoulderWidth) > 0.45) {
       return false;
     }
 

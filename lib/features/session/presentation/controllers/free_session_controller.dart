@@ -25,6 +25,9 @@ import '../../../vision_detection/data/mappers/pose_motion_frame_mapper.dart';
 import '../../../vision_detection/domain/services/camera_distance_gate.dart';
 import '../../../vision_detection/domain/services/camera_near_latch.dart';
 import '../../../vision_detection/domain/services/camera_person_gate.dart';
+import '../../../vision_detection/domain/services/person_focus/i_person_focus_strategy.dart';
+import '../../../vision_detection/data/datasources/mlkit_face_locator.dart';
+import '../../../vision_detection/data/person_focus/nearest_face_person_focus.dart';
 import '../../../fusion/domain/services/fast_combo_fusion_synchronizer.dart';
 import '../../../../core/services/audio_level/audio_level_sample.dart';
 import '../../../../core/services/audio_level/i_audio_level_service.dart';
@@ -42,6 +45,8 @@ import '../../domain/services/auto_config_evaluator.dart';
 import '../widgets/auto_config_dialog.dart';
 import '../widgets/live_telemetry_sheet.dart';
 import '../widgets/session_detection_settings_sheet.dart';
+import '../widgets/skeleton/skeleton_style.dart';
+import '../widgets/skeleton/skeleton_style_resolver.dart';
 
 class FreeSessionController extends GetxController {
   CameraController? cameraController;
@@ -145,6 +150,23 @@ class FreeSessionController extends GetxController {
     _recordConfigChange('body_motion_min_score=${snapped.toStringAsFixed(3)}');
   }
 
+  // Nearest-person focus (SOLID: depends on IPersonFocusStrategy only).
+  // Keeps the pose detector / skeleton on the closest person when several
+  // people are in view. See NearestFacePersonFocus.
+  final IPersonFocusStrategy _personFocus;
+
+  /// Settings switch "Focus on Nearest Person". false = the pose detector
+  /// always gets the full frame (original behaviour).
+  final RxBool isPersonFocusEnabled = AppConstants.personFocusEnabled.obs;
+
+  void togglePersonFocus(bool enable) {
+    isPersonFocusEnabled.value = enable;
+    AppConstants.personFocusEnabled = enable;
+    // Start clean: no person held from before the switch.
+    _personFocus.reset();
+    _recordConfigChange('person_focus=$enable');
+  }
+
   /// The motion check is applied when the switch is on AND the camera takes
   /// part in the decision (fusion mode, vision confirmation on, camera
   /// working). Audio-only, audio + vibration, camera-only and "camera off"
@@ -166,6 +188,7 @@ class FreeSessionController extends GetxController {
   final CameraPersonGate _personGate;
   final ShoulderStabilityTracker _stabilityTracker;
   final AdaptiveAudioBaseline _adaptiveBaseline;
+  final ISkeletonStyleResolver _skeletonStyleResolver;
 
   FreeSessionController({
     IAudioLevelService? audioLevelService,
@@ -181,6 +204,8 @@ class FreeSessionController extends GetxController {
     CameraPersonGate? personGate,
     ShoulderStabilityTracker? stabilityTracker,
     AdaptiveAudioBaseline? adaptiveBaseline,
+    ISkeletonStyleResolver? skeletonStyleResolver,
+    IPersonFocusStrategy? personFocus,
     SessionEventRecorder? recorder,
   }) : _recorder = recorder ?? SessionEventRecorder(),
        _audioLevelService =
@@ -192,6 +217,9 @@ class FreeSessionController extends GetxController {
        _vibrationService = vibrationService ?? DeviceVibrationService(),
        _vibrationGate = vibrationGate ?? VibrationGateFactory.create(),
        _bodyMotionGate = bodyMotionGate ?? LandmarkMotionGate(),
+       _personFocus =
+           personFocus ??
+           NearestFacePersonFocus(faceLocator: MlKitFaceLocator()),
        _motionFrameMapper = motionFrameMapper ?? const PoseMotionFrameMapper(),
        _temporalPunchDetector =
            temporalPunchDetector ?? TemporalPunchDetector(),
@@ -208,7 +236,9 @@ class FreeSessionController extends GetxController {
        _personGate = personGate ?? CameraPersonGate.fromConstants(),
        _stabilityTracker =
            stabilityTracker ?? ShoulderStabilityTracker(windowFrames: 5),
-       _adaptiveBaseline = adaptiveBaseline ?? AdaptiveAudioBaseline();
+       _adaptiveBaseline = adaptiveBaseline ?? AdaptiveAudioBaseline(),
+       _skeletonStyleResolver =
+           skeletonStyleResolver ?? const CameraGateSkeletonStyleResolver();
 
   FastComboFusionSynchronizer get fusionSynchronizer => _fusionSynchronizer;
 
@@ -325,6 +355,7 @@ class FreeSessionController extends GetxController {
     'bodyMotionGate': isBodyMotionGateEnabled.value,
     'bodyMotionLevel': bodyMotionLevel.value.name,
     'bodyMotionMinScore': bodyMotionMinScore.value,
+    'personFocus': isPersonFocusEnabled.value,
     'extraFaceRestrictions': AppConstants.enableExtraFaceRestrictions,
     'audioIntervalMs': audioSampleIntervalMs.value,
     'audioRefractoryMs': AppConstants.audioRefractoryMs,
@@ -1541,6 +1572,12 @@ class FreeSessionController extends GetxController {
   bool get isCameraGateShownOnScreen =>
       _usesImpactWindow && _isCameraGateRequired;
 
+  /// How the pose skeleton is drawn: active for a valid user, grey when the
+  /// user is too far or not seen as a person. Follows [liveCameraGateState],
+  /// so reading it inside an Obx repaints the overlay when the state changes.
+  SkeletonStyle get skeletonStyle =>
+      _skeletonStyleResolver.resolve(liveCameraGateState.value);
+
   void _noteCameraObservation(
     CameraGateState state, {
     double? ratio,
@@ -2113,6 +2150,8 @@ class FreeSessionController extends GetxController {
       onSetBodyMotionLevel: setBodyMotionLevel,
       bodyMotionMinScore: bodyMotionMinScore,
       onSetBodyMotionMinScore: setBodyMotionMinScore,
+      isPersonFocusEnabled: isPersonFocusEnabled,
+      onTogglePersonFocus: togglePersonFocus,
       onResetToDefaults: resetAllSettingsToDefault,
       onApplyEnvironmentPreset: applyEnvironmentPreset,
       onSpikeDbChanged: (double value) {
@@ -2448,8 +2487,11 @@ class FreeSessionController extends GetxController {
           if (cameraController != null && _activeCamera != null) {
             final inputImage = _convertCameraImage(image, _activeCamera!);
             if (inputImage != null && _poseDetector != null) {
-              final List<Pose> poses = await _poseDetector!.processImage(
+              final InputImage poseInput = await _preparePoseInput(
                 inputImage,
+              );
+              final List<Pose> poses = await _poseDetector!.processImage(
+                poseInput,
               );
               latencyStopwatch.stop();
               final double frameLatency = latencyStopwatch.elapsedMilliseconds
@@ -2493,6 +2535,38 @@ class FreeSessionController extends GetxController {
         }
       });
     } catch (_) {}
+  }
+
+  /// With several people in view, hides everyone but the nearest so the pose
+  /// detector (and skeleton) stays on them. Switch OFF = the frame unchanged.
+  Future<InputImage> _preparePoseInput(InputImage frame) async {
+    if (!isPersonFocusEnabled.value) return frame;
+    final PersonFocusResult focus = await _personFocus.prepare(frame);
+    _recordPersonFocus(focus);
+    return focus.image;
+  }
+
+  /// Test hook: the image the pose detector would get for [frame].
+  Future<InputImage> preparePoseInputForTesting(InputImage frame) =>
+      _preparePoseInput(frame);
+
+  /// Session-log counters for nearest-person focus, plus a FOCUS row in the
+  /// CSV table whenever the focus moves to another person.
+  void _recordPersonFocus(PersonFocusResult focus) {
+    final int? faces = focus.facesSeen;
+    if (faces != null && faces >= 2) _recorder.count('focus.multi_face_checks');
+    if (focus.masked) _recorder.count('focus.masked_frames');
+    if (focus.switched) {
+      _recorder.count('focus.switches');
+      summaryTable.addRow(<String, Object?>{
+        'time': SessionEventRecorder.formatElapsed(
+          _recorder.elapsedForEpoch(DateTime.now().millisecondsSinceEpoch),
+        ),
+        'kind': 'FOCUS',
+        'code': 'FOCUS_SWITCHED',
+        'detail': 'focus moved to the nearest person ($faces faces in view)',
+      });
+    }
   }
 
   InputImageRotation _getImageRotation(CameraDescription camera) {
@@ -3076,6 +3150,9 @@ class FreeSessionController extends GetxController {
     isBodyMotionGateEnabled.value = AppConstants.bodyMotionGateEnabled;
     bodyMotionLevel.value = AppConstants.bodyMotionLevel;
     bodyMotionMinScore.value = AppConstants.bodyMotionMinScoreValue;
+    if (isPersonFocusEnabled.value != AppConstants.personFocusEnabled) {
+      togglePersonFocus(AppConstants.personFocusEnabled);
+    }
     _recordConfigChange('reset_to_defaults');
   }
 
@@ -3107,6 +3184,8 @@ class FreeSessionController extends GetxController {
     bodyMotionLevel.value = AppConstants.bodyMotionLevel;
     bodyMotionMinScore.value = AppConstants.bodyMotionMinScoreValue;
     _bodyMotionGate.reset();
+    isPersonFocusEnabled.value = AppConstants.personFocusEnabled;
+    _personFocus.reset();
   }
 
   @override
@@ -3123,6 +3202,7 @@ class FreeSessionController extends GetxController {
     _vibrationService.stopMonitoring();
     _vibrationGate.reset();
     _bodyMotionGate.reset();
+    unawaited(_personFocus.close());
     _stabilityService.dispose();
     _poseDetector?.close();
     _stopAndDisposeCamera();

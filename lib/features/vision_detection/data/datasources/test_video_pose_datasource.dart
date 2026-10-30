@@ -12,11 +12,15 @@ class TestVideoPoseDatasource {
   BodyPoseData generateExtendedPunchPose() {
     return BodyPoseData(
       leftShoulder: const PoseLandmark(x: 0.2, y: 0.4, z: 0.1),
-      rightShoulder: const PoseLandmark(x: 0.8, y: 0.4, z: 0.3), // Forward shoulder drive
+      rightShoulder: const PoseLandmark(
+        x: 0.8,
+        y: 0.4,
+        z: 0.3,
+      ), // Forward shoulder drive
       leftElbow: const PoseLandmark(x: 0.15, y: 0.6, z: 0.0),
-      rightElbow: const PoseLandmark(x: 0.85, y: 0.4, z: 0.6),  // Extended arm
+      rightElbow: const PoseLandmark(x: 0.85, y: 0.4, z: 0.6), // Extended arm
       leftWrist: const PoseLandmark(x: 0.1, y: 0.8, z: -0.1),
-      rightWrist: const PoseLandmark(x: 0.9, y: 0.4, z: 0.9),  // Wrist advanced
+      rightWrist: const PoseLandmark(x: 0.9, y: 0.4, z: 0.9), // Wrist advanced
       leftHip: const PoseLandmark(x: 0.3, y: 0.9, z: 0.0),
       rightHip: const PoseLandmark(x: 0.7, y: 0.9, z: 0.0),
       timestampMicroseconds: clockService.nowUs(),

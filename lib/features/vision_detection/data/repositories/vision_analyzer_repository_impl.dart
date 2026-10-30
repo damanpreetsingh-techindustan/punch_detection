@@ -16,12 +16,9 @@ class VisionAnalyzerRepositoryImpl implements VisionAnalyzerRepository {
   VisionAnalyzerRepositoryImpl({
     required this.mlKitDatasource,
     List<VisionGeometricRule>? customRules,
-  }) : rules = customRules ??
-            [
-              ElbowExtensionRule(),
-              WristAdvanceRule(),
-              ShoulderDriveRule(),
-            ];
+  }) : rules =
+           customRules ??
+           [ElbowExtensionRule(), WristAdvanceRule(), ShoulderDriveRule()];
 
   @override
   Stream<BodyPoseData> streamPoseData() {
@@ -29,7 +26,10 @@ class VisionAnalyzerRepositoryImpl implements VisionAnalyzerRepository {
   }
 
   @override
-  VisionConfidenceScore analyzePose(BodyPoseData pose, VisionFilterConfig config) {
+  VisionConfidenceScore analyzePose(
+    BodyPoseData pose,
+    VisionFilterConfig config,
+  ) {
     final Map<String, bool> ruleResults = {};
     final Map<String, dynamic> metrics = {};
 
@@ -47,7 +47,8 @@ class VisionAnalyzerRepositoryImpl implements VisionAnalyzerRepository {
     }
 
     final double overallScore = (totalScore / rules.length).clamp(0.0, 1.0);
-    final bool isPunchMotionDetected = ruleResults['Elbow Joint Extension Check'] == true && passCount >= 2;
+    final bool isPunchMotionDetected =
+        ruleResults['Elbow Joint Extension Check'] == true && passCount >= 2;
 
     return VisionConfidenceScore(
       score: overallScore,

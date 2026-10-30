@@ -455,6 +455,9 @@ void main() {
       controller = FreeSessionController(
         audioLevelService: _MockAudioLevelService(),
       );
+      // These tests cover the vibration / camera gates; the body-motion gate
+      // (ON by default) has its own tests in body_motion_gate_test.dart.
+      controller.isBodyMotionGateEnabled.value = false;
       controller.sessionMode.value = DetectionMode.fusion;
       controller.mountType.value = MountType.wall;
       controller.minVibrationThreshold.value = 0.18;

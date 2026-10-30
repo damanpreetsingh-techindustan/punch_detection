@@ -14,7 +14,9 @@ class VisionDetectionBinding extends Bindings {
     final configService = Get.find<ConfigService>();
 
     final mlKitDatasource = MLKitPoseDatasource(clockService: clockService);
-    final repository = VisionAnalyzerRepositoryImpl(mlKitDatasource: mlKitDatasource);
+    final repository = VisionAnalyzerRepositoryImpl(
+      mlKitDatasource: mlKitDatasource,
+    );
     Get.lazyPut<VisionAnalyzerRepository>(() => repository);
 
     final analyzeUseCase = AnalyzeVisionPose(repository);

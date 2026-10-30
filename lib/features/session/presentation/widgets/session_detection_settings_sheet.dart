@@ -47,6 +47,8 @@ void showSessionDetectionSettingsSheet(
   Function(BodyMotionLevel)? onSetBodyMotionLevel,
   RxDouble? bodyMotionMinScore,
   Function(double)? onSetBodyMotionMinScore,
+  RxBool? isPersonFocusEnabled,
+  Function(bool)? onTogglePersonFocus,
   RxBool? isVibrationDisabled,
   RxBool? isVibrationGateEnabled,
   Function(bool)? onToggleVibrationGate,
@@ -97,6 +99,8 @@ void showSessionDetectionSettingsSheet(
         onSetBodyMotionLevel: onSetBodyMotionLevel,
         bodyMotionMinScore: bodyMotionMinScore,
         onSetBodyMotionMinScore: onSetBodyMotionMinScore,
+        isPersonFocusEnabled: isPersonFocusEnabled,
+        onTogglePersonFocus: onTogglePersonFocus,
         isVibrationDisabled: isVibrationDisabled,
         isVibrationGateEnabled: isVibrationGateEnabled,
         onToggleVibrationGate: onToggleVibrationGate,
@@ -145,6 +149,8 @@ class _SessionDetectionSettingsSheetContent extends StatelessWidget {
   final Function(BodyMotionLevel)? onSetBodyMotionLevel;
   final RxDouble? bodyMotionMinScore;
   final Function(double)? onSetBodyMotionMinScore;
+  final RxBool? isPersonFocusEnabled;
+  final Function(bool)? onTogglePersonFocus;
   final RxBool? isVibrationDisabled;
   final RxBool? isVibrationGateEnabled;
   final Function(bool)? onToggleVibrationGate;
@@ -186,6 +192,8 @@ class _SessionDetectionSettingsSheetContent extends StatelessWidget {
     this.onSetBodyMotionLevel,
     this.bodyMotionMinScore,
     this.onSetBodyMotionMinScore,
+    this.isPersonFocusEnabled,
+    this.onTogglePersonFocus,
     this.isVibrationDisabled,
     this.isVibrationGateEnabled,
     this.onToggleVibrationGate,
@@ -421,6 +429,10 @@ class _SessionDetectionSettingsSheetContent extends StatelessWidget {
                     ),
                     8.height,
                   ],
+                  if (isPersonFocusEnabled != null) ...[
+                    _buildPersonFocusTile(context, isLandscape: true),
+                    8.height,
+                  ],
                   if (isBodyMotionGateEnabled != null) ...[
                     _buildBodyMotionGateTile(context, isLandscape: true),
                     8.height,
@@ -495,6 +507,10 @@ class _SessionDetectionSettingsSheetContent extends StatelessWidget {
           ],
           if (cameraDistanceUnknownIsValid != null) ...[
             _buildCameraDistanceUnknownSettingTile(context, isLandscape: false),
+            10.height,
+          ],
+          if (isPersonFocusEnabled != null) ...[
+            _buildPersonFocusTile(context, isLandscape: false),
             10.height,
           ],
           if (isBodyMotionGateEnabled != null) ...[
@@ -2445,6 +2461,135 @@ class _SessionDetectionSettingsSheetContent extends StatelessWidget {
     });
   }
 
+  // ─── NEAREST-PERSON FOCUS TILE ───
+  // Switch: ON = with several people in view the camera follows the closest
+  // one. Always active (camera-only mode uses the pose too), unlike the tiles
+  // that depend on camera confirmation.
+  Widget _buildPersonFocusTile(
+    BuildContext context, {
+    required bool isLandscape,
+  }) {
+    if (isPersonFocusEnabled == null) return const SizedBox.shrink();
+
+    return Obx(() {
+      final bool enabled = isPersonFocusEnabled!.value;
+
+      return Container(
+        margin: EdgeInsets.symmetric(vertical: isLandscape ? 2.h : 6.h),
+        padding: EdgeInsets.all(isLandscape ? 8.w : 10.w),
+        decoration: BoxDecoration(
+          color: AppColors.surface.withValues(alpha: 0.6),
+          borderRadius: BorderRadius.circular(12.r),
+          border: Border.all(
+            color: enabled
+                ? AppColors.blue.withValues(alpha: 0.5)
+                : AppColors.border,
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Expanded(
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.person_pin_circle_rounded,
+                        color: AppColors.blue,
+                        size: isLandscape ? 15.w : 18.w,
+                      ),
+                      6.width,
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Focus on Nearest Person',
+                              style: TextStyle(
+                                color: AppColors.textPrimary,
+                                fontSize: isLandscape
+                                    ? 10.5.ts(context)
+                                    : 12.ts(context),
+                                fontWeight: FontWeight.w600,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            1.5.height,
+                            Text(
+                              enabled
+                                  ? 'ENABLED — Skeleton follows the closest person when several are in view'
+                                  : 'OFF — Camera follows whoever it detects first',
+                              style: TextStyle(
+                                color: enabled
+                                    ? AppColors.lime
+                                    : AppColors.textMuted,
+                                fontSize: isLandscape
+                                    ? 7.8.ts(context)
+                                    : 9.ts(context),
+                                fontWeight: enabled
+                                    ? FontWeight.bold
+                                    : FontWeight.normal,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Transform.scale(
+                  scale: isLandscape ? 0.75 : 0.85,
+                  child: Switch(
+                    value: enabled,
+                    activeThumbColor: AppColors.blue,
+                    onChanged: (bool value) => onTogglePersonFocus?.call(value),
+                  ),
+                ),
+              ],
+            ),
+            6.height,
+            Container(
+              padding: EdgeInsets.symmetric(
+                horizontal: isLandscape ? 8.w : 10.w,
+                vertical: isLandscape ? 5.h : 6.h,
+              ),
+              decoration: BoxDecoration(
+                color: AppColors.panel.withValues(alpha: 0.5),
+                borderRadius: BorderRadius.circular(8.r),
+                border: Border.all(
+                  color: AppColors.blue.withValues(alpha: 0.15),
+                ),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    Icons.info_outline_rounded,
+                    color: AppColors.blue,
+                    size: isLandscape ? 13.w : 15.w,
+                  ),
+                  6.width,
+                  Expanded(
+                    child: Text(
+                      'Uses face detection to find the closest person and hides everyone else from the pose tracker. With one person in view nothing changes. Turn off if the camera loses you when your face is hidden.',
+                      style: TextStyle(
+                        color: AppColors.textMuted,
+                        fontSize: isLandscape ? 7.8.ts(context) : 9.ts(context),
+                        height: 1.35,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    });
+  }
 
   // ─── BODY-MOTION GATE TILE ───
   // Switch: ON = an impact only counts when the user's upper body moved.

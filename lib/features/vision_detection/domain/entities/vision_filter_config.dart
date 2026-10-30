@@ -3,8 +3,8 @@ import 'package:equatable/equatable.dart';
 class VisionFilterConfig extends Equatable {
   // ── Existing geometry thresholds ──────────────────────────────────────────
   final double minElbowExtensionAngle; // e.g. 140.0 degrees
-  final double minWristAdvanceDelta;   // e.g. 0.15 normalized units
-  final double minShoulderDriveDelta;  // e.g. 0.08 normalized units
+  final double minWristAdvanceDelta; // e.g. 0.15 normalized units
+  final double minShoulderDriveDelta; // e.g. 0.08 normalized units
 
   // ── Validity gate thresholds ──────────────────────────────────────────────
   /// Minimum ML Kit likelihood for each shoulder to be considered detected.
@@ -58,18 +58,17 @@ class VisionFilterConfig extends Equatable {
 
   @override
   List<Object?> get props => [
-        minElbowExtensionAngle,
-        minWristAdvanceDelta,
-        minShoulderDriveDelta,
-        minShoulderLikelihood,
-        minNormalisedShoulderWidth,
-        maxNormalisedShoulderWidth,
-        maxShoulderTopYFraction,
-        minElbowLikelihoodForEmergence,
-        maxContractionRatio,
-        stabilityWindowFrames,
-        maxStabilityDisplacementPerFrame,
-        stabilityGracePeriodMs,
-      ];
+    minElbowExtensionAngle,
+    minWristAdvanceDelta,
+    minShoulderDriveDelta,
+    minShoulderLikelihood,
+    minNormalisedShoulderWidth,
+    maxNormalisedShoulderWidth,
+    maxShoulderTopYFraction,
+    minElbowLikelihoodForEmergence,
+    maxContractionRatio,
+    stabilityWindowFrames,
+    maxStabilityDisplacementPerFrame,
+    stabilityGracePeriodMs,
+  ];
 }
-

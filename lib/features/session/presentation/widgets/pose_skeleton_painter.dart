@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 import 'dart:math';
+import 'skeleton/skeleton_style.dart';
 
 /// Internal Low-Pass Filter & EMA Smoother to eliminate camera landmark jitter.
 class _LandmarkSmoother {
@@ -50,11 +51,15 @@ class PoseSkeletonPainter extends CustomPainter {
   final InputImageRotation rotation;
   final bool isFrontCamera;
 
+  /// Colours of the overlay (active = valid user, inactive = grey).
+  final SkeletonStyle style;
+
   PoseSkeletonPainter({
     required this.pose,
     this.absoluteImageSize = Size.zero,
     this.rotation = InputImageRotation.rotation90deg,
     this.isFrontCamera = true,
+    this.style = SkeletonStyle.active,
   });
 
   @override
@@ -66,24 +71,21 @@ class PoseSkeletonPainter extends CustomPainter {
       return;
     }
 
-    // 🔵 Vibrant Electric Cyan/Blue Body Skeleton Lines (6.5 thickness)
+    // Body skeleton lines (cyan when active, grey when inactive)
     final skeletonLinePaint = Paint()
-      ..color =
-          const Color(0xFF00B4D8) // Electric Cyan / Vibrant Blue Theme Accent
-      ..strokeWidth = 6.5
+      ..color = style.lineColor
+      ..strokeWidth = style.lineWidth
       ..strokeCap = StrokeCap.round
       ..strokeJoin = StrokeJoin.round;
 
-    // 🔴 Red Round Endpoints
-    final redEndpointPaint = Paint()
-      ..color =
-          const Color(0xFFFF1744) // Bright Neon Red
+    // Round joint endpoints (red when active, grey when inactive)
+    final jointPaint = Paint()
+      ..color = style.jointFillColor
       ..style = PaintingStyle.fill;
 
-    // ⚪ Crisp Pure White Outer Stroke Border for Endpoints
-    final redEndpointBorderPaint = Paint()
-      ..color =
-          const Color(0xFFFFFFFF) // Pure White Outline Stroke
+    // Outer stroke border for endpoints
+    final jointBorderPaint = Paint()
+      ..color = style.jointBorderColor
       ..style = PaintingStyle.stroke
       ..strokeWidth = 2.0;
 
@@ -157,10 +159,10 @@ class PoseSkeletonPainter extends CustomPainter {
       return;
     }
 
-    // Helper to draw Red Round Endpoints with White outline
-    void drawRedEndpoint(Offset point, double radius) {
-      canvas.drawCircle(point, radius, redEndpointPaint);
-      canvas.drawCircle(point, radius, redEndpointBorderPaint);
+    // Helper to draw a round joint with its outline
+    void drawJoint(Offset point, double radius) {
+      canvas.drawCircle(point, radius, jointPaint);
+      canvas.drawCircle(point, radius, jointBorderPaint);
     }
 
     // 1. 🔵 Draw Body Shoulder Line (Shoulder -> Shoulder)
@@ -274,13 +276,13 @@ class PoseSkeletonPainter extends CustomPainter {
       canvas.drawLine(rightElbow, rightWrist, skeletonLinePaint);
     }
 
-    // 3. 🔴 Draw Red Endpoints for Body Joints (Shoulders, Elbows, Wrists)
-    if (leftShoulder != null) drawRedEndpoint(leftShoulder, 8.5);
-    if (rightShoulder != null) drawRedEndpoint(rightShoulder, 8.5);
-    if (leftElbow != null) drawRedEndpoint(leftElbow, 7.5);
-    if (rightElbow != null) drawRedEndpoint(rightElbow, 7.5);
-    if (leftWrist != null) drawRedEndpoint(leftWrist, 8.0);
-    if (rightWrist != null) drawRedEndpoint(rightWrist, 8.0);
+    // 3. Draw round endpoints for body joints (Shoulders, Elbows, Wrists)
+    if (leftShoulder != null) drawJoint(leftShoulder, 8.5);
+    if (rightShoulder != null) drawJoint(rightShoulder, 8.5);
+    if (leftElbow != null) drawJoint(leftElbow, 7.5);
+    if (rightElbow != null) drawJoint(rightElbow, 7.5);
+    if (leftWrist != null) drawJoint(leftWrist, 8.0);
+    if (rightWrist != null) drawJoint(rightWrist, 8.0);
 
     // 4. 👤 FACIAL SKELETON: Hidden from visual UI overlay per user preference.
     // (Note: Facial landmark validation logic in PoseValidityGate & TemporalPunchDetector remains 100% active).
@@ -290,6 +292,7 @@ class PoseSkeletonPainter extends CustomPainter {
   bool shouldRepaint(covariant PoseSkeletonPainter oldDelegate) {
     return oldDelegate.pose != pose ||
         oldDelegate.absoluteImageSize != absoluteImageSize ||
-        oldDelegate.isFrontCamera != isFrontCamera;
+        oldDelegate.isFrontCamera != isFrontCamera ||
+        oldDelegate.style != style;
   }
 }

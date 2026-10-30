@@ -1028,6 +1028,7 @@ class FreeSessionPage extends GetView<FreeSessionController> {
                               pose: controller.livePose.value,
                               absoluteImageSize: controller.cameraImageSize,
                               isFrontCamera: controller.isFrontCamera,
+                              style: controller.skeletonStyle,
                             ),
                           );
                         }),

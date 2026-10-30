@@ -165,14 +165,21 @@ class AppConstants {
   /// Master switch. false = no distance rule (any visible shoulder or face is valid).
   static const bool cameraDistanceGateEnabled = true;
 
+  /// Default "Max Camera Distance" (approx. metres) at the start of every
+  /// session. The two ratios below are derived from it.
+  static const double cameraDefaultMaxDistanceM = 0.7;
+
   /// Minimum shoulder width as a fraction of the image diagonal. A person
   /// farther than this (smaller ratio) is NOT a valid user.
-  /// Rough guide for a ~90° front camera: 0.20 ≈ 0.8 m, 0.11 ≈ 1.5 m, 0.08 ≈ 2 m. // by default 0.09
-  static const double cameraMinShoulderWidthRatio = 0.20;
+  /// Rough guide for a ~90° front camera: 0.23 ≈ 0.7 m, 0.20 ≈ 0.8 m, 0.11 ≈ 1.5 m, 0.08 ≈ 2 m. // by default 0.09
+  static const double cameraMinShoulderWidthRatio =
+      cameraDistanceMetresFactor / cameraDefaultMaxDistanceM;
 
   /// Same rule used when both shoulders are not visible but both eyes are.
-  /// Eye span is about 1/6 of shoulder width, so this is ~1/6 of the value above. // by default 0.014;
-  static const double cameraMinEyeSpanRatio = 0.031;
+  /// Eye span is about 1/6 of shoulder width; 0.155 keeps the tuned pair
+  /// (0.031 eyes for 0.20 shoulders) at the same distance. // by default 0.014;
+  static const double cameraMinEyeSpanRatio =
+      cameraMinShoulderWidthRatio * 0.155;
 
   /// Shoulders / eyes below this confidence are not used to measure distance.
   /// Far users get weak, jumpy points that can fake a wide shoulder span.
@@ -204,6 +211,49 @@ class AppConstants {
 
   /// A camera observation older than this (milliseconds) no longer counts.
   static const int cameraObservationStaleMs = 700;
+
+  // ─── Nearest-person focus (camera) ──────────────────────────────────────────
+  // ML Kit pose detection sees ONE person, and in stream mode keeps following
+  // the first person it found. With several people in view the skeleton could
+  // stay on someone far away while another person stands close. When this is
+  // on, a face check finds every person, the nearest (biggest face) is chosen
+  // and everyone else is hidden from the pose detector. One person in view =
+  // no change at all.
+  //
+  // How to tune: the session log counts `focus.multi_face_checks`,
+  // `focus.masked_frames` and `focus.switches`, and adds a FOCUS row to the
+  // CSV table whenever the focus moves to another person.
+
+  /// Default of the "Focus on Nearest Person" switch at the start of every session.
+  static const bool personFocusEnabledDefault = true;
+
+  /// Live value of the settings switch (reset by [changeSettingToDefault]).
+  static bool personFocusEnabled = personFocusEnabledDefault;
+
+  /// How often the faces are looked for (ms). Masking itself runs every frame.
+  static const int personFocusCheckIntervalMs = 150;
+
+  /// Another person takes the focus only when their face is this many times
+  /// bigger (= clearly closer) than the focused person's face...
+  static const double personFocusSwitchRatio = 1.2;
+
+  /// ...for this many face checks in a row (no flicker between two people).
+  static const int personFocusSwitchChecks = 3;
+
+  /// When the focused face is not seen (gloves up, head turned) its last
+  /// position is kept this long (ms) before another person can be chosen.
+  static const int personFocusHoldMs = 1000;
+
+  /// Body area kept visible around the focused face: this many face widths
+  /// to each side (arms and gloves while punching)...
+  static const double personFocusBodyWidthFactor = 2.5;
+
+  /// ...and this many face heights above the face; it always reaches down to
+  /// the bottom of the image.
+  static const double personFocusBodyTopFactor = 1.0;
+
+  /// Smallest face looked for, as a fraction of the image width.
+  static const double personFocusMinFaceSize = 0.1;
 
   /// Field-test experiments for microphone clipping. Both default to OFF so the
   /// recorded baseline is unchanged; flip one at a time and compare the
@@ -289,6 +339,7 @@ class AppConstants {
     bodyMotionGateEnabled = bodyMotionGateEnabledDefault;
     bodyMotionLevel = BodyMotionLevel.easy;
     bodyMotionMinScoreValue = bodyMotionMinScoreNormal;
+    personFocusEnabled = personFocusEnabledDefault;
   }
 
   // ─── Body-motion gate (camera) ──────────────────────────────────────────────
@@ -310,9 +361,9 @@ class AppConstants {
   // "standing still + noise" impacts and pick the level between them.
 
   /// Default of the settings switch at the start of every session.
-  /// false = the score is only LOGGED, nothing is rejected (safe first test).
-  /// Flip to true once the logged scores confirm the chosen level.
-  static const bool bodyMotionGateEnabledDefault = false;
+  /// true = impacts without enough upper-body movement are rejected.
+  /// false = the score is only LOGGED, nothing is rejected.
+  static const bool bodyMotionGateEnabledDefault = true;
 
   /// Live value of the settings switch (reset by [changeSettingToDefault]).
   static bool bodyMotionGateEnabled = bodyMotionGateEnabledDefault;

@@ -12,12 +12,16 @@ class KineticMovementRestrictionGuard implements PunchRestrictionGuard {
     final history = tracker.history;
     if (history.length < 2) return false;
 
-    final double minShoulderThreshold = context.config.minShoulderMovementThreshold; // Default: 0.055 SW
-    final double minVelocityThreshold = context.config.minWristVelocityThreshold; // Default: 0.35 SW/s
+    final double minShoulderThreshold =
+        context.config.minShoulderMovementThreshold; // Default: 0.055 SW
+    final double minVelocityThreshold =
+        context.config.minWristVelocityThreshold; // Default: 0.35 SW/s
 
-    final bool hasValidShoulderMovement = tracker.shoulderMovement >= minShoulderThreshold;
+    final bool hasValidShoulderMovement =
+        tracker.shoulderMovement >= minShoulderThreshold;
     final bool hasValidElbowMovement =
-        (tracker.wristVelocity >= minVelocityThreshold) || (tracker.armExtension >= 0.45);
+        (tracker.wristVelocity >= minVelocityThreshold) ||
+        (tracker.armExtension >= 0.45);
 
     // Punch is ONLY valid if explicit kinetic movement is present in either shoulder or elbow
     if (!hasValidShoulderMovement && !hasValidElbowMovement) {

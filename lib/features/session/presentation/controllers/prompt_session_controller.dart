@@ -14,6 +14,9 @@ import '../../../vision_detection/data/geometric_rules/pose_validity_gate.dart';
 import '../../../vision_detection/data/geometric_rules/shoulder_stability_tracker.dart';
 import '../../../vision_detection/domain/entities/temporal_punch_detector.dart';
 import '../../../vision_detection/domain/entities/punch_detection_config.dart';
+import '../../../vision_detection/domain/services/person_focus/i_person_focus_strategy.dart';
+import '../../../vision_detection/data/datasources/mlkit_face_locator.dart';
+import '../../../vision_detection/data/person_focus/nearest_face_person_focus.dart';
 import '../../../fusion/domain/services/tri_sensor_matrix_evaluator.dart';
 import '../../../fusion/domain/services/fast_combo_fusion_synchronizer.dart';
 import '../../../../core/services/audio_level/i_audio_level_service.dart';
@@ -77,6 +80,27 @@ class PromptSessionController extends GetxController {
   final ShoulderStabilityTracker _stabilityTracker;
   final AdaptiveAudioBaseline _adaptiveBaseline;
 
+  // Nearest-person focus (SOLID: depends on IPersonFocusStrategy only).
+  // Keeps the pose detector / skeleton on the closest person when several
+  // people are in view. See NearestFacePersonFocus.
+  final IPersonFocusStrategy _personFocus;
+
+  /// Settings switch "Focus on Nearest Person". false = the pose detector
+  /// always gets the full frame (original behaviour).
+  final RxBool isPersonFocusEnabled =
+      AppConstants.personFocusEnabledDefault.obs;
+
+  void togglePersonFocus(bool enable) {
+    isPersonFocusEnabled.value = enable;
+    AppConstants.personFocusEnabled = enable;
+    // Start clean: no person held from before the switch.
+    _personFocus.reset();
+    developer.log(
+      'Nearest-person focus ${enable ? 'ON' : 'OFF'}',
+      name: 'PromptSessionController',
+    );
+  }
+
   PromptSessionController({
     IAudioLevelService? audioLevelService,
     IDeviceStabilityService? stabilityService,
@@ -87,6 +111,7 @@ class PromptSessionController extends GetxController {
     ShoulderStabilityTracker? stabilityTracker,
     AdaptiveAudioBaseline? adaptiveBaseline,
     FlutterTts? flutterTts,
+    IPersonFocusStrategy? personFocus,
   }) : _audioLevelService = audioLevelService ?? RecordAudioLevelService(),
        _stabilityService = stabilityService ?? DeviceStabilityService(),
        _vibrationService = vibrationService ?? DeviceVibrationService(),
@@ -104,7 +129,10 @@ class PromptSessionController extends GetxController {
        _validityGate = validityGate ?? const PoseValidityGate(),
        _stabilityTracker =
            stabilityTracker ?? ShoulderStabilityTracker(windowFrames: 5),
-       _adaptiveBaseline = adaptiveBaseline ?? AdaptiveAudioBaseline();
+       _adaptiveBaseline = adaptiveBaseline ?? AdaptiveAudioBaseline(),
+       _personFocus =
+           personFocus ??
+           NearestFacePersonFocus(faceLocator: MlKitFaceLocator());
 
   FastComboFusionSynchronizer get fusionSynchronizer => _fusionSynchronizer;
 
@@ -372,6 +400,9 @@ class PromptSessionController extends GetxController {
   @override
   void onInit() {
     super.onInit();
+    // Every session starts with nearest-person focus on its default.
+    AppConstants.personFocusEnabled = AppConstants.personFocusEnabledDefault;
+    isPersonFocusEnabled.value = AppConstants.personFocusEnabledDefault;
     _sessionStartTimeMs = DateTime.now().millisecondsSinceEpoch;
     _initTts();
     _startElapsedTimer();
@@ -1224,6 +1255,8 @@ class PromptSessionController extends GetxController {
       onToggleVibrationGate: toggleVibrationGate,
       onEvaluateAutoConfig: evaluateAutoConfig,
       onApplyAutoConfig: applyAutoConfig,
+      isPersonFocusEnabled: isPersonFocusEnabled,
+      onTogglePersonFocus: togglePersonFocus,
       onOpened: notifySettingsViewOpened,
       onClosed: notifySettingsViewClosed,
     );
@@ -1469,8 +1502,17 @@ class PromptSessionController extends GetxController {
           if (cameraController != null && _activeCamera != null) {
             final inputImage = _convertCameraImage(image, _activeCamera!);
             if (inputImage != null && _poseDetector != null) {
+              // With several people in view, hide everyone but the nearest
+              // so the pose detector (and skeleton) stays on them.
+              InputImage poseInput = inputImage;
+              if (isPersonFocusEnabled.value) {
+                final PersonFocusResult focus = await _personFocus.prepare(
+                  inputImage,
+                );
+                poseInput = focus.image;
+              }
               final List<Pose> poses = await _poseDetector!.processImage(
-                inputImage,
+                poseInput,
               );
               if (poses.isNotEmpty) {
                 livePose.value = poses.first;
@@ -2002,6 +2044,8 @@ class PromptSessionController extends GetxController {
     _stabilitySubscription?.cancel();
     _stabilityService.dispose();
     _poseDetector?.close();
+    unawaited(_personFocus.close());
+    AppConstants.personFocusEnabled = AppConstants.personFocusEnabledDefault;
     _stopAndDisposeCamera();
     super.onClose();
   }

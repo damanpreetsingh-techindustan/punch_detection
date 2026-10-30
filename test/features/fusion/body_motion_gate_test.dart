@@ -536,8 +536,12 @@ void main() {
       expect(impactRow()['motion_state'], 'unknown');
     });
 
-    test('gate OFF (default): counted as before, log says it would reject', () {
-      expect(controller.isBodyMotionGateEnabled.value, isFalse);
+    test('gate is ON by default', () {
+      expect(controller.isBodyMotionGateEnabled.value, isTrue);
+    });
+
+    test('gate OFF: counted as before, log says it would reject', () {
+      controller.toggleBodyMotionGate(false);
       motionFrames(_stillFrame);
       bangAndBumpAt300();
       expect(controller.punchCount.value, 1);
