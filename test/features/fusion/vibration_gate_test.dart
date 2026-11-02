@@ -460,6 +460,8 @@ void main() {
       controller.minVibrationThreshold.value = 0.18;
       controller.isVisionConfirmationRequired.value = true;
       controller.isCameraInitialized.value = true;
+      // Body motion is covered by body_motion_gate_test; keep it off here.
+      controller.isBodyMotionGateEnabled.value = false;
       controller.isCameraUnavailable.value = false;
       controller.staticCalibratedAudioDb.value = 70.0;
       controller.customTargetAudioDb.value = 75.0;

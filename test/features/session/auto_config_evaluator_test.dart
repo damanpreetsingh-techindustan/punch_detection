@@ -187,7 +187,7 @@ void main() {
     });
 
 
-    test('relaxes vision requirement when camera confirms < 35% of punches', () {
+    test('never relaxes vision requirement when camera confirms < 35% of punches', () {
       final events = [
         const PunchTelemetryEvent(
           timestampMs: 1000,
@@ -254,7 +254,8 @@ void main() {
       );
 
       expect(result.hasSufficientData, isTrue);
-      expect(result.recommendedVisionRequired, isFalse);
+      // Auto-config never makes the camera optional; the user does it manually.
+      expect(result.recommendedVisionRequired, isTrue);
     });
 
     test('serializes PunchTelemetryEvent to map properly', () {

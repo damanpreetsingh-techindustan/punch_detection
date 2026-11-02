@@ -204,14 +204,20 @@ class AutoConfigEvaluator {
       // If camera confirmed > 60% of punches, camera confirmation is viable
       if (cameraSuccessRate >= 0.60) {
         recommendedVision = true;
-      } else if (cameraSuccessRate < 0.35 && analysisPool.length >= 3) {
-        // Camera is frequently failing / user out of angle -> make confirmation optional
-        recommendedVision = false;
       }
-    } else {
-      // Camera is not initialized or user not visible in frame
-      recommendedVision = false;
+      // Disabled: auto-config must never make the camera optional. If punches
+      // are not confirmed by the camera, the user switches camera confirmation
+      // to Optional manually in the settings.
+      // else if (cameraSuccessRate < 0.35 && analysisPool.length >= 3) {
+      //   // Camera is frequently failing / user out of angle -> make confirmation optional
+      //   recommendedVision = false;
+      // }
     }
+    // Disabled for the same reason: camera unavailable keeps the current setting.
+    // else {
+    //   // Camera is not initialized or user not visible in frame
+    //   recommendedVision = false;
+    // }
 
     // Format human-friendly explanation
     final StringBuffer explanation = StringBuffer();

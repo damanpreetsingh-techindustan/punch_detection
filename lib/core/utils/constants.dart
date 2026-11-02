@@ -48,7 +48,7 @@ class AppConstants {
   static const bool testingNeedToUseUltraWideCamera = true;
   static const bool testingNeedStaticZoom = false;
   static const double testingZoomValue = 1.0;
-  static const bool showAllFeatures = true;
+  static const bool showAllFeatures = false;
   static const bool useAvarageAudioFormate = false;
   static const int globalStaticAudioMsg = 10;
 
@@ -198,6 +198,10 @@ class AppConstants {
   static const double minCameraDistanceSliderM = 0.4;
   static const double maxCameraDistanceSliderM = 3.0;
 
+  /// Default value of the "Max Camera Distance" slider (approx. metres) at the
+  /// start of every session and after Defaults / Reset.
+  static const double defaultMaxCameraDistanceM = 0.7;
+
   /// What to do when the distance cannot be measured (for example only one
   /// shoulder visible and no eyes): true = treat as valid (never miss a punch).
   static bool cameraDistanceUnknownIsValid = true;
@@ -312,8 +316,8 @@ class AppConstants {
   // "standing still + noise" impacts and pick the level between them.
 
   /// Default of the settings switch at the start of every session.
-  /// false = the score is only LOGGED, nothing is rejected (safe first test).
-  /// Flip to true once the logged scores confirm the chosen level.
+  /// true = impacts without body movement are rejected (fusion + camera only).
+  /// false = the score is only LOGGED, nothing is rejected.
   static const bool bodyMotionGateEnabledDefault = false;
 
   /// Live value of the settings switch (reset by [changeSettingToDefault]).
