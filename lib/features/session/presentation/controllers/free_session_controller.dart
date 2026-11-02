@@ -571,10 +571,13 @@ class FreeSessionController extends GetxController {
   /// Whether camera vision confirmation is strictly required in Fusion mode
   /// true = Strict (Punch only counts if camera confirms), false = Optional (Audio+Vibe dual counts)
   final RxBool isVisionConfirmationRequired = true.obs;
-  /// Default "Max Camera Distance" (approx. metres) from AppConstants.cameraMinShoulderWidthRatio.
+  /// Default "Max Camera Distance" (approx. metres).
+  // Previously derived from the shoulder ratio (0.16 / 0.20 = 0.8 m):
+  // static const double defaultMaxCameraDistanceM =
+  //     AppConstants.cameraDistanceMetresFactor /
+  //     AppConstants.cameraMinShoulderWidthRatio;
   static const double defaultMaxCameraDistanceM =
-      AppConstants.cameraDistanceMetresFactor /
-      AppConstants.cameraMinShoulderWidthRatio;
+      AppConstants.defaultMaxCameraDistanceM;
 
   /// Farthest distance (approx. metres) at which the camera still counts the
   /// user as near. Lower = user must stand closer.

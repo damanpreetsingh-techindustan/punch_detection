@@ -536,7 +536,8 @@ void main() {
       expect(impactRow()['motion_state'], 'unknown');
     });
 
-    test('gate OFF (default): counted as before, log says it would reject', () {
+    test('gate OFF: counted as before, log says it would reject', () {
+      controller.toggleBodyMotionGate(false);
       expect(controller.isBodyMotionGateEnabled.value, isFalse);
       motionFrames(_stillFrame);
       bangAndBumpAt300();
