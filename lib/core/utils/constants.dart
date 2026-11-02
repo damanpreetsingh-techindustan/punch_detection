@@ -289,6 +289,8 @@ class AppConstants {
     bodyMotionGateEnabled = bodyMotionGateEnabledDefault;
     bodyMotionLevel = BodyMotionLevel.easy;
     bodyMotionMinScoreValue = bodyMotionMinScoreNormal;
+    subjectLockEnabled = subjectLockEnabledDefault;
+    subjectSteeringEnabled = subjectSteeringEnabledDefault;
   }
 
   // ─── Body-motion gate (camera) ──────────────────────────────────────────────
@@ -377,6 +379,127 @@ class AppConstants {
 
   /// How long camera frames are kept for the motion check (ms).
   static const int bodyMotionHistoryMs = 2000;
+
+  // ─── Subject lock (camera) ──────────────────────────────────────────────────
+  // Problem it solves: ML Kit pose detection follows ONE person, "the most
+  // prominent" one. A coach or passer-by who steps in (or is seen while the
+  // user is hidden for a moment) can become the tracked pose, and then their
+  // body confirms or rejects the user's punches.
+  //
+  // At session start the user stands in front of the camera and holds still;
+  // a reference photo is taken from the camera stream and the user's look is
+  // learned from it: the shirt at the shoulders and the hair (colour
+  // histograms, no extra model). Nothing the camera sees counts before that.
+  // Afterwards every frame is checked for a jump (a person cannot teleport)
+  // and compared with the photo's look. A clear mismatch = "other person": the
+  // camera then reports no user, and the other person is briefly hidden from
+  // ML Kit so it finds the user again.
+  //
+  // How to tune: SESSION TOTALS shows `subject.similarity` (min / avg / max)
+  // and `subject.gated_frames`. In a solo session gated frames should be ~0
+  // and similarity well above [subjectRejectSimilarity]; with a second person
+  // in frame their frames should score below it.
+
+  /// Default of the settings switch at the start of every session.
+  static const bool subjectLockEnabledDefault = true;
+
+  /// Live value of the settings switch (reset by [changeSettingToDefault]).
+  static bool subjectLockEnabled = subjectLockEnabledDefault;
+
+  /// Hide the wrong person from ML Kit so it goes back to the user.
+  static const bool subjectSteeringEnabledDefault = true;
+  static bool subjectSteeringEnabled = subjectSteeringEnabledDefault;
+
+  /// Reference photo: the user must stay near and hold still this long (ms)
+  /// before the photo is taken; moving more than this many body widths
+  /// restarts the countdown. Automatic, so it works with gloves on.
+  static const int subjectHoldStillMs = 2000;
+  static const double subjectHoldStillMaxMove = 0.35;
+
+  /// Frames learned from (the photo + the next ones, ~0.7 s) and the colour
+  /// samples a region needs to be part of the signature.
+  static const int subjectEnrollFrames = 20;
+  static const int subjectEnrollMinSamples = 150;
+
+  /// No person for longer than this (ms) = the next person may be someone else.
+  static const int subjectGapMs = 500;
+
+  /// Largest believable movement of the shoulder midpoint between two frames,
+  /// in body widths: base + per 100 ms between the frames. A boxer moves at
+  /// most ~0.5 body widths per 100 ms; another person is usually 1+ away.
+  static const double subjectJumpBase = 0.8;
+  static const double subjectJumpPer100Ms = 0.5;
+
+  /// Frames pooled for the live look, and the samples a region needs.
+  static const int subjectLiveWindowFrames = 6;
+  static const int subjectMinLiveSamples = 20;
+
+  /// Look-match levels are NOT fixed numbers: clothes, light and camera
+  /// change them. They are learned from the user's own scores this session
+  /// (UserMatchStats): accept = median − 2 spreads, reject = median − 4
+  /// spreads (spread = robust standard deviation), over the last
+  /// [subjectMatchStatsCapacity] frames counted as the user.
+  static const int subjectMatchStatsCapacity = 300;
+
+  /// Boxing frames needed before the measured spread is trusted (~1 s).
+  /// Until then the reference-photo frames are used with a wider spread floor.
+  static const int subjectMatchStatsMinSamples = 30;
+  static const double subjectMatchAcceptSpreads = 2;
+  static const double subjectMatchRejectSpreads = 4;
+
+  /// Spread floors (match units): never treat the user's look as more
+  /// stable than this; wider while only the still photo frames are known.
+  static const double subjectMatchMinSpread = 0.03;
+  static const double subjectMatchBootstrapMinSpread = 0.08;
+
+  // ─── Face check (part of the subject lock) ──────────────────────────────────
+  // A face embedding (SFace, assets/models/README.md) compared with the faces
+  // seen while the reference photo was taken. Decides who it is when a clear
+  // face is visible; the look match covers the frames where it is not (guard,
+  // head turned, blur). Clothes cannot tell two people in the same shirt
+  // apart; a face can.
+  //
+  // How to tune: SESSION TOTALS shows `subject.face_cosine`. The user should
+  // sit well above [subjectFaceUserCosine]; other people below it.
+
+  /// Face-match levels (cosine), around SFace's published operating point
+  /// (0.363 on LFW): at or above user = the user, below other = someone
+  /// else, between = unsure (no face decision).
+  static const double subjectFaceUserCosine = 0.45;
+  static const double subjectFaceOtherCosine = 0.30;
+
+  /// A face verdict is the median of this many recent checks, none older
+  /// than [subjectFaceMaxAgeMs].
+  static const int subjectFaceVotes = 3;
+  static const int subjectFaceMaxAgeMs = 1500;
+
+  /// Faces from the reference photo needed for a face template (more are
+  /// averaged in up to the max).
+  static const int subjectFaceTemplateFaces = 3;
+  static const int subjectFaceMaxTemplateFaces = 10;
+
+  /// Time between face checks while the same person is tracked. Right after
+  /// a jump / reappearance checks run as fast as one finishes.
+  static const int subjectFaceCheckIntervalMs = 300;
+
+  /// A face is only checked when it is roughly frontal: the nose may be at
+  /// most this many eye distances beside the middle of the eyes.
+  static const double subjectFaceMaxTurn = 0.35;
+
+  /// Mismatching frames needed to call it another person: right after a
+  /// jump / reappearance, and without one (slow drift onto someone behind).
+  static const int subjectConfirmFramesAfterBreak = 2;
+  static const int subjectConfirmFramesDrift = 8;
+
+  /// Frames that count as "right after a jump / reappearance".
+  static const int subjectRecentBreakFrames = 6;
+
+  /// Matching frames in a row needed before the user counts again.
+  static const int subjectRecoverFrames = 2;
+
+  /// One attempt to hide the wrong person (ms), then a pause before retrying.
+  static const int subjectSteerMaxMs = 1500;
+  static const int subjectSteerCooldownMs = 3000;
 
   /// Official Fighter Callout Combo List
   static const List<List<int>> comboList = [

@@ -47,6 +47,10 @@ void showSessionDetectionSettingsSheet(
   Function(BodyMotionLevel)? onSetBodyMotionLevel,
   RxDouble? bodyMotionMinScore,
   Function(double)? onSetBodyMotionMinScore,
+  RxBool? isSubjectLockEnabled,
+  Function(bool)? onToggleSubjectLock,
+  RxBool? isSubjectSteeringEnabled,
+  Function(bool)? onToggleSubjectSteering,
   RxBool? isVibrationDisabled,
   RxBool? isVibrationGateEnabled,
   Function(bool)? onToggleVibrationGate,
@@ -97,6 +101,10 @@ void showSessionDetectionSettingsSheet(
         onSetBodyMotionLevel: onSetBodyMotionLevel,
         bodyMotionMinScore: bodyMotionMinScore,
         onSetBodyMotionMinScore: onSetBodyMotionMinScore,
+        isSubjectLockEnabled: isSubjectLockEnabled,
+        onToggleSubjectLock: onToggleSubjectLock,
+        isSubjectSteeringEnabled: isSubjectSteeringEnabled,
+        onToggleSubjectSteering: onToggleSubjectSteering,
         isVibrationDisabled: isVibrationDisabled,
         isVibrationGateEnabled: isVibrationGateEnabled,
         onToggleVibrationGate: onToggleVibrationGate,
@@ -145,6 +153,10 @@ class _SessionDetectionSettingsSheetContent extends StatelessWidget {
   final Function(BodyMotionLevel)? onSetBodyMotionLevel;
   final RxDouble? bodyMotionMinScore;
   final Function(double)? onSetBodyMotionMinScore;
+  final RxBool? isSubjectLockEnabled;
+  final Function(bool)? onToggleSubjectLock;
+  final RxBool? isSubjectSteeringEnabled;
+  final Function(bool)? onToggleSubjectSteering;
   final RxBool? isVibrationDisabled;
   final RxBool? isVibrationGateEnabled;
   final Function(bool)? onToggleVibrationGate;
@@ -186,6 +198,10 @@ class _SessionDetectionSettingsSheetContent extends StatelessWidget {
     this.onSetBodyMotionLevel,
     this.bodyMotionMinScore,
     this.onSetBodyMotionMinScore,
+    this.isSubjectLockEnabled,
+    this.onToggleSubjectLock,
+    this.isSubjectSteeringEnabled,
+    this.onToggleSubjectSteering,
     this.isVibrationDisabled,
     this.isVibrationGateEnabled,
     this.onToggleVibrationGate,
@@ -425,6 +441,10 @@ class _SessionDetectionSettingsSheetContent extends StatelessWidget {
                     _buildBodyMotionGateTile(context, isLandscape: true),
                     8.height,
                   ],
+                  if (isSubjectLockEnabled != null) ...[
+                    _buildSubjectLockTile(context, isLandscape: true),
+                    8.height,
+                  ],
                   _buildDeviceStabilityTile(context, isLandscape: true),
                 ],
               ),
@@ -499,6 +519,10 @@ class _SessionDetectionSettingsSheetContent extends StatelessWidget {
           ],
           if (isBodyMotionGateEnabled != null) ...[
             _buildBodyMotionGateTile(context, isLandscape: false),
+            10.height,
+          ],
+          if (isSubjectLockEnabled != null) ...[
+            _buildSubjectLockTile(context, isLandscape: false),
             10.height,
           ],
           _buildDeviceStabilityTile(context, isLandscape: false),
@@ -2780,6 +2804,113 @@ class _SessionDetectionSettingsSheetContent extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  // ─── SUBJECT LOCK TILE ───
+  // Not tied to vision confirmation: the lock also protects camera-only mode,
+  // where the tracked person's arm motion is what counts punches.
+  Widget _buildSubjectLockTile(
+    BuildContext context, {
+    required bool isLandscape,
+  }) {
+    if (isSubjectLockEnabled == null) return const SizedBox.shrink();
+
+    Widget switchRow({
+      required IconData icon,
+      required String title,
+      required String subtitle,
+      required bool value,
+      required Function(bool)? onChanged,
+    }) => Row(
+      children: [
+        Icon(icon, color: AppColors.blue, size: isLandscape ? 15.w : 18.w),
+        6.width,
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: TextStyle(
+                  color: AppColors.textPrimary,
+                  fontSize: isLandscape ? 10.5.ts(context) : 12.ts(context),
+                  fontWeight: FontWeight.w600,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+              1.5.height,
+              Text(
+                subtitle,
+                style: TextStyle(
+                  color: value ? AppColors.lime : AppColors.textMuted,
+                  fontSize: isLandscape ? 7.8.ts(context) : 9.ts(context),
+                  fontWeight: value ? FontWeight.bold : FontWeight.normal,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+          ),
+        ),
+        Transform.scale(
+          scale: isLandscape ? 0.75 : 0.85,
+          child: Switch(
+            value: value,
+            activeThumbColor: AppColors.blue,
+            onChanged: onChanged == null ? null : (bool v) => onChanged(v),
+          ),
+        ),
+      ],
+    );
+
+    return Obx(() {
+      final bool locked = isSubjectLockEnabled!.value;
+      final bool steering = isSubjectSteeringEnabled?.value ?? false;
+      return Container(
+        margin: EdgeInsets.symmetric(vertical: isLandscape ? 2.h : 6.h),
+        padding: EdgeInsets.all(isLandscape ? 8.w : 10.w),
+        decoration: BoxDecoration(
+          color: AppColors.surface.withValues(alpha: 0.6),
+          borderRadius: BorderRadius.circular(12.r),
+          border: Border.all(
+            color: locked
+                ? AppColors.blue.withValues(alpha: 0.5)
+                : AppColors.border,
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            switchRow(
+              icon: Icons.person_pin_rounded,
+              title: 'Track Only Me (Subject Lock)',
+              subtitle: locked
+                  ? 'ON — other people in view are ignored'
+                  : 'OFF — whoever ML Kit sees is used',
+              value: locked,
+              onChanged: onToggleSubjectLock,
+            ),
+            if (isSubjectSteeringEnabled != null) ...[
+              6.height,
+              Opacity(
+                opacity: locked ? 1.0 : 0.45,
+                child: IgnorePointer(
+                  ignoring: !locked,
+                  child: switchRow(
+                    icon: Icons.center_focus_strong_rounded,
+                    title: 'Steer Back To Me',
+                    subtitle: steering
+                        ? 'ON — hides the other person until you are found'
+                        : 'OFF — waits for the other person to leave',
+                    value: steering,
+                    onChanged: onToggleSubjectSteering,
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      );
+    });
   }
 
   // ─── DEVICE STABILITY TILE ───

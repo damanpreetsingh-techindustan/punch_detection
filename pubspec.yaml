@@ -49,6 +49,10 @@ dependencies:
   sensors_plus: ^7.1.0
   package_info_plus: ^10.2.1
   share_plus: ^13.3.0
+  # Subject lock face check: ML Kit face contours for alignment, SFace
+  # (assets/models/README.md) for the face embedding.
+  google_mlkit_face_detection: ^0.14.0
+  tflite_flutter: ^0.12.1
 
 dev_dependencies:
   flutter_test:
@@ -74,6 +78,7 @@ flutter:
 
   assets:
     - assets/images/app_ic.png
+    - assets/models/face_recognition_sface_int8.tflite
 
 
   # An image asset can refer to one or more resolution-specific "variants", see

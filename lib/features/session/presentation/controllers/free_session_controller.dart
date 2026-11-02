@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:developer' as developer;
 import 'dart:math';
+import 'dart:ui' as ui;
 import 'package:camera/camera.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
@@ -22,6 +24,11 @@ import '../../../fusion/domain/body_motion_gate/models/body_motion_evaluation.da
 import '../../../fusion/domain/body_motion_gate/models/body_motion_frame.dart';
 import '../../../fusion/domain/body_motion_gate/services/landmark_motion_gate.dart';
 import '../../../vision_detection/data/mappers/pose_motion_frame_mapper.dart';
+import '../../../vision_detection/data/face/subject_face_checker.dart';
+import '../../../vision_detection/data/mappers/pose_subject_mapper.dart';
+import '../../../vision_detection/data/mappers/reference_photo_builder.dart';
+import '../../../vision_detection/domain/subject_lock/appearance_signature.dart';
+import '../../../vision_detection/domain/subject_lock/subject_lock.dart';
 import '../../../vision_detection/domain/services/camera_distance_gate.dart';
 import '../../../vision_detection/domain/services/camera_near_latch.dart';
 import '../../../vision_detection/domain/services/camera_person_gate.dart';
@@ -152,6 +159,79 @@ class FreeSessionController extends GetxController {
   bool get _isBodyMotionRequired =>
       isBodyMotionGateEnabled.value && _usesImpactWindow && _isCameraGateRequired;
 
+  // Subject lock: keeps the camera on the user who started the session.
+  // ML Kit follows the "most prominent" person and can switch to someone who
+  // walks in; frames of that other person are ignored. See SubjectLock.
+  final SubjectLock _subjectLock;
+  final PoseSubjectMapper _subjectMapper;
+
+  /// Face checks for the lock (face model loaded in onInit; without it the
+  /// lock works on look and movement only).
+  final SubjectFaceChecker _faceChecker;
+
+  /// Settings switch: true = frames of another person are ignored.
+  final RxBool isSubjectLockEnabled = AppConstants.subjectLockEnabled.obs;
+
+  /// Settings switch: hide the wrong person from ML Kit so it finds the user.
+  final RxBool isSubjectSteeringEnabled =
+      AppConstants.subjectSteeringEnabled.obs;
+
+  /// Lock state for the reference-photo card and the pill.
+  final Rx<SubjectLockState> subjectLockState =
+      SubjectLockState.waitingForUser.obs;
+
+  /// Seconds left of the "hold still" countdown before the photo.
+  final RxInt subjectHoldStillSeconds = 0.obs;
+
+  /// The reference photo (head and shoulders), shown on screen. In memory
+  /// only.
+  final Rx<ui.Image?> subjectReferencePhoto = Rx<ui.Image?>(null);
+  int _photoGeneration = 0;
+
+  /// Average colour learned from the photo / seen now (debug dots).
+  final Rx<Color?> subjectReferenceColor = Rx<Color?>(null);
+  final Rx<Color?> subjectLiveColor = Rx<Color?>(null);
+
+  void toggleSubjectLock(bool enable) {
+    isSubjectLockEnabled.value = enable;
+    AppConstants.subjectLockEnabled = enable;
+    // Frames were not checked while off: learn the user again.
+    _resetSubjectLock();
+    _recordConfigChange('subject_lock=$enable');
+  }
+
+  void toggleSubjectSteering(bool enable) {
+    isSubjectSteeringEnabled.value = enable;
+    AppConstants.subjectSteeringEnabled = enable;
+    _recordConfigChange('subject_steering=$enable');
+  }
+
+  /// Retake button (tap on the pill): take a new reference photo.
+  void relockSubject() {
+    _subjectLock.relock();
+    _faceChecker.cancelRunning();
+    subjectLockState.value = SubjectLockState.waitingForUser;
+    subjectReferenceColor.value = null;
+    _clearReferencePhoto();
+    _recorder.record('subject', <String, Object?>{'event': 'retake_photo'});
+  }
+
+  /// Skip on the reference-photo card: run this session without the lock.
+  void skipReferencePhoto() {
+    _recorder.record('subject', <String, Object?>{'event': 'photo_skipped'});
+    toggleSubjectLock(false);
+  }
+
+  void _resetSubjectLock() {
+    _subjectLock.reset();
+    _faceChecker.cancelRunning();
+    subjectLockState.value = SubjectLockState.waitingForUser;
+    subjectHoldStillSeconds.value = 0;
+    subjectReferenceColor.value = null;
+    subjectLiveColor.value = null;
+    _clearReferencePhoto();
+  }
+
   /// Returns true if physical vibration is disabled due to mount type (pole),
   /// manual toggle switch OFF, or non-vibration detection mode.
   bool get isVibrationEffectivelyDisabled =>
@@ -174,6 +254,9 @@ class FreeSessionController extends GetxController {
     IVibrationGate? vibrationGate,
     IBodyMotionGate? bodyMotionGate,
     PoseMotionFrameMapper? motionFrameMapper,
+    SubjectLock? subjectLock,
+    PoseSubjectMapper? subjectMapper,
+    SubjectFaceChecker? faceChecker,
     TemporalPunchDetector? temporalPunchDetector,
     FastComboFusionSynchronizer? fusionSynchronizer,
     PoseValidityGate? validityGate,
@@ -193,6 +276,9 @@ class FreeSessionController extends GetxController {
        _vibrationGate = vibrationGate ?? VibrationGateFactory.create(),
        _bodyMotionGate = bodyMotionGate ?? LandmarkMotionGate(),
        _motionFrameMapper = motionFrameMapper ?? const PoseMotionFrameMapper(),
+       _subjectLock = subjectLock ?? SubjectLock(),
+       _subjectMapper = subjectMapper ?? const PoseSubjectMapper(),
+       _faceChecker = faceChecker ?? SubjectFaceChecker(),
        _temporalPunchDetector =
            temporalPunchDetector ?? TemporalPunchDetector(),
        _fusionSynchronizer =
@@ -325,6 +411,8 @@ class FreeSessionController extends GetxController {
     'bodyMotionGate': isBodyMotionGateEnabled.value,
     'bodyMotionLevel': bodyMotionLevel.value.name,
     'bodyMotionMinScore': bodyMotionMinScore.value,
+    'subjectLock': isSubjectLockEnabled.value,
+    'subjectSteering': isSubjectSteeringEnabled.value,
     'extraFaceRestrictions': AppConstants.enableExtraFaceRestrictions,
     'audioIntervalMs': audioSampleIntervalMs.value,
     'audioRefractoryMs': AppConstants.audioRefractoryMs,
@@ -712,10 +800,21 @@ class FreeSessionController extends GetxController {
       config: _configSnapshot(),
     );
     _initPoseDetector();
+    unawaited(_loadFaceModel());
     initCamera();
     _startMicrophoneStream();
     _startDeviceStabilityMonitor();
     _startDeviceVibrationMonitor();
+  }
+
+  /// Loads the face model for the lock's face check; the lock works without
+  /// it (look + movement) until / unless it loads.
+  Future<void> _loadFaceModel() async {
+    await _faceChecker.load();
+    _recorder.record('subject', <String, Object?>{
+      'event': 'face_model',
+      'loaded': _faceChecker.isAvailable,
+    });
   }
 
   void _startDeviceStabilityMonitor() {
@@ -1994,8 +2093,8 @@ class FreeSessionController extends GetxController {
       _handleVibrationSample(mag, atEpochMs: atEpochMs);
 
   /// Test hook: run the camera checks on a pose as if the camera produced it.
-  void analyzePoseForTesting(Pose pose, {int? frameMs}) =>
-      _analyzeLivePose(pose, frameMs: frameMs);
+  void analyzePoseForTesting(Pose pose, {int? frameMs, FramePixels? pixels}) =>
+      _analyzeLivePose(pose, frameMs: frameMs, pixels: pixels);
 
   /// Test hook: add a body-motion frame directly (no ML Kit pose needed).
   void addBodyMotionFrameForTesting(BodyMotionFrame frame) =>
@@ -2113,6 +2212,10 @@ class FreeSessionController extends GetxController {
       onSetBodyMotionLevel: setBodyMotionLevel,
       bodyMotionMinScore: bodyMotionMinScore,
       onSetBodyMotionMinScore: setBodyMotionMinScore,
+      isSubjectLockEnabled: isSubjectLockEnabled,
+      onToggleSubjectLock: toggleSubjectLock,
+      isSubjectSteeringEnabled: isSubjectSteeringEnabled,
+      onToggleSubjectSteering: toggleSubjectSteering,
       onResetToDefaults: resetAllSettingsToDefault,
       onApplyEnvironmentPreset: applyEnvironmentPreset,
       onSpikeDbChanged: (double value) {
@@ -2305,6 +2408,8 @@ class FreeSessionController extends GetxController {
   }
 
   Future<void> initCamera() async {
+    // New camera (session start or mode change): learn the user again.
+    _resetSubjectLock();
     final bool isCameraModeNeeded = sessionMode.value.requiresCamera;
     if (!isCameraModeNeeded) {
       isCameraUnavailable.value = true;
@@ -2446,7 +2551,28 @@ class FreeSessionController extends GetxController {
         final Stopwatch latencyStopwatch = Stopwatch()..start();
         try {
           if (cameraController != null && _activeCamera != null) {
-            final inputImage = _convertCameraImage(image, _activeCamera!);
+            final FramePixels? pixels = PoseSubjectMapper.framePixelsOf(
+              image,
+              _getImageRotation(_activeCamera!),
+            );
+            // Steering: while another person is tracked, hide them from ML
+            // Kit for a moment so it looks for the user again (a copy is
+            // masked; the frame itself is untouched).
+            Uint8List? steeredBytes;
+            if (pixels != null &&
+                isSubjectLockEnabled.value &&
+                isSubjectSteeringEnabled.value) {
+              final Rectangle<double>? box = _subjectLock.steerBox(arrivalMs);
+              if (box != null) {
+                steeredBytes = pixels.maskedCopy(box);
+                _recorder.count('subject.steer_frames');
+              }
+            }
+            final inputImage = _convertCameraImage(
+              image,
+              _activeCamera!,
+              bytes: steeredBytes,
+            );
             if (inputImage != null && _poseDetector != null) {
               final List<Pose> poses = await _poseDetector!.processImage(
                 inputImage,
@@ -2460,7 +2586,11 @@ class FreeSessionController extends GetxController {
               }
               if (poses.isNotEmpty) {
                 livePose.value = poses.first;
-                _analyzeLivePose(poses.first, frameMs: arrivalMs);
+                _analyzeLivePose(
+                  poses.first,
+                  frameMs: arrivalMs,
+                  pixels: pixels,
+                );
               } else {
                 // Camera covered or no body visible -> Reset pose & evaluation scores to 0!
                 _consecutiveNearFrames = 0;
@@ -2528,7 +2658,13 @@ class FreeSessionController extends GetxController {
         InputImageRotation.rotation90deg;
   }
 
-  InputImage? _convertCameraImage(CameraImage image, CameraDescription camera) {
+  /// [bytes] replaces the frame's own bytes (same size and layout), e.g. a
+  /// copy with the wrong person hidden.
+  InputImage? _convertCameraImage(
+    CameraImage image,
+    CameraDescription camera, {
+    Uint8List? bytes,
+  }) {
     try {
       final rotation = _getImageRotation(camera);
       final format =
@@ -2538,7 +2674,7 @@ class FreeSessionController extends GetxController {
       final plane = image.planes.first;
 
       return InputImage.fromBytes(
-        bytes: plane.bytes,
+        bytes: bytes ?? plane.bytes,
         metadata: InputImageMetadata(
           size: Size(image.width.toDouble(), image.height.toDouble()),
           rotation: rotation,
@@ -2549,6 +2685,174 @@ class FreeSessionController extends GetxController {
     } catch (_) {
       return null;
     }
+  }
+
+  /// Runs the subject lock on a real-person pose. Returns false when the pose
+  /// is someone else; the frame is then already recorded as "no user".
+  bool _isSubjectFrame(
+    Pose pose, {
+    required int frameMs,
+    required FramePixels? pixels,
+    required bool isNear,
+  }) {
+    // Without the frame's pixels (unknown camera format) no photo can be
+    // taken or compared, so the lock stays out of the way.
+    if (!isSubjectLockEnabled.value || pixels == null) return true;
+    final Stopwatch cost = Stopwatch()..start();
+    final SubjectObservation? observation = _subjectMapper.map(
+      pose,
+      tMs: frameMs,
+      pixels: pixels,
+      enrollEligible: isNear,
+    );
+    if (observation == null) return true;
+    final SubjectDecision decision = _subjectLock.observe(observation);
+    cost.stop();
+    _recorder.stat('subject.cost_us', cost.elapsedMicroseconds.toDouble());
+    if (decision.similarity != null) {
+      _recorder.stat('subject.similarity', decision.similarity!);
+    }
+    if (decision.isBreak) _recorder.count('subject.breaks');
+    subjectHoldStillSeconds.value =
+        ((decision.holdStillRemainingMs ?? 0) / 1000).ceil();
+    if (decision.isPhotoFrame) {
+      unawaited(_takeReferencePhoto(pixels, observation));
+    }
+    _noteSubjectDecision(decision, atMs: frameMs);
+    // Face check in the background when one is due (never awaited here).
+    _faceChecker.maybeCheck(
+      _subjectLock,
+      pose,
+      pixels,
+      frameMs,
+      _onFaceChecked,
+      onNoFace: () => _recorder.count('subject.face_not_found'),
+    );
+    if (decision.isUser) return true;
+
+    final bool hasPhoto = _subjectLock.isLocked;
+    _recorder.count(
+      hasPhoto ? 'subject.gated_frames' : 'subject.waiting_frames',
+    );
+    // Same resets as "no pose": the user's old positions must not be compared
+    // with where they are when they come back.
+    _nearLatch.reset();
+    _bodyMotionGate.reset();
+    _temporalPunchDetector.resetTrackers();
+    _setInvalidEvaluationResult(
+      hasPhoto ? 'Other person in view' : 'Waiting for the reference photo',
+      noteCamera: false,
+    );
+    _noteCameraObservation(
+      CameraGateState.noPerson,
+      detail: hasPhoto
+          ? 'other person: ${decision.reason}'
+          : 'no reference photo yet: ${decision.reason}',
+    );
+    return false;
+  }
+
+  /// Builds the on-screen reference photo from the frame it was taken from.
+  Future<void> _takeReferencePhoto(
+    FramePixels pixels,
+    SubjectObservation photo,
+  ) async {
+    final int generation = _photoGeneration;
+    final ui.Image? image = await ReferencePhotoBuilder.build(
+      pixels,
+      photo,
+      // Same as the preview: Android front frames are not mirrored, iOS
+      // ones already are.
+      mirror: isFrontCamera && defaultTargetPlatform == TargetPlatform.android,
+    );
+    if (image == null) return;
+    // Retaken (or session closed) while the image was being made.
+    if (generation != _photoGeneration) {
+      image.dispose();
+      return;
+    }
+    subjectReferencePhoto.value?.dispose();
+    subjectReferencePhoto.value = image;
+  }
+
+  void _clearReferencePhoto() {
+    _photoGeneration++;
+    subjectReferencePhoto.value?.dispose();
+    subjectReferencePhoto.value = null;
+  }
+
+  void _noteSubjectDecision(SubjectDecision decision, {required int atMs}) {
+    // Debug dots only (they are hidden otherwise; no per-frame work then).
+    if (AppConstants.showAllFeatures) {
+      subjectLiveColor.value = _colorOf(_subjectLock.liveColor);
+    }
+    final String similarity = decision.similarity == null
+        ? ''
+        : ' (look ${decision.similarity!.toStringAsFixed(2)})';
+    _noteSubjectState(
+      decision.state,
+      '${decision.reason}$similarity',
+      atMs: atMs,
+    );
+  }
+
+  void _onFaceChecked(FaceCheckResult result, int tookMs) {
+    _recorder.stat('subject.face_ms', tookMs.toDouble());
+    _recorder.count('subject.face_checks');
+    if (result.cosine != null) {
+      _recorder.stat('subject.face_cosine', result.cosine!);
+    }
+    final int now = DateTime.now().millisecondsSinceEpoch;
+    _recorder.record('subject_face', <String, Object?>{
+      'cosine': result.cosine,
+      'verdict': result.verdict.name,
+      'state': result.state.name,
+      'reason': result.reason,
+      'tookMs': tookMs,
+    }, atEpochMs: now);
+    if (result.changedState) {
+      final String cosine = result.cosine == null
+          ? ''
+          : ' (face ${result.cosine!.toStringAsFixed(2)})';
+      _noteSubjectState(result.state, '${result.reason}$cosine', atMs: now);
+    }
+  }
+
+  void _noteSubjectState(
+    SubjectLockState state,
+    String detail, {
+    required int atMs,
+  }) {
+    if (state == subjectLockState.value) return;
+    subjectLockState.value = state;
+    subjectReferenceColor.value = _colorOf(_subjectLock.referenceColor);
+    // Waiting / countdown changes are only shown on screen, not logged (they
+    // flip each time the user steps in and out before the photo).
+    if (state == SubjectLockState.waitingForUser ||
+        state == SubjectLockState.holdStill) {
+      return;
+    }
+    summaryTable.addRow(<String, Object?>{
+      'time': SessionEventRecorder.formatElapsed(
+        _recorder.elapsedForEpoch(atMs),
+      ),
+      'kind': 'SUBJECT',
+      'code': 'SUBJECT_${state.name.toUpperCase()}',
+      'detail': detail,
+    });
+    _recorder.record('subject', <String, Object?>{
+      'state': state.name,
+      'detail': detail,
+      'acceptLevel': _subjectLock.acceptLevel,
+      'rejectLevel': _subjectLock.rejectLevel,
+      'faceTemplate': _subjectLock.hasFaceTemplate,
+    }, atEpochMs: atMs);
+  }
+
+  static Color? _colorOf(YuvColor? color) {
+    if (color == null) return null;
+    final List<int> rgb = color.toRgb();
+    return Color.fromARGB(255, rgb[0], rgb[1], rgb[2]);
   }
 
   bool get isFrontCamera =>
@@ -2563,7 +2867,9 @@ class FreeSessionController extends GetxController {
   ///
   /// [frameMs]: time the camera frame ARRIVED (before ML Kit processing), so
   /// body-motion frames line up with audio spike times. Defaults to now.
-  void _analyzeLivePose(Pose pose, {int? frameMs}) {
+  /// [pixels]: the frame itself, for the subject lock's look check (without
+  /// it the lock only checks movement continuity).
+  void _analyzeLivePose(Pose pose, {int? frameMs, FramePixels? pixels}) {
     final rShoulder = pose.landmarks[PoseLandmarkType.rightShoulder];
     final lShoulder = pose.landmarks[PoseLandmarkType.leftShoulder];
     final nose = pose.landmarks[PoseLandmarkType.nose];
@@ -2608,6 +2914,49 @@ class FreeSessionController extends GetxController {
         faceConf: person.bestFaceConfidence,
         shoulderConf: person.bestShoulderConfidence,
       );
+      return;
+    }
+
+    // Distance measured here (pure) so the subject lock only learns a near
+    // person; the too-far decision itself stays below.
+    final CameraDistanceResult distance = _distanceGate.evaluate(
+      leftShoulder: lShoulder == null
+          ? null
+          : DistanceLandmark(
+              x: lShoulder.x,
+              y: lShoulder.y,
+              likelihood: lShoulder.likelihood,
+            ),
+      rightShoulder: rShoulder == null
+          ? null
+          : DistanceLandmark(
+              x: rShoulder.x,
+              y: rShoulder.y,
+              likelihood: rShoulder.likelihood,
+            ),
+      leftEye: lEye == null
+          ? null
+          : DistanceLandmark(x: lEye.x, y: lEye.y, likelihood: lEye.likelihood),
+      rightEye: rEye == null
+          ? null
+          : DistanceLandmark(x: rEye.x, y: rEye.y, likelihood: rEye.likelihood),
+      imageWidth: _cameraImageSize.width,
+      imageHeight: _cameraImageSize.height,
+      minShoulderRatio: _cameraMinShoulderRatio,
+      minEyeRatio: _cameraMinEyeRatio,
+      unknownIsValid: cameraDistanceUnknownIsValid.value,
+    );
+
+    // ─── SUBJECT LOCK ─────────────────────────────────────────────────────
+    // ML Kit may have switched to another person. Their frames stop here:
+    // they never feed the body-motion gate, the near latch or the punch
+    // detector, and the camera reports "no user".
+    if (!_isSubjectFrame(
+      pose,
+      frameMs: frameMs ?? DateTime.now().millisecondsSinceEpoch,
+      pixels: pixels,
+      isNear: distance.withinRange,
+    )) {
       return;
     }
 
@@ -2678,33 +3027,7 @@ class FreeSessionController extends GetxController {
     // ─── DISTANCE GATE ─────────────────────────────────────────────────────
     // A user farther than the allowed distance (AppConstants.cameraMin*Ratio)
     // is not a valid user, so a background person cannot confirm a punch.
-    final CameraDistanceResult distance = _distanceGate.evaluate(
-      leftShoulder: lShoulder == null
-          ? null
-          : DistanceLandmark(
-              x: lShoulder.x,
-              y: lShoulder.y,
-              likelihood: lShoulder.likelihood,
-            ),
-      rightShoulder: rShoulder == null
-          ? null
-          : DistanceLandmark(
-              x: rShoulder.x,
-              y: rShoulder.y,
-              likelihood: rShoulder.likelihood,
-            ),
-      leftEye: lEye == null
-          ? null
-          : DistanceLandmark(x: lEye.x, y: lEye.y, likelihood: lEye.likelihood),
-      rightEye: rEye == null
-          ? null
-          : DistanceLandmark(x: rEye.x, y: rEye.y, likelihood: rEye.likelihood),
-      imageWidth: _cameraImageSize.width,
-      imageHeight: _cameraImageSize.height,
-      minShoulderRatio: _cameraMinShoulderRatio,
-      minEyeRatio: _cameraMinEyeRatio,
-      unknownIsValid: cameraDistanceUnknownIsValid.value,
-    );
+    // ([distance] is measured above, before the subject lock.)
     if (distance.ratio != null) {
       _recorder.stat(
         distance.source == 'shoulders' ? 'cam.shoulder_ratio' : 'cam.eye_ratio',
@@ -3076,6 +3399,10 @@ class FreeSessionController extends GetxController {
     isBodyMotionGateEnabled.value = AppConstants.bodyMotionGateEnabled;
     bodyMotionLevel.value = AppConstants.bodyMotionLevel;
     bodyMotionMinScore.value = AppConstants.bodyMotionMinScoreValue;
+    if (isSubjectLockEnabled.value != AppConstants.subjectLockEnabled) {
+      toggleSubjectLock(AppConstants.subjectLockEnabled);
+    }
+    isSubjectSteeringEnabled.value = AppConstants.subjectSteeringEnabled;
     _recordConfigChange('reset_to_defaults');
   }
 
@@ -3107,6 +3434,8 @@ class FreeSessionController extends GetxController {
     bodyMotionLevel.value = AppConstants.bodyMotionLevel;
     bodyMotionMinScore.value = AppConstants.bodyMotionMinScoreValue;
     _bodyMotionGate.reset();
+    isSubjectLockEnabled.value = AppConstants.subjectLockEnabled;
+    isSubjectSteeringEnabled.value = AppConstants.subjectSteeringEnabled;
   }
 
   @override
@@ -3123,6 +3452,8 @@ class FreeSessionController extends GetxController {
     _vibrationService.stopMonitoring();
     _vibrationGate.reset();
     _bodyMotionGate.reset();
+    _clearReferencePhoto();
+    unawaited(_faceChecker.close());
     _stabilityService.dispose();
     _poseDetector?.close();
     _stopAndDisposeCamera();

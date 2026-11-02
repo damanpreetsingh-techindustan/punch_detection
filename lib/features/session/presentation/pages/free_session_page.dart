@@ -14,6 +14,7 @@ import '../widgets/live_telemetry_sheet.dart';
 import '../widgets/pose_skeleton_painter.dart';
 import '../../../../core/widgets/animated_punch_count_text.dart';
 import '../../../fusion/domain/services/impact_gate_evaluator.dart';
+import '../widgets/subject_lock_pill.dart';
 
 class FreeSessionPage extends GetView<FreeSessionController> {
   const FreeSessionPage({super.key});
@@ -1310,7 +1311,43 @@ class FreeSessionPage extends GetView<FreeSessionController> {
             ),
           ),
 
-          // 3. Bottom Live Status Badge
+          // 3. Reference photo card (start of session, until the photo is
+          //    taken) and the subject lock pill afterwards. Tap pill = retake.
+          Positioned(
+            top: 48.h,
+            left: 12.w,
+            right: 12.w,
+            child: Center(
+              child: ReferencePhotoCard(
+                state: controller.subjectLockState,
+                holdStillSeconds: controller.subjectHoldStillSeconds,
+                photo: controller.subjectReferencePhoto,
+                onSkip: controller.skipReferencePhoto,
+                isVisible: () =>
+                    controller.isSubjectLockEnabled.value &&
+                    controller.isCameraInitialized.value,
+              ),
+            ),
+          ),
+          Positioned(
+            bottom: 32.h,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: SubjectLockPill(
+                state: controller.subjectLockState,
+                onTap: controller.relockSubject,
+                isVisible: () =>
+                    controller.isSubjectLockEnabled.value &&
+                    controller.isCameraInitialized.value,
+                photo: controller.subjectReferencePhoto,
+                referenceColor: controller.subjectReferenceColor,
+                liveColor: controller.subjectLiveColor,
+              ),
+            ),
+          ),
+
+          // 4. Bottom Live Status Badge
           Positioned(
             bottom: 8.h,
             child: Obx(
