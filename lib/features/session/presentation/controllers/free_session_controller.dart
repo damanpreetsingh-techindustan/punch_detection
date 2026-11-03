@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:developer' as developer;
+import 'dart:io' show Platform;
 import 'dart:math';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
@@ -670,6 +671,9 @@ class FreeSessionController extends GetxController {
 
   /// Image dimensions captured from the first camera frame (default: 480x640 standard portrait).
   Size _cameraImageSize = const Size(480, 640);
+
+  /// TEMPORARY orientation debug text (AppConstants.showCameraOrientationDebug).
+  final RxString cameraOrientationDebug = ''.obs;
 
   /// Close-enough frames in a row (see AppConstants.cameraMinConsecutiveNearFrames).
   int _consecutiveNearFrames = 0;
@@ -2498,6 +2502,16 @@ class FreeSessionController extends GetxController {
     } catch (_) {}
   }
 
+  /// iOS front camera: the preview image is upside down in landscape (both
+  /// directions; locking the capture orientation natively did not change it).
+  /// true = the page turns the preview + skeleton 180° on screen.
+  /// Display only: ML Kit frames and their rotation are unchanged.
+  bool shouldRotatePreview180({required bool isLandscape}) =>
+      AppConstants.iosRotateFrontCameraPreviewInLandscape &&
+      Platform.isIOS &&
+      isFrontCamera &&
+      isLandscape;
+
   InputImageRotation _getImageRotation(CameraDescription camera) {
     final sensorOrientation = camera.sensorOrientation;
     final deviceOrientation =
@@ -2534,6 +2548,16 @@ class FreeSessionController extends GetxController {
   InputImage? _convertCameraImage(CameraImage image, CameraDescription camera) {
     try {
       final rotation = _getImageRotation(camera);
+      if (AppConstants.showCameraOrientationDebug) {
+        final CameraValue? v = cameraController?.value;
+        cameraOrientationDebug.value =
+            '${Platform.operatingSystem} ${camera.lensDirection.name} '
+            '${camera.name} sensor:${camera.sensorOrientation}\n'
+            'device:${v?.deviceOrientation.name} '
+            'locked:${v?.lockedCaptureOrientation?.name}\n'
+            'preview:${v?.previewSize} img:${image.width}x${image.height}\n'
+            'mlkit:${rotation.name} front:$isFrontCamera';
+      }
       final format =
           InputImageFormatValue.fromRawValue(image.format.raw) ??
           InputImageFormat.nv21;

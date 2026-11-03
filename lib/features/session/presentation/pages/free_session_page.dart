@@ -1015,23 +1015,32 @@ class FreeSessionPage extends GetView<FreeSessionController> {
                   child: SizedBox(
                     width: width,
                     height: height,
-                    child: Stack(
-                      children: [
-                        CameraPreview(controller.cameraController!),
-                        Obx(() {
-                          if (controller.livePose.value == null) {
-                            return const SizedBox.shrink();
-                          }
-                          return CustomPaint(
-                            size: Size(width, height),
-                            painter: PoseSkeletonPainter(
-                              pose: controller.livePose.value,
-                              absoluteImageSize: controller.cameraImageSize,
-                              isFrontCamera: controller.isFrontCamera,
-                            ),
-                          );
-                        }),
-                      ],
+                    // iOS front camera shows upside down in landscape:
+                    // turn preview + skeleton together (stay aligned).
+                    child: RotatedBox(
+                      quarterTurns: controller.shouldRotatePreview180(
+                        isLandscape: isLandscape,
+                      )
+                          ? 2
+                          : 0,
+                      child: Stack(
+                        children: [
+                          CameraPreview(controller.cameraController!),
+                          Obx(() {
+                            if (controller.livePose.value == null) {
+                              return const SizedBox.shrink();
+                            }
+                            return CustomPaint(
+                              size: Size(width, height),
+                              painter: PoseSkeletonPainter(
+                                pose: controller.livePose.value,
+                                absoluteImageSize: controller.cameraImageSize,
+                                isFrontCamera: controller.isFrontCamera,
+                              ),
+                            );
+                          }),
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -1309,6 +1318,25 @@ class FreeSessionPage extends GetView<FreeSessionController> {
               ],
             ),
           ),
+
+          // TEMPORARY: camera orientation debug (AppConstants.showCameraOrientationDebug).
+          if (AppConstants.showCameraOrientationDebug)
+            Positioned(
+              left: 8.w,
+              bottom: 32.h,
+              child: Obx(
+                () => Container(
+                  padding: EdgeInsets.all(4.r),
+                  color: Colors.black.withValues(alpha: 0.7),
+                  child: Text(
+                    'UI:${MediaQuery.of(context).orientation.name} '
+                    'rotate180:${controller.shouldRotatePreview180(isLandscape: isLandscape)}\n'
+                    '${controller.cameraOrientationDebug.value}',
+                    style: TextStyle(color: Colors.yellow, fontSize: 9.ts(context)),
+                  ),
+                ),
+              ),
+            ),
 
           // 3. Bottom Live Status Badge
           Positioned(

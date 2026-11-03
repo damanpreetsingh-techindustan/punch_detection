@@ -46,6 +46,15 @@ class AppConstants {
   static const bool testingPromptSessionLogs = true;
   // for camera const variables
   static const bool testingNeedToUseUltraWideCamera = true;
+
+  /// iOS only: the FRONT camera preview shows upside down in landscape (both
+  /// directions). true = turn the preview + skeleton 180° on screen in
+  /// landscape. Display only; Android is never affected.
+  static const bool iosRotateFrontCameraPreviewInLandscape = true;
+
+  /// TEMPORARY: shows camera orientation values on the free session camera
+  /// view to debug the iOS landscape flip. Set to false when done.
+  static const bool showCameraOrientationDebug = true;
   static const bool testingNeedStaticZoom = false;
   static const double testingZoomValue = 1.0;
   static const bool showAllFeatures = false;
@@ -316,7 +325,7 @@ class AppConstants {
   /// Default of the settings switch at the start of every session.
   /// true = impacts without body movement are rejected (fusion + camera only).
   /// false = the score is only LOGGED, nothing is rejected.
-  static const bool bodyMotionGateEnabledDefault = false;
+  static const bool bodyMotionGateEnabledDefault = true;
 
   /// Live value of the settings switch (reset by [changeSettingToDefault]).
   static bool bodyMotionGateEnabled = bodyMotionGateEnabledDefault;
