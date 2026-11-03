@@ -1,3 +1,5 @@
+import 'dart:math';
+import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:get/get.dart';
@@ -9,6 +11,8 @@ import '../../../../core/utils/common_function.dart';
 import '../../../../core/utils/size_box.dart';
 import '../../../../core/services/device_stability/device_stability_models.dart';
 import 'package:punch_detection_demo/features/session/presentation/widgets/audio_spike_waveform_painter.dart';
+import '../../../session/presentation/widgets/pose_skeleton_painter.dart';
+import '../../../vision_detection/data/subject_enrollment/subject_capture_service.dart';
 import '../controllers/session_precheck_controller.dart';
 
 class SessionPreCheckPage extends GetView<SessionPreCheckController> {
@@ -90,11 +94,14 @@ class SessionPreCheckPage extends GetView<SessionPreCheckController> {
                       mode == DetectionMode.audioVibration;
                   final isCameraOnly = mode == DetectionMode.camera;
                   final showPermissionsStep = controller.needsPermissionsStep;
+                  final showCaptureStep = controller.needsCaptureStep;
                   final List<Widget> steps = AppConstants.showAllFeatures
                       ? <Widget>[
                           if (showPermissionsStep)
                             _buildStep1CheckPermissions(context),
                           _buildStep2SelectMode(context),
+                          if (showCaptureStep)
+                            _buildStepCaptureReference(context),
                           if (isFusion || isCameraOnly)
                             _buildStep4ConfirmCamera(context),
                           if (isFusion || isAudioMode)
@@ -108,6 +115,8 @@ class SessionPreCheckPage extends GetView<SessionPreCheckController> {
                           if (showPermissionsStep)
                             _buildStep1CheckPermissions(context),
                           _buildStep2SelectMode(context),
+                          if (showCaptureStep)
+                            _buildStepCaptureReference(context),
                           if (isFusion || isAudioMode)
                             _buildStep5CalibrateGymNoise(
                               context,
@@ -119,7 +128,11 @@ class SessionPreCheckPage extends GetView<SessionPreCheckController> {
                   return PageView(
                     controller: controller.pageController,
                     onPageChanged: controller.onPageChanged,
-                    physics: const BouncingScrollPhysics(),
+                    // With the photo step, pages change by buttons only so
+                    // the photo cannot be passed half-way by a swipe.
+                    physics: showCaptureStep
+                        ? const NeverScrollableScrollPhysics()
+                        : const BouncingScrollPhysics(),
                     children: steps,
                   );
                 }),
@@ -350,35 +363,37 @@ class SessionPreCheckPage extends GetView<SessionPreCheckController> {
                       ),
                       onPressed: controller.nextStep,
                       child: Obx(() {
-                      final mode = controller.selectedMode.value;
-                      final String label;
-                      if (AppConstants.showAllFeatures) {
-                        if (mode == DetectionMode.fusion ||
-                            mode == DetectionMode.camera) {
-                          label = 'Continue to Confirm Camera';
-                        } else if (mode == DetectionMode.audio ||
-                            mode == DetectionMode.audioVibration) {
-                          label = 'Continue to 5s Calibration';
+                        final mode = controller.selectedMode.value;
+                        final String label;
+                        if (controller.needsCaptureStep) {
+                          label = 'Continue to Reference Photo';
+                        } else if (AppConstants.showAllFeatures) {
+                          if (mode == DetectionMode.fusion ||
+                              mode == DetectionMode.camera) {
+                            label = 'Continue to Confirm Camera';
+                          } else if (mode == DetectionMode.audio ||
+                              mode == DetectionMode.audioVibration) {
+                            label = 'Continue to 5s Calibration';
+                          } else {
+                            label = 'Finish & Launch Session';
+                          }
                         } else {
-                          label = 'Finish & Launch Session';
+                          if (mode == DetectionMode.fusion ||
+                              mode == DetectionMode.audio ||
+                              mode == DetectionMode.audioVibration) {
+                            label = 'Continue to 5s Calibration';
+                          } else {
+                            label = 'Finish & Launch Session';
+                          }
                         }
-                      } else {
-                        if (mode == DetectionMode.fusion ||
-                            mode == DetectionMode.audio ||
-                            mode == DetectionMode.audioVibration) {
-                          label = 'Continue to 5s Calibration';
-                        } else {
-                          label = 'Finish & Launch Session';
-                        }
-                      }
-                      return Text(
-                        label,
-                        style: AppTextStyles.buttonLabel(context).copyWith(
-                          color: AppColors.ink,
-                          fontSize: 12.ts(context),
-                          fontWeight: FontWeight.w900,
-                        ),
-                      );
+                        return Text(
+                          label,
+                          style: AppTextStyles.buttonLabel(context).copyWith(
+                            color: AppColors.ink,
+                            fontSize: 12.ts(context),
+                            fontWeight: FontWeight.w900,
+                          ),
+                        );
                       }),
                     ),
                   ],
@@ -593,7 +608,9 @@ class SessionPreCheckPage extends GetView<SessionPreCheckController> {
                     child: Obx(() {
                       final mode = controller.selectedMode.value;
                       final String label;
-                      if (AppConstants.showAllFeatures) {
+                      if (controller.needsCaptureStep) {
+                        label = 'Continue to Reference Photo';
+                      } else if (AppConstants.showAllFeatures) {
                         if (mode == DetectionMode.fusion ||
                             mode == DetectionMode.camera) {
                           label = 'Continue to Confirm Camera';
@@ -631,7 +648,492 @@ class SessionPreCheckPage extends GetView<SessionPreCheckController> {
     );
   }
 
+  // STEP 3: REFERENCE PHOTO (subject lock, free session with camera)
+  Widget _buildStepCaptureReference(BuildContext context) {
+    final bool isLandscape = CommonFunction.checkOrientationLandscape(context);
 
+    final Widget header = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Reference Photo',
+          style: isLandscape
+              ? AppTextStyles.heading2(
+                  context,
+                ).copyWith(fontSize: 18.ts(context))
+              : AppTextStyles.heading2(context),
+        ),
+        6.height,
+        Text(
+          'Stand where you will train, face and shoulders in view. The camera '
+          'then follows only you and ignores other people.',
+          style: isLandscape
+              ? AppTextStyles.bodyMedium(
+                  context,
+                ).copyWith(fontSize: 11.ts(context))
+              : AppTextStyles.bodyMedium(context),
+        ),
+      ],
+    );
+
+    if (isLandscape) {
+      return Padding(
+        padding: EdgeInsets.symmetric(vertical: 6.h),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              flex: 6,
+              child: _captureCameraView(context, isLandscape: true),
+            ),
+            16.width,
+            Expanded(
+              flex: 5,
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    header,
+                    10.height,
+                    _captureStatusCard(context),
+                    10.height,
+                    _captureButtons(context, isLandscape: true),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        header,
+        12.height,
+        Expanded(child: _captureCameraView(context, isLandscape: false)),
+        10.height,
+        _captureStatusCard(context),
+        10.height,
+        _captureButtons(context, isLandscape: false),
+        16.height,
+      ],
+    );
+  }
+
+  Widget _captureCameraView(BuildContext context, {required bool isLandscape}) {
+    final service = controller.captureService;
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: const Color(0xFF070D14),
+        borderRadius: BorderRadius.circular(20.r),
+        border: Border.all(color: AppColors.border, width: 2.w),
+      ),
+      child: Obx(() {
+        if (service.isCameraUnavailable.value) {
+          return Center(
+            child: Text(
+              'Camera unavailable',
+              style: AppTextStyles.bodyMedium(context),
+            ),
+          );
+        }
+        final CameraController? camera = service.cameraController;
+        if (!service.isCameraReady.value ||
+            camera == null ||
+            !camera.value.isInitialized) {
+          return const Center(
+            child: CircularProgressIndicator(color: AppColors.blue),
+          );
+        }
+        // Same sizing as the session preview.
+        final Size? previewSize = camera.value.previewSize;
+        double width = 300;
+        double height = 400;
+        if (previewSize != null) {
+          if (isLandscape) {
+            width = max(previewSize.width, previewSize.height);
+            height = min(previewSize.width, previewSize.height);
+          } else {
+            width = min(previewSize.width, previewSize.height);
+            height = max(previewSize.width, previewSize.height);
+          }
+        }
+        return Stack(
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(18.r),
+              child: SizedBox.expand(
+                child: FittedBox(
+                  fit: isLandscape ? BoxFit.contain : BoxFit.cover,
+                  child: SizedBox(
+                    width: width,
+                    height: height,
+                    child: Stack(
+                      children: [
+                        CameraPreview(camera),
+                        Obx(() {
+                          final pose = service.livePose.value;
+                          if (pose == null) return const SizedBox.shrink();
+                          return CustomPaint(
+                            size: Size(width, height),
+                            painter: PoseSkeletonPainter(
+                              pose: pose,
+                              absoluteImageSize: service.cameraImageSize,
+                              isFrontCamera: service.isFrontCamera,
+                            ),
+                          );
+                        }),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            // Countdown on the preview: readable from where the user stands.
+            Positioned.fill(child: _captureCountdownOverlay(context)),
+          ],
+        );
+      }),
+    );
+  }
+
+  /// Big countdown ring over the preview (get ready → hold still →
+  /// learning → done). Updated by the capture timer, so it moves smoothly.
+  Widget _captureCountdownOverlay(BuildContext context) {
+    final service = controller.captureService;
+    return IgnorePointer(
+      child: Obx(() {
+        final CaptureStep step = service.step.value;
+        final double progress = service.progress.value.clamp(0.0, 1.0);
+        final int leftMs = service.countdownMs.value;
+        final String hint = service.hint.value;
+        Widget? centre;
+        Color color = AppColors.lime;
+        switch (step) {
+          case CaptureStep.idle:
+          case CaptureStep.findUser:
+            centre = null;
+          case CaptureStep.prepare:
+            color = AppColors.amber;
+            centre = _countdownRing(
+              context,
+              progress: progress,
+              color: color,
+              label: '${(leftMs / 1000).ceil()}',
+              caption: 'Get ready',
+            );
+          case CaptureStep.holdStill:
+            centre = _countdownRing(
+              context,
+              progress: progress,
+              color: color,
+              label: (leftMs / 1000).toStringAsFixed(1),
+              caption: 'Hold still',
+            );
+          case CaptureStep.learning:
+            color = AppColors.cyan;
+            centre = _countdownRing(
+              context,
+              progress: progress,
+              color: color,
+              label: '${(progress * 100).round()}%',
+              caption: 'Learning',
+            );
+          case CaptureStep.ready:
+            centre = Icon(
+              Icons.check_circle_rounded,
+              key: const ValueKey<String>('ready'),
+              color: AppColors.lime,
+              size: 72.r,
+            );
+        }
+        return Stack(
+          children: [
+            Center(
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 250),
+                transitionBuilder: (child, animation) => FadeTransition(
+                  opacity: animation,
+                  child: ScaleTransition(scale: animation, child: child),
+                ),
+                child: centre ?? const SizedBox.shrink(),
+              ),
+            ),
+            if (hint.isNotEmpty && step != CaptureStep.ready)
+              Positioned(
+                left: 12.w,
+                right: 12.w,
+                bottom: 12.h,
+                child: Center(
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 200),
+                    child: Container(
+                      key: ValueKey<String>(hint),
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 12.w,
+                        vertical: 6.h,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.65),
+                        borderRadius: BorderRadius.circular(999.r),
+                        border: Border.all(color: color),
+                      ),
+                      child: Text(
+                        hint,
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 12.ts(context),
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        );
+      }),
+    );
+  }
+
+  Widget _countdownRing(
+    BuildContext context, {
+    required double progress,
+    required Color color,
+    required String label,
+    required String caption,
+  }) {
+    final double size = 112.r;
+    return Container(
+      // One key per step so the switcher animates step changes only.
+      key: ValueKey<String>(caption),
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.45),
+        shape: BoxShape.circle,
+      ),
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          SizedBox(
+            width: size - 8.r,
+            height: size - 8.r,
+            child: CircularProgressIndicator(
+              value: progress,
+              strokeWidth: 6.r,
+              color: color,
+              backgroundColor: Colors.white.withValues(alpha: 0.15),
+            ),
+          ),
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                label,
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 30.ts(context),
+                  fontWeight: FontWeight.w900,
+                  height: 1.0,
+                ),
+              ),
+              4.height,
+              Text(
+                caption.toUpperCase(),
+                style: TextStyle(
+                  color: color,
+                  fontSize: 9.ts(context),
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.8,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _captureStatusCard(BuildContext context) {
+    final service = controller.captureService;
+    return Obx(() {
+      final String title;
+      final String subtitle;
+      final Color color;
+      final int leftMs = service.countdownMs.value;
+      final String hint = service.hint.value;
+      switch (service.step.value) {
+        case CaptureStep.idle:
+          title = 'Tap Capture';
+          subtitle =
+              'You get ${(AppConstants.subjectCapturePrepareMs / 1000).round()} '
+              's to step back, then hold still for '
+              '${(AppConstants.subjectHoldStillMs / 1000).round()} s.';
+          color = AppColors.textMuted;
+        case CaptureStep.prepare:
+          title = 'Get ready… ${(leftMs / 1000).ceil()}';
+          subtitle = 'Step back to where you will train';
+          color = AppColors.amber;
+        case CaptureStep.findUser:
+          title = 'Looking for you';
+          subtitle = hint.isEmpty ? 'Face and shoulders in view' : hint;
+          color = AppColors.amber;
+        case CaptureStep.holdStill:
+          title = 'Hold still… ${(leftMs / 1000).toStringAsFixed(1)} s';
+          subtitle = 'Taking your reference photo';
+          color = AppColors.lime;
+        case CaptureStep.learning:
+          title = 'Photo taken';
+          subtitle = 'Learning your look and face…';
+          color = AppColors.cyan;
+        case CaptureStep.ready:
+          title = 'Ready';
+          subtitle = service.hasFaceTemplate
+              ? 'Photo and face learned. Only you will be tracked.'
+              : 'Photo learned (no face seen). Only you will be tracked.';
+          color = AppColors.lime;
+      }
+      final bool showProgress =
+          service.step.value == CaptureStep.prepare ||
+          service.step.value == CaptureStep.holdStill ||
+          service.step.value == CaptureStep.learning;
+      final image = service.photo.value;
+      return AnimatedContainer(
+        duration: const Duration(milliseconds: 250),
+        width: double.infinity,
+        padding: EdgeInsets.all(10.r),
+        decoration: BoxDecoration(
+          color: AppColors.panel,
+          borderRadius: BorderRadius.circular(14.r),
+          border: Border.all(color: color),
+        ),
+        child: Row(
+          children: [
+            if (image != null)
+              ClipRRect(
+                borderRadius: BorderRadius.circular(6.r),
+                child: RawImage(
+                  image: image,
+                  width: 36.w,
+                  height: 48.w,
+                  fit: BoxFit.cover,
+                ),
+              )
+            else
+              Icon(Icons.photo_camera_front_rounded, color: color, size: 26.w),
+            10.width,
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: TextStyle(
+                      color: color,
+                      fontSize: 13.ts(context),
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  2.height,
+                  Text(
+                    subtitle,
+                    style: TextStyle(
+                      color: AppColors.textPrimary,
+                      fontSize: 10.ts(context),
+                    ),
+                  ),
+                  if (showProgress) ...[
+                    6.height,
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(4.r),
+                      child: LinearProgressIndicator(
+                        value: service.progress.value.clamp(0.0, 1.0),
+                        minHeight: 4.h,
+                        color: color,
+                        backgroundColor: AppColors.border,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    });
+  }
+
+  Widget _captureButtons(BuildContext context, {required bool isLandscape}) {
+    final service = controller.captureService;
+    final double buttonHeight = isLandscape ? 44.h : 54.h;
+    return Obx(() {
+      final bool ready = service.isReady.value;
+      final bool capturing = service.isCapturing.value;
+      final bool cameraReady = service.isCameraReady.value;
+      final ButtonStyle primaryStyle = ElevatedButton.styleFrom(
+        backgroundColor: AppColors.primary,
+        minimumSize: Size(double.infinity, buttonHeight),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(isLandscape ? 14.r : 16.r),
+        ),
+      );
+      final TextStyle primaryLabel = AppTextStyles.buttonLabel(context)
+          .copyWith(
+            color: AppColors.ink,
+            fontSize: isLandscape ? 12.ts(context) : null,
+            fontWeight: FontWeight.w900,
+          );
+      final TextStyle secondaryLabel = TextStyle(
+        color: AppColors.textMuted,
+        fontSize: (isLandscape ? 11 : 12).ts(context),
+        fontWeight: FontWeight.w700,
+      );
+      return Column(
+        children: [
+          ElevatedButton(
+            style: primaryStyle,
+            onPressed: ready
+                ? controller.nextStep
+                : (capturing || !cameraReady
+                      ? null
+                      : controller.captureReferencePhoto),
+            child: Text(
+              ready
+                  ? (AppConstants.showAllFeatures
+                        ? 'Continue'
+                        : (controller.selectedMode.value.requiresMicrophone
+                              ? 'Continue to 5s Calibration'
+                              : 'Finish & Launch Session'))
+                  : (capturing ? 'Capturing…' : 'Capture'),
+              style: primaryLabel,
+            ),
+          ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              TextButton(
+                onPressed: (ready || capturing)
+                    ? controller.retakeReferencePhoto
+                    : null,
+                child: Text(
+                  ready ? 'Retake' : (capturing ? 'Cancel' : ''),
+                  style: secondaryLabel,
+                ),
+              ),
+              TextButton(
+                onPressed: controller.skipReferencePhoto,
+                child: Text('Skip', style: secondaryLabel),
+              ),
+            ],
+          ),
+        ],
+      );
+    });
+  }
 
   // STEP 4: CONFIRM CAMERA / VISION
   Widget _buildStep4ConfirmCamera(BuildContext context) {
@@ -1270,8 +1772,6 @@ class SessionPreCheckPage extends GetView<SessionPreCheckController> {
       ),
     );
   }
-
-
 
   // Full-width Mode Card Row for Detection Modes
   Widget _modeCardRow({

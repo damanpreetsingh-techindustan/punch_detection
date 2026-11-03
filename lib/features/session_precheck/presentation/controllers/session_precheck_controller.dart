@@ -15,6 +15,9 @@ import '../../../../core/services/device_stability/i_device_stability_service.da
 
 import '../../../../core/enums/detection_enums.dart';
 
+import '../../../vision_detection/data/subject_enrollment/subject_capture_service.dart';
+import '../../../vision_detection/domain/subject_lock/subject_enrollment_store.dart';
+
 import '../../../workout_setup/presentation/controllers/workout_setup_controller.dart';
 
 class SessionPreCheckController extends GetxController {
@@ -60,6 +63,14 @@ class SessionPreCheckController extends GetxController {
   final RxDouble maxCalibratedDb = 0.0.obs;
   final RxDouble avgAmbientDb = 48.0.obs;
   final RxDouble spikeThresholdDb = 20.0.obs;
+
+  // Reference photo for the subject lock (free session, camera modes), taken
+  // here so the session starts already locked on the user.
+  final SubjectCaptureService captureService = SubjectCaptureService();
+
+  /// True when the user skipped the photo: the session runs without the lock.
+  final RxBool captureSkipped = false.obs;
+  bool _captureHandedOver = false;
 
   SessionPreCheckController({
     this.sessionType = 'prompt',
@@ -110,7 +121,22 @@ class SessionPreCheckController extends GetxController {
         baseSteps = 1;
       }
     }
-    return needsPermissionsStep ? (baseSteps + 1) : baseSteps;
+    final int steps = baseSteps + (needsCaptureStep ? 1 : 0);
+    return needsPermissionsStep ? (steps + 1) : steps;
+  }
+
+  /// The reference-photo step: free session, a mode that uses the camera,
+  /// subject lock on by default.
+  bool get needsCaptureStep =>
+      sessionType == 'free' &&
+      selectedMode.value.requiresCamera &&
+      AppConstants.subjectLockEnabledDefault;
+
+  /// Page index of the reference-photo step, or -1 when there is none.
+  int get captureStepIndex {
+    if (!needsCaptureStep) return -1;
+    // Permissions (when shown), mode selection, then the photo.
+    return (needsPermissionsStep ? 1 : 0) + 1;
   }
 
   @override
@@ -284,6 +310,11 @@ class SessionPreCheckController extends GetxController {
     } else if (mode is String) {
       selectedMode.value = DetectionMode.fromString(mode);
     }
+    // No photo step for this mode any more: forget the photo.
+    if (!needsCaptureStep) {
+      captureService.retake();
+      captureSkipped.value = false;
+    }
   }
 
   void selectMountType(dynamic mountType) {
@@ -296,6 +327,51 @@ class SessionPreCheckController extends GetxController {
 
   void onPageChanged(int index) {
     currentStep.value = index;
+    // The camera is only open while the photo step is on screen.
+    if (index == captureStepIndex) {
+      unawaited(captureService.start());
+    } else {
+      unawaited(captureService.stop());
+    }
+  }
+
+  /// Capture button: hold still → photo → learning (automatic).
+  void captureReferencePhoto() {
+    captureSkipped.value = false;
+    captureService.beginCapture();
+  }
+
+  void retakeReferencePhoto() => captureService.retake();
+
+  /// Skip button: the session runs without the subject lock.
+  Future<void> skipReferencePhoto() async {
+    captureService.retake();
+    captureSkipped.value = true;
+    await nextStep();
+  }
+
+  /// Hands the photo step's result to the session (store is read once by
+  /// FreeSessionController). Nothing stored = the session takes the photo
+  /// itself, as before.
+  void _handOverReferencePhoto() {
+    if (!needsCaptureStep) {
+      SubjectEnrollmentStore.clear();
+      return;
+    }
+    if (captureSkipped.value) {
+      SubjectEnrollmentStore.put(const SubjectEnrollment.skipped());
+      _captureHandedOver = true;
+      return;
+    }
+    final result = captureService.takeLock();
+    if (result == null) {
+      SubjectEnrollmentStore.clear();
+      return;
+    }
+    SubjectEnrollmentStore.put(
+      SubjectEnrollment.captured(result.lock, result.photo),
+    );
+    _captureHandedOver = true;
   }
 
   Future<void> nextStep() async {
@@ -361,6 +437,10 @@ class SessionPreCheckController extends GetxController {
       _audioLevelSubscription = null;
       await _audioLevelService.stopMonitoring();
 
+      // The session opens the camera next: it must be released first.
+      await captureService.stop();
+      _handOverReferencePhoto();
+
       // DYNAMIC AUDIO TARGET:
       // Base audio is the max calibrated average dB recorded during pre-check.
       // Initial target is Base + Default Spike Threshold (+6 dB, e.g. 80 -> 86 dB).
@@ -422,6 +502,7 @@ class SessionPreCheckController extends GetxController {
       _audioLevelSubscription?.cancel();
       _audioLevelSubscription = null;
       _audioLevelService.stopMonitoring();
+      unawaited(captureService.stop());
       if (Get.key.currentState?.canPop() ?? false) {
         Get.back();
       } else {
@@ -506,6 +587,8 @@ class SessionPreCheckController extends GetxController {
     _calibrationTimer?.cancel();
     _stabilitySubscription?.cancel();
     _stabilityService.dispose();
+    unawaited(captureService.dispose());
+    if (!_captureHandedOver) SubjectEnrollmentStore.clear();
     pageController.dispose();
     super.onClose();
   }

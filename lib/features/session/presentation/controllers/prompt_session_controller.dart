@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:math';
 import 'dart:developer' as developer;
+import 'dart:ui' as ui;
 import 'package:camera/camera.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
@@ -14,6 +16,12 @@ import '../../../vision_detection/data/geometric_rules/pose_validity_gate.dart';
 import '../../../vision_detection/data/geometric_rules/shoulder_stability_tracker.dart';
 import '../../../vision_detection/domain/entities/temporal_punch_detector.dart';
 import '../../../vision_detection/domain/entities/punch_detection_config.dart';
+import '../../../vision_detection/data/face/subject_face_checker.dart';
+import '../../../vision_detection/data/mappers/pose_subject_mapper.dart';
+import '../../../vision_detection/data/mappers/reference_photo_builder.dart';
+import '../../../vision_detection/domain/services/camera_distance_gate.dart';
+import '../../../vision_detection/domain/subject_lock/appearance_signature.dart';
+import '../../../vision_detection/domain/subject_lock/subject_lock.dart';
 import '../../../fusion/domain/services/tri_sensor_matrix_evaluator.dart';
 import '../../../fusion/domain/services/fast_combo_fusion_synchronizer.dart';
 import '../../../../core/services/audio_level/i_audio_level_service.dart';
@@ -76,6 +84,70 @@ class PromptSessionController extends GetxController {
   final PoseValidityGate _validityGate;
   final ShoulderStabilityTracker _stabilityTracker;
   final AdaptiveAudioBaseline _adaptiveBaseline;
+
+  // Subject lock: keeps the camera on the user in the reference photo taken
+  // at the start (ML Kit follows the "most prominent" person). See
+  // SubjectLock.
+  final SubjectLock _subjectLock = SubjectLock();
+  final PoseSubjectMapper _subjectMapper = const PoseSubjectMapper();
+  final SubjectFaceChecker _faceChecker = SubjectFaceChecker();
+  final CameraDistanceGate _photoDistanceGate =
+      CameraDistanceGate.fromConstants();
+
+  /// On for every session; Skip on the photo card turns it off for this one.
+  final RxBool isSubjectLockEnabled = AppConstants.subjectLockEnabled.obs;
+
+  /// Lock state for the reference-photo card and the pill.
+  final Rx<SubjectLockState> subjectLockState =
+      SubjectLockState.waitingForUser.obs;
+
+  /// Seconds left of the "hold still" countdown before the photo.
+  final RxInt subjectHoldStillSeconds = 0.obs;
+
+  /// The reference photo (head and shoulders). In memory only.
+  final Rx<ui.Image?> subjectReferencePhoto = Rx<ui.Image?>(null);
+  int _photoGeneration = 0;
+
+  /// Retake button (tap on the pill): take a new reference photo.
+  void relockSubject() {
+    _subjectLock.relock();
+    subjectLockState.value = SubjectLockState.waitingForUser;
+    _clearReferencePhoto();
+  }
+
+  /// Skip on the reference-photo card: run this session without the lock.
+  void skipReferencePhoto() {
+    isSubjectLockEnabled.value = false;
+    _subjectLock.reset();
+    _clearReferencePhoto();
+  }
+
+  Future<void> _takeReferencePhoto(
+    FramePixels pixels,
+    SubjectObservation photo,
+  ) async {
+    final int generation = _photoGeneration;
+    final ui.Image? image = await ReferencePhotoBuilder.build(
+      pixels,
+      photo,
+      mirror: isFrontCamera && defaultTargetPlatform == TargetPlatform.android,
+    );
+    if (image == null) return;
+    if (generation != _photoGeneration) {
+      image.dispose();
+      return;
+    }
+    subjectReferencePhoto.value?.dispose();
+    subjectReferencePhoto.value = image;
+  }
+
+  void _clearReferencePhoto() {
+    // Lock reset / photo retaken: running face checks belong to the old one.
+    _faceChecker.cancelRunning();
+    _photoGeneration++;
+    subjectReferencePhoto.value?.dispose();
+    subjectReferencePhoto.value = null;
+  }
 
   PromptSessionController({
     IAudioLevelService? audioLevelService,
@@ -378,6 +450,8 @@ class PromptSessionController extends GetxController {
     _readRouteArguments();
     _updateDetectorConfig();
     _initPoseDetector();
+    // Face model for the lock's face check (the lock works without it).
+    unawaited(_faceChecker.load());
     initCamera();
     _startMicrophoneStream();
     _startPromptRotation();
@@ -1364,6 +1438,10 @@ class PromptSessionController extends GetxController {
   }
 
   Future<void> initCamera() async {
+    // New camera (session start or mode change): take the photo again.
+    _subjectLock.reset();
+    subjectLockState.value = SubjectLockState.waitingForUser;
+    _clearReferencePhoto();
     final bool isCameraModeNeeded = sessionMode.value.requiresCamera;
     if (!isCameraModeNeeded) {
       isCameraUnavailable.value = true;
@@ -1450,6 +1528,7 @@ class PromptSessionController extends GetxController {
 
     try {
       cameraController!.startImageStream((CameraImage image) async {
+        final int arrivalMs = DateTime.now().millisecondsSinceEpoch;
         if (cameraController == null ||
             _isProcessingFrame ||
             isCameraUnavailable.value) {
@@ -1467,14 +1546,34 @@ class PromptSessionController extends GetxController {
 
         try {
           if (cameraController != null && _activeCamera != null) {
-            final inputImage = _convertCameraImage(image, _activeCamera!);
+            final FramePixels? pixels = PoseSubjectMapper.framePixelsOf(
+              image,
+              _getImageRotation(_activeCamera!),
+            );
+            // Steering: while another person is tracked, hide them from ML
+            // Kit for a moment so it looks for the user again.
+            final Rectangle<double>? steerBox =
+                pixels != null &&
+                    isSubjectLockEnabled.value &&
+                    AppConstants.subjectSteeringEnabled
+                ? _subjectLock.steerBox(arrivalMs)
+                : null;
+            final inputImage = _convertCameraImage(
+              image,
+              _activeCamera!,
+              bytes: steerBox == null ? null : pixels!.maskedCopy(steerBox),
+            );
             if (inputImage != null && _poseDetector != null) {
               final List<Pose> poses = await _poseDetector!.processImage(
                 inputImage,
               );
               if (poses.isNotEmpty) {
                 livePose.value = poses.first;
-                _analyzeLivePose(poses.first);
+                _analyzeLivePose(
+                  poses.first,
+                  frameMs: arrivalMs,
+                  pixels: pixels,
+                );
               } else {
                 // Camera covered or no body visible -> Reset pose & evaluation scores to 0!
                 livePose.value = null;
@@ -1532,7 +1631,13 @@ class PromptSessionController extends GetxController {
         InputImageRotation.rotation90deg;
   }
 
-  InputImage? _convertCameraImage(CameraImage image, CameraDescription camera) {
+  /// [bytes] replaces the frame's own bytes (same size and layout), e.g. a
+  /// copy with the wrong person hidden.
+  InputImage? _convertCameraImage(
+    CameraImage image,
+    CameraDescription camera, {
+    Uint8List? bytes,
+  }) {
     try {
       final rotation = _getImageRotation(camera);
       final format =
@@ -1540,7 +1645,7 @@ class PromptSessionController extends GetxController {
           InputImageFormat.nv21;
       final plane = image.planes.first;
       return InputImage.fromBytes(
-        bytes: plane.bytes,
+        bytes: bytes ?? plane.bytes,
         metadata: InputImageMetadata(
           size: Size(image.width.toDouble(), image.height.toDouble()),
           rotation: rotation,
@@ -1563,7 +1668,65 @@ class PromptSessionController extends GetxController {
   ///   - Enforces an explosive velocity floor to eliminate false punches during rest
   ///   - Z-axis depth acceleration bonus for forward punches
   ///   - Torso rotation contraction & head-drop bonus
-  void _analyzeLivePose(Pose pose) {
+  void _analyzeLivePose(Pose pose, {required int frameMs, FramePixels? pixels}) {
+    // ─── SUBJECT LOCK ─────────────────────────────────────────────────────
+    // Nothing counts before the reference photo; afterwards frames of another
+    // person stop here. Without pixels (unknown format) the lock is skipped.
+    if (isSubjectLockEnabled.value && pixels != null) {
+      DistanceLandmark? at(PoseLandmarkType type) {
+        final PoseLandmark? l = pose.landmarks[type];
+        return l == null
+            ? null
+            : DistanceLandmark(x: l.x, y: l.y, likelihood: l.likelihood);
+      }
+
+      // Only a near person can be the photo (a background person never is).
+      final bool isNear = _photoDistanceGate
+          .evaluate(
+            leftShoulder: at(PoseLandmarkType.leftShoulder),
+            rightShoulder: at(PoseLandmarkType.rightShoulder),
+            leftEye: at(PoseLandmarkType.leftEye),
+            rightEye: at(PoseLandmarkType.rightEye),
+            imageWidth: _cameraImageSize.width,
+            imageHeight: _cameraImageSize.height,
+          )
+          .withinRange;
+      final SubjectObservation? observation = _subjectMapper.map(
+        pose,
+        tMs: frameMs,
+        pixels: pixels,
+        enrollEligible: isNear,
+      );
+      if (observation != null) {
+        final SubjectDecision decision = _subjectLock.observe(observation);
+        subjectLockState.value = decision.state;
+        subjectHoldStillSeconds.value =
+            ((decision.holdStillRemainingMs ?? 0) / 1000).ceil();
+        if (decision.isPhotoFrame) {
+          unawaited(_takeReferencePhoto(pixels, observation));
+        }
+        // Face check in the background when one is due (never awaited).
+        _faceChecker.maybeCheck(
+          _subjectLock,
+          pose,
+          pixels,
+          frameMs,
+          (FaceCheckResult result, int _) {
+            if (result.changedState) subjectLockState.value = result.state;
+          },
+        );
+        if (!decision.isUser) {
+          _temporalPunchDetector.resetTrackers();
+          _setInvalidEvaluationResult(
+            _subjectLock.isLocked
+                ? 'Other person in view'
+                : 'Waiting for the reference photo',
+          );
+          return;
+        }
+      }
+    }
+
     final rShoulder = pose.landmarks[PoseLandmarkType.rightShoulder];
     final lShoulder = pose.landmarks[PoseLandmarkType.leftShoulder];
     final nose = pose.landmarks[PoseLandmarkType.nose];
@@ -1991,6 +2154,8 @@ class PromptSessionController extends GetxController {
   @override
   void onClose() {
     resetSettingsGate();
+    _clearReferencePhoto();
+    unawaited(_faceChecker.close());
     _elapsedTimer?.cancel();
     _promptTimer?.cancel();
     _promptWarmupTimer?.cancel();

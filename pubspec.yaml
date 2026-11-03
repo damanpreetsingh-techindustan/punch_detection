@@ -40,7 +40,9 @@ dependencies:
 
   # Platform Capabilities & Sensors
   permission_handler: ^13.0.2
-  camera: ^0.12.0+2
+  # Pinned: camera 0.12.2 needs camera_avfoundation 0.11.x, whose iOS 17+
+  # videoRotationAngle change turns the front camera upside down in landscape.
+  camera: 0.12.1
   flutter_tts: ^4.2.5
   path_provider: ^2.1.6
   google_mlkit_pose_detection: ^0.15.0
@@ -49,7 +51,10 @@ dependencies:
   sensors_plus: ^7.1.0
   package_info_plus: ^10.2.2
   share_plus: ^13.3.1
-
+  # Subject lock face check: ML Kit face contours for alignment, SFace
+  # (assets/models/README.md) for the face embedding.
+  google_mlkit_face_detection: ^0.14.0
+  tflite_flutter: ^0.12.1
 
 dev_dependencies:
   flutter_test:
@@ -75,6 +80,7 @@ flutter:
 
   assets:
     - assets/images/app_ic.png
+    - assets/models/face_recognition_sface_int8.tflite
 
 
   # An image asset can refer to one or more resolution-specific "variants", see
