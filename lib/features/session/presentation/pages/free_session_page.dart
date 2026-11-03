@@ -1015,32 +1015,34 @@ class FreeSessionPage extends GetView<FreeSessionController> {
                   child: SizedBox(
                     width: width,
                     height: height,
-                    // iOS front camera shows upside down in landscape:
-                    // turn preview + skeleton together (stay aligned).
-                    child: RotatedBox(
-                      quarterTurns: controller.shouldRotatePreview180(
-                        isLandscape: isLandscape,
-                      )
-                          ? 2
-                          : 0,
-                      child: Stack(
-                        children: [
-                          CameraPreview(controller.cameraController!),
-                          Obx(() {
-                            if (controller.livePose.value == null) {
-                              return const SizedBox.shrink();
-                            }
-                            return CustomPaint(
-                              size: Size(width, height),
-                              painter: PoseSkeletonPainter(
-                                pose: controller.livePose.value,
-                                absoluteImageSize: controller.cameraImageSize,
-                                isFrontCamera: controller.isFrontCamera,
-                              ),
-                            );
-                          }),
-                        ],
-                      ),
+                    child: Stack(
+                      children: [
+                        // iOS 17+ front camera frames are upside down in
+                        // landscape: turn only the preview. The skeleton stays
+                        // outside, ML Kit frames are already flipped upright.
+                        // Same flag as the ML Kit flip, so they never disagree.
+                        RotatedBox(
+                          quarterTurns: controller.rotatePreview180.value
+                              ? 2
+                              : 0,
+                          child: CameraPreview(controller.cameraController!),
+                        ),
+                        Obx(() {
+                          if (controller.livePose.value == null) {
+                            return const SizedBox.shrink();
+                          }
+                          return CustomPaint(
+                            size: Size(width, height),
+                            painter: PoseSkeletonPainter(
+                              pose: controller.livePose.value,
+                              absoluteImageSize: controller.cameraImageSize,
+                              isFrontCamera: controller.isFrontCamera,
+                              // Grey skeleton = user too far (punch rejected).
+                              isInvalid: controller.isUserTooFar,
+                            ),
+                          );
+                        }),
+                      ],
                     ),
                   ),
                 ),
@@ -1330,9 +1332,12 @@ class FreeSessionPage extends GetView<FreeSessionController> {
                   color: Colors.black.withValues(alpha: 0.7),
                   child: Text(
                     'UI:${MediaQuery.of(context).orientation.name} '
-                    'rotate180:${controller.shouldRotatePreview180(isLandscape: isLandscape)}\n'
+                    'rotate180:${controller.rotatePreview180.value}\n'
                     '${controller.cameraOrientationDebug.value}',
-                    style: TextStyle(color: Colors.yellow, fontSize: 9.ts(context)),
+                    style: TextStyle(
+                      color: Colors.yellow,
+                      fontSize: 9.ts(context),
+                    ),
                   ),
                 ),
               ),

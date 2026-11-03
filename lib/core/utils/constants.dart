@@ -47,9 +47,10 @@ class AppConstants {
   // for camera const variables
   static const bool testingNeedToUseUltraWideCamera = true;
 
-  /// iOS only: the FRONT camera preview shows upside down in landscape (both
-  /// directions). true = turn the preview + skeleton 180° on screen in
-  /// landscape. Display only; Android is never affected.
+  /// iOS 17+ only: the FRONT camera frames come upside down in landscape (both
+  /// directions, camera_avfoundation 0.11.x videoRotationAngle bug). true =
+  /// flip the frames 180° before ML Kit + turn the preview 180° on screen.
+  /// Android and iOS < 17 are never affected.
   static const bool iosRotateFrontCameraPreviewInLandscape = true;
 
   /// TEMPORARY: shows camera orientation values on the free session camera
@@ -325,7 +326,7 @@ class AppConstants {
   /// Default of the settings switch at the start of every session.
   /// true = impacts without body movement are rejected (fusion + camera only).
   /// false = the score is only LOGGED, nothing is rejected.
-  static const bool bodyMotionGateEnabledDefault = true;
+  static const bool bodyMotionGateEnabledDefault = false;
 
   /// Live value of the settings switch (reset by [changeSettingToDefault]).
   static bool bodyMotionGateEnabled = bodyMotionGateEnabledDefault;

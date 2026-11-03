@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:developer' as developer;
 import 'dart:io' show Platform;
 import 'dart:math';
+import 'dart:typed_data';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -151,7 +152,9 @@ class FreeSessionController extends GetxController {
   /// working). Audio-only, audio + vibration, camera-only and "camera off"
   /// sessions are never affected.
   bool get _isBodyMotionRequired =>
-      isBodyMotionGateEnabled.value && _usesImpactWindow && _isCameraGateRequired;
+      isBodyMotionGateEnabled.value &&
+      _usesImpactWindow &&
+      _isCameraGateRequired;
 
   /// Returns true if physical vibration is disabled due to mount type (pole),
   /// manual toggle switch OFF, or non-vibration detection mode.
@@ -572,6 +575,7 @@ class FreeSessionController extends GetxController {
   /// Whether camera vision confirmation is strictly required in Fusion mode
   /// true = Strict (Punch only counts if camera confirms), false = Optional (Audio+Vibe dual counts)
   final RxBool isVisionConfirmationRequired = true.obs;
+
   /// Default "Max Camera Distance" (approx. metres).
   // Previously derived from the shoulder ratio (0.16 / 0.20 = 0.8 m):
   // static const double defaultMaxCameraDistanceM =
@@ -674,6 +678,11 @@ class FreeSessionController extends GetxController {
 
   /// TEMPORARY orientation debug text (AppConstants.showCameraOrientationDebug).
   final RxString cameraOrientationDebug = ''.obs;
+
+  /// true while the camera frames arrive upside down (iOS 17+ front camera in
+  /// landscape, see [_isFrameUpsideDown]). The page turns the preview 180°
+  /// with this, so preview and skeleton always use the same decision.
+  final RxBool rotatePreview180 = false.obs;
 
   /// Close-enough frames in a row (see AppConstants.cameraMinConsecutiveNearFrames).
   int _consecutiveNearFrames = 0;
@@ -1540,6 +1549,13 @@ class FreeSessionController extends GetxController {
   /// a punch has to pass in fusion mode, so "Confirm" on screen means a punch
   /// right now would pass the camera.
   final Rx<CameraGateState> liveCameraGateState = CameraGateState.notReady.obs;
+
+  /// true while the live user is farther than the max camera distance (the
+  /// same "too far" result that rejects punches with
+  /// IMPACT_REJECTED_CAMERA_TOO_FAR). The page draws the skeleton grey then.
+  /// Reads an Rx, so it is reactive inside Obx.
+  bool get isUserTooFar =>
+      liveCameraGateState.value == CameraGateState.tooFar;
 
   /// True when the camera takes part in punch decisions as a person / distance
   /// gate (fusion mode with vision confirmation on). Then the CAM status shows
@@ -2442,8 +2458,10 @@ class FreeSessionController extends GetxController {
         }
         _isProcessingFrame = true;
 
-        // Capture image dimensions once for the validity gate normalisation.
-        if (_cameraImageSize.width == 0) {
+        // Track image dimensions for the validity gate normalisation. They
+        // swap when the device turns (portrait 480x640 ↔ landscape 640x480).
+        if (_cameraImageSize.width != image.width ||
+            _cameraImageSize.height != image.height) {
           _cameraImageSize = Size(
             image.width.toDouble(),
             image.height.toDouble(),
@@ -2502,15 +2520,56 @@ class FreeSessionController extends GetxController {
     } catch (_) {}
   }
 
-  /// iOS front camera: the preview image is upside down in landscape (both
-  /// directions; locking the capture orientation natively did not change it).
-  /// true = the page turns the preview + skeleton 180° on screen.
-  /// Display only: ML Kit frames and their rotation are unchanged.
-  bool shouldRotatePreview180({required bool isLandscape}) =>
+  /// iOS 17+ front camera: camera_avfoundation 0.11.x uses `videoRotationAngle`
+  /// with the BACK camera angles (landscapeLeft = 0°, landscapeRight = 180°).
+  /// The front sensor needs the opposite angles in landscape, so every frame
+  /// (preview AND image stream, they share the same pixel buffer) is upside
+  /// down in both landscape directions. Portrait (90°) is correct.
+  /// iOS < 17 uses the old `videoOrientation` API, which is correct.
+  ///
+  /// ML Kit on iOS IGNORES the `rotation` metadata (it reads the pixels as
+  /// they are), so the person is upside down for ML Kit → wrong / no pose →
+  /// IMPACT_REJECTED_CAMERA_NO_PERSON.
+  ///
+  /// Decided from the FRAME itself (landscape frame = width > height), not
+  /// from `cameraController.value.deviceOrientation`: that Dart value is only
+  /// updated by orientation events and can stay `portraitUp` (e.g. session
+  /// started already in landscape / phone lying flat) while the native side
+  /// already rotates the frames. The frame size is always the truth.
+  bool _isFrameUpsideDown(CameraImage image) =>
       AppConstants.iosRotateFrontCameraPreviewInLandscape &&
       Platform.isIOS &&
       isFrontCamera &&
-      isLandscape;
+      _iosMajorVersion >= 17 &&
+      image.width > image.height;
+
+  /// iOS major version from e.g. "Version 17.4.1 (Build 21E236)". 0 = unknown.
+  static final int _iosMajorVersion = () {
+    if (!Platform.isIOS) return 0;
+    final Match? m = RegExp(
+      r'(\d+)\.',
+    ).firstMatch(Platform.operatingSystemVersion);
+    return m == null ? 0 : int.parse(m.group(1)!);
+  }();
+
+  /// Turns a BGRA8888 frame 180° (output rows are packed: width * 4 bytes).
+  Uint8List _rotateBgra180(
+    Uint8List src,
+    int width,
+    int height,
+    int bytesPerRow,
+  ) {
+    final Uint32List out = Uint32List(width * height);
+    final ByteData data = ByteData.sublistView(src);
+    int o = out.length - 1;
+    for (int y = 0; y < height; y++) {
+      int i = y * bytesPerRow;
+      for (int x = 0; x < width; x++, i += 4) {
+        out[o--] = data.getUint32(i, Endian.host);
+      }
+    }
+    return out.buffer.asUint8List();
+  }
 
   InputImageRotation _getImageRotation(CameraDescription camera) {
     final sensorOrientation = camera.sensorOrientation;
@@ -2556,21 +2615,34 @@ class FreeSessionController extends GetxController {
             'device:${v?.deviceOrientation.name} '
             'locked:${v?.lockedCaptureOrientation?.name}\n'
             'preview:${v?.previewSize} img:${image.width}x${image.height}\n'
-            'mlkit:${rotation.name} front:$isFrontCamera';
+            'mlkit:${rotation.name} front:$isFrontCamera '
+            'flip180:${_isFrameUpsideDown(image)} ios:$_iosMajorVersion';
       }
       final format =
           InputImageFormatValue.fromRawValue(image.format.raw) ??
           InputImageFormat.nv21;
 
       final plane = image.planes.first;
+      Uint8List bytes = plane.bytes;
+      int bytesPerRow = plane.bytesPerRow;
+      // iOS frames are BGRA8888 (nv21 is not supported there, so the plugin
+      // falls back to BGRA): one plane, 4 bytes per pixel.
+      final bool upsideDown =
+          _isFrameUpsideDown(image) && format == InputImageFormat.bgra8888;
+      // Same flag for the preview turn (RxBool only notifies on change).
+      rotatePreview180.value = upsideDown;
+      if (upsideDown) {
+        bytes = _rotateBgra180(bytes, image.width, image.height, bytesPerRow);
+        bytesPerRow = image.width * 4;
+      }
 
       return InputImage.fromBytes(
-        bytes: plane.bytes,
+        bytes: bytes,
         metadata: InputImageMetadata(
           size: Size(image.width.toDouble(), image.height.toDouble()),
           rotation: rotation,
           format: format,
-          bytesPerRow: plane.bytesPerRow,
+          bytesPerRow: bytesPerRow,
         ),
       );
     } catch (_) {
@@ -3121,12 +3193,9 @@ class FreeSessionController extends GetxController {
     }
     cameraDistanceUnknownIsValid.value =
         AppConstants.cameraDistanceUnknownIsValid;
-    minVibrationThreshold.value =
-        AppConstants.defaultImpactVibrationThreshold;
-    isDeviceStabilityEnabled.value =
-        AppConstants.enableDeviceStabilityCheck;
-    audioSampleIntervalMs.value =
-        AppConstants.globalAudioSampleIntervalMs;
+    minVibrationThreshold.value = AppConstants.defaultImpactVibrationThreshold;
+    isDeviceStabilityEnabled.value = AppConstants.enableDeviceStabilityCheck;
+    audioSampleIntervalMs.value = AppConstants.globalAudioSampleIntervalMs;
     isVisionConfirmationRequired.value = true;
     isVibrationGateEnabled.value = !mountType.value.isVibrationDisabled;
     maxCameraDistanceM.value = defaultMaxCameraDistanceM;

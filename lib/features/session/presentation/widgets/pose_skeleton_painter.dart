@@ -50,11 +50,17 @@ class PoseSkeletonPainter extends CustomPainter {
   final InputImageRotation rotation;
   final bool isFrontCamera;
 
+  /// true = the user is not a valid user right now (e.g. too far from the
+  /// camera): the skeleton is drawn in grey so it is clear punches will be
+  /// rejected.
+  final bool isInvalid;
+
   PoseSkeletonPainter({
     required this.pose,
     this.absoluteImageSize = Size.zero,
     this.rotation = InputImageRotation.rotation90deg,
     this.isFrontCamera = true,
+    this.isInvalid = false,
   });
 
   @override
@@ -67,17 +73,20 @@ class PoseSkeletonPainter extends CustomPainter {
     }
 
     // 🔵 Vibrant Electric Cyan/Blue Body Skeleton Lines (6.5 thickness)
+    // (grey when the user is invalid, see [isInvalid])
     final skeletonLinePaint = Paint()
-      ..color =
-          const Color(0xFF00B4D8) // Electric Cyan / Vibrant Blue Theme Accent
+      ..color = isInvalid
+          ? const Color(0xFF9E9E9E) // Grey: invalid user (too far)
+          : const Color(0xFF00B4D8) // Electric Cyan / Vibrant Blue Theme Accent
       ..strokeWidth = 6.5
       ..strokeCap = StrokeCap.round
       ..strokeJoin = StrokeJoin.round;
 
-    // 🔴 Red Round Endpoints
+    // 🔴 Red Round Endpoints (dark grey when the user is invalid)
     final redEndpointPaint = Paint()
-      ..color =
-          const Color(0xFFFF1744) // Bright Neon Red
+      ..color = isInvalid
+          ? const Color(0xFF616161) // Dark grey: invalid user (too far)
+          : const Color(0xFFFF1744) // Bright Neon Red
       ..style = PaintingStyle.fill;
 
     // ⚪ Crisp Pure White Outer Stroke Border for Endpoints
@@ -290,6 +299,7 @@ class PoseSkeletonPainter extends CustomPainter {
   bool shouldRepaint(covariant PoseSkeletonPainter oldDelegate) {
     return oldDelegate.pose != pose ||
         oldDelegate.absoluteImageSize != absoluteImageSize ||
-        oldDelegate.isFrontCamera != isFrontCamera;
+        oldDelegate.isFrontCamera != isFrontCamera ||
+        oldDelegate.isInvalid != isInvalid;
   }
 }
