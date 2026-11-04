@@ -11,6 +11,7 @@ import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 import '../../../../core/utils/constants.dart';
 import '../../domain/services/camera_distance_gate.dart';
 import '../../domain/services/camera_person_gate.dart';
+import '../../domain/services/camera_tracker_guard.dart';
 import '../../domain/subject_lock/appearance_signature.dart';
 import '../../domain/subject_lock/subject_lock.dart';
 import '../face/subject_face_checker.dart';
@@ -58,6 +59,7 @@ class SubjectCaptureService {
   final PoseSubjectMapper _mapper = const PoseSubjectMapper();
   final CameraPersonGate _personGate = CameraPersonGate.fromConstants();
   final CameraDistanceGate _distanceGate = CameraDistanceGate.fromConstants();
+  final CameraTrackerGuard _trackerGuard = CameraTrackerGuard();
 
   SubjectLock _lock = SubjectLock();
   SubjectFaceChecker? _faceChecker;
@@ -327,7 +329,15 @@ class SubjectCaptureService {
         image,
         rotation,
       );
-      final InputImage? input = _toInputImage(image, rotation);
+      // Stuck on something that is not a person: one blank frame makes the
+      // tracker detect from scratch.
+      final InputImage? input = _toInputImage(
+        image,
+        rotation,
+        bytes: pixels != null && _trackerGuard.takeReset()
+            ? pixels.blankCopy()
+            : null,
+      );
       if (input == null) return;
       final List<Pose> poses = await detector.processImage(input);
       if (_isStopped) return;
@@ -336,6 +346,7 @@ class SubjectCaptureService {
       if (pose == null) {
         // The tracker lost the person: the next pose may be someone else.
         if (_isCapturing) _lock.poseLost();
+        _trackerGuard.clear();
         if (step.value == CaptureStep.findUser) {
           _setHint('Step into the camera view', frameMs);
         }
@@ -366,11 +377,13 @@ class SubjectCaptureService {
       rightShoulder: _landmark(pose, PoseLandmarkType.rightShoulder),
     );
     if (!person.isPerson) {
+      _trackerGuard.noteRefused(frameMs);
       if (step.value == CaptureStep.findUser) {
         _setHint('Face and shoulders in view', frameMs);
       }
       return;
     }
+    _trackerGuard.clear();
     // Same near check the session uses for its photo (default max distance).
     final double minShoulderRatio =
         AppConstants.cameraDistanceMetresFactor /
@@ -535,14 +548,18 @@ class SubjectCaptureService {
   }
 
   /// Same as FreeSessionController._convertCameraImage.
-  InputImage? _toInputImage(CameraImage image, InputImageRotation rotation) {
+  InputImage? _toInputImage(
+    CameraImage image,
+    InputImageRotation rotation, {
+    Uint8List? bytes,
+  }) {
     try {
       final InputImageFormat format =
           InputImageFormatValue.fromRawValue(image.format.raw) ??
           InputImageFormat.nv21;
       final Plane plane = image.planes.first;
       return InputImage.fromBytes(
-        bytes: plane.bytes,
+        bytes: bytes ?? plane.bytes,
         metadata: InputImageMetadata(
           size: Size(image.width.toDouble(), image.height.toDouble()),
           rotation: rotation,

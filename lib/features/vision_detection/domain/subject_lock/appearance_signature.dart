@@ -245,6 +245,11 @@ class FramePixels {
     return out;
   }
 
+  /// Copy of the bytes with the whole frame painted neutral grey.
+  Uint8List blankCopy() => maskedCopy(
+    Rectangle<double>(0, 0, uprightWidth.toDouble(), uprightHeight.toDouble()),
+  );
+
   /// Copy of the bytes with the upright rectangle [box] painted neutral grey.
   /// Used to hide a wrong person from ML Kit for a few frames; this frame's
   /// own bytes are never changed.

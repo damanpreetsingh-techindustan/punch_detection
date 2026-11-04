@@ -143,9 +143,9 @@ class FaceCheckResult {
 /// prominent. So identity is verified, then tracked:
 ///
 ///  1. FACE proves who the tracked pose is. Each check counts on its own
-///     ([FaceIdentity]): "user" → [SubjectLockState.locked]. Not the user →
-///     frames stop counting at once, and after [faceOtherChecks] such checks
-///     in a row it is [SubjectLockState.otherPerson].
+///     ([FaceIdentity]): "user" → [SubjectLockState.locked]. Anything else →
+///     frames stop counting at once, and after [faceOtherChecks] clear
+///     mismatches in a row it is [SubjectLockState.otherPerson].
 ///  2. CONTINUITY carries that proof between face checks, so a guard or a
 ///     turned head does not matter while the same person is followed. Anything
 ///     that may have changed the person is a BREAK: the tracker reported no
@@ -401,7 +401,8 @@ class SubjectLock {
           : 'user confirmed (face)';
     } else {
       _faceUserAtMs = null;
-      _notUserChecks++;
+      // A poor view of the user must not get them hidden from the tracker.
+      _notUserChecks = _face.isClearlyOther(cosine) ? _notUserChecks + 1 : 0;
       if (_state != SubjectLockState.otherPerson &&
           _notUserChecks >= faceOtherChecks) {
         _becomeOther(frameMs, _last?.box);

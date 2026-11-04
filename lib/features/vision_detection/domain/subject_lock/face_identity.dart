@@ -17,19 +17,24 @@ enum FaceVerdict {
 /// Face part of the subject lock: the user's face template, built from the
 /// faces seen while the reference photo was taken.
 ///
-/// Every check is decided on its own against [userCosine]. Faces of the same
-/// person and of different people score far apart (real sessions: user
-/// 0.51-0.94, others 0.05-0.43), so one check is meaningful, and voting over
-/// several would keep calling a new person "user" for two more checks.
+/// Every check is decided on its own against [userCosine]: faces of the same
+/// person and of different people usually score far apart (real footage: others
+/// 0.05-0.43, the user mostly above 0.50), so one check is meaningful, and voting
+/// over several would keep calling a new person "user" for two more checks.
+///
+/// A poor view of the user can also miss that level (0.40-0.49 seen off-angle),
+/// so only below [otherCosine] is it [isClearlyOther].
 ///
 /// Pure: no clocks, no ML Kit / TFLite; embeddings come in as numbers.
 class FaceIdentity {
   final double userCosine;
+  final double otherCosine;
   final int templateFaces;
   final int maxTemplateFaces;
 
   FaceIdentity({
     this.userCosine = AppConstants.subjectFaceUserCosine,
+    this.otherCosine = AppConstants.subjectFaceOtherCosine,
     this.templateFaces = AppConstants.subjectFaceTemplateFaces,
     this.maxTemplateFaces = AppConstants.subjectFaceMaxTemplateFaces,
   });
@@ -65,6 +70,9 @@ class FaceIdentity {
 
   FaceVerdict verdictFor(double cosine) =>
       cosine >= userCosine ? FaceVerdict.user : FaceVerdict.other;
+
+  /// True when [cosine] is clearly someone else, not a poor view of the user.
+  bool isClearlyOther(double cosine) => cosine < otherCosine;
 
   /// Forget everything, including the template (new reference photo).
   void reset() {

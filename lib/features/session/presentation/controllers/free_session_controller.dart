@@ -27,6 +27,7 @@ import '../../../vision_detection/data/mappers/pose_motion_frame_mapper.dart';
 import '../../../vision_detection/data/face/subject_face_checker.dart';
 import '../../../vision_detection/data/mappers/pose_subject_mapper.dart';
 import '../../../vision_detection/data/mappers/reference_photo_builder.dart';
+import '../../../vision_detection/domain/services/camera_tracker_guard.dart';
 import '../../../vision_detection/domain/subject_lock/appearance_signature.dart';
 import '../../../vision_detection/domain/subject_lock/subject_enrollment_store.dart';
 import '../../../vision_detection/domain/subject_lock/subject_lock.dart';
@@ -170,6 +171,7 @@ class FreeSessionController extends GetxController {
   /// [initCamera]. Null = the session takes the photo itself.
   SubjectEnrollment? _preEnrollment;
   final PoseSubjectMapper _subjectMapper;
+  final CameraTrackerGuard _trackerGuard;
 
   /// When the lock started asking for proof (for `subject.verify_ms`).
   int? _verifyingSinceMs;
@@ -266,6 +268,7 @@ class FreeSessionController extends GetxController {
     SubjectLock? subjectLock,
     PoseSubjectMapper? subjectMapper,
     SubjectFaceChecker? faceChecker,
+    CameraTrackerGuard? trackerGuard,
     TemporalPunchDetector? temporalPunchDetector,
     FastComboFusionSynchronizer? fusionSynchronizer,
     PoseValidityGate? validityGate,
@@ -288,6 +291,7 @@ class FreeSessionController extends GetxController {
        _subjectLock = subjectLock ?? SubjectLock(),
        _subjectMapper = subjectMapper ?? const PoseSubjectMapper(),
        _faceChecker = faceChecker ?? SubjectFaceChecker(),
+       _trackerGuard = trackerGuard ?? CameraTrackerGuard(),
        _temporalPunchDetector =
            temporalPunchDetector ?? TemporalPunchDetector(),
        _fusionSynchronizer =
@@ -2614,7 +2618,12 @@ class FreeSessionController extends GetxController {
             // Kit for a moment so it looks for the user again (a copy is
             // masked; the frame itself is untouched).
             Uint8List? steeredBytes;
-            if (pixels != null &&
+            if (pixels != null && _trackerGuard.takeReset()) {
+              // Stuck on something that is not a person: one blank frame
+              // makes the tracker detect from scratch.
+              steeredBytes = pixels.blankCopy();
+              _recorder.count('cam.tracker_resets');
+            } else if (pixels != null &&
                 isSubjectLockEnabled.value &&
                 isSubjectSteeringEnabled.value) {
               final Rectangle<double>? box = _subjectLock.steerBox(arrivalMs);
@@ -2651,6 +2660,7 @@ class FreeSessionController extends GetxController {
                 _consecutiveNearFrames = 0;
                 // The tracker lost the person: the next pose may be anyone.
                 _subjectLock.poseLost();
+                _trackerGuard.clear();
                 // User left the frame: the next user must prove near again.
                 _nearLatch.reset();
                 // Positions of the user who left must not be compared with
@@ -2983,6 +2993,9 @@ class FreeSessionController extends GetxController {
     // above shoulder (AppConstants.cameraMin*Confidence). Objects such as a
     // bottle can create a weak pose; they fail here.
     if (!person.isPerson) {
+      _trackerGuard.noteRefused(
+        frameMs ?? DateTime.now().millisecondsSinceEpoch,
+      );
       _recorder.count('cam.not_person_frames');
       _setInvalidEvaluationResult(
         'Not a person: ${person.description}',
@@ -2996,6 +3009,7 @@ class FreeSessionController extends GetxController {
       );
       return;
     }
+    _trackerGuard.clear();
 
     // Distance measured here (pure) so the subject lock only learns a near
     // person; the too-far decision itself stays below.

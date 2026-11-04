@@ -470,12 +470,19 @@ class AppConstants {
 
   /// Face-match level (cosine): at or above = the user. Above SFace's published
   /// LFW point (0.363), which has to cover years and poses between two photos;
-  /// the reference here is minutes old. Measured: user 0.51-0.94 (rare blur
-  /// dips recover on the next check), other people 0.05-0.43.
+  /// the reference here is minutes old. Measured: other people 0.05-0.43; the
+  /// user 0.50-0.96 in a clear view, down to 0.40 off-angle or in flare (blocked
+  /// until the next clear view, which is the safe side).
   static const double subjectFaceUserCosine = 0.50;
 
-  /// Failing checks in a row before it is called another person. One already
-  /// stops the frames counting; this only avoids hiding the user on a blur dip.
+  /// Below this a face is clearly someone else, not a poor view of the user.
+  /// Between this and [subjectFaceUserCosine] the frames do not count, but
+  /// nobody is called another person or hidden from ML Kit for it.
+  static const double subjectFaceOtherCosine = 0.40;
+
+  /// Clear mismatches in a row before it is called another person. Any check
+  /// below [subjectFaceUserCosine] already stops the frames counting; this only
+  /// avoids hiding the user from ML Kit on a bad check.
   static const int subjectFaceOtherChecks = 2;
 
   /// How long a "user" face check overrules a look that disagrees (ms).
@@ -510,6 +517,10 @@ class AppConstants {
   /// One attempt to hide the wrong person (ms), then a pause before retrying.
   static const int subjectSteerMaxMs = 1500;
   static const int subjectSteerCooldownMs = 3000;
+
+  /// A pose refused as "not a person" for this long (ms) means the tracker is
+  /// stuck on an object: one blank frame makes it detect from scratch.
+  static const int cameraTrackerStuckMs = 1000;
 
   /// Official Fighter Callout Combo List
   static const List<List<int>> comboList = [

@@ -109,6 +109,14 @@ void main() {
       expect(face.verdictFor(0.165), FaceVerdict.other);
     });
 
+    test('only a score below the other level is clearly someone else', () {
+      final FaceIdentity face = FaceIdentity();
+      expect(face.isClearlyOther(0.27), isTrue);
+      expect(face.isClearlyOther(face.otherCosine), isFalse);
+      // Below the user level, but also seen for the user off-angle.
+      expect(face.isClearlyOther(0.49), isFalse);
+    });
+
     test('the template is never a blend: a different face is refused', () {
       final FaceIdentity face = FaceIdentity();
       expect(face.enroll(axis), isTrue);

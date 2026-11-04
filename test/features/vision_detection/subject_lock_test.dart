@@ -413,7 +413,7 @@ void main() {
         'the lock back while their face is visible', () {
       enrollWithFace();
       for (int i = 0; i < 3; i++) {
-        frameWithFace((int ms) => person(ms, x: 700, shirt: redShirt), closeFace);
+        frameWithFace((int ms) => person(ms, x: 700, shirt: redShirt), otherFace);
       }
       expect(lock.state, SubjectLockState.otherPerson);
       // They lean into a shadow: their shirt now looks like the user's,
@@ -470,6 +470,31 @@ void main() {
       faceCheck(otherFace);
       expect(lock.state, SubjectLockState.otherPerson);
       expect(lock.steerBox(t), isNotNull);
+    });
+
+    test('a poor view of the user blocks counting but never hides them', () {
+      enrollWithFace();
+      void faceCheck(List<double> face) {
+        lock.faceCheckStarted(t);
+        lock.addFace(face, t);
+      }
+
+      // Real footage: the user bent forward, off-angle, scored 0.40 then 0.49.
+      // Calling that another person masked them from the tracker.
+      faceCheck(faceAt(0.40));
+      expect(lock.state, SubjectLockState.verifying);
+      faceCheck(faceAt(0.49));
+      faceCheck(faceAt(0.45));
+      expect(lock.state, SubjectLockState.verifying);
+      expect(feed((int ms) => person(ms)).isUser, isFalse);
+      expect(lock.steerBox(t), isNull);
+      // One clear mismatch between poor views is not two in a row.
+      faceCheck(otherFace);
+      faceCheck(faceAt(0.45));
+      faceCheck(otherFace);
+      expect(lock.state, SubjectLockState.verifying);
+      faceCheck(userFace);
+      expect(lock.state, SubjectLockState.locked);
     });
 
     test('the proof is carried while the same person is followed: a hidden '

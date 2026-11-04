@@ -239,6 +239,16 @@ void main() {
       final int i = 5 * pixels.bytesPerRow + 5 * 4;
       expect(masked.sublist(i, i + 4), <int>[128, 128, 128, 255]);
     });
+
+    for (final int rotation in <int>[0, 90, 270]) {
+      test('blankCopy greys every pixel and leaves the frame untouched '
+          '(rotation $rotation)', () {
+        final FramePixels pixels = nv21Frame(rotation);
+        final Uint8List before = Uint8List.fromList(pixels.bytes);
+        expect(pixels.blankCopy(), everyElement(128));
+        expect(pixels.bytes, before);
+      });
+    }
   });
 
   group('AppearanceHistogram', () {

@@ -9,6 +9,7 @@ import 'package:punch_detection_demo/core/utils/constants.dart';
 import 'package:punch_detection_demo/features/fusion/domain/services/impact_gate_evaluator.dart';
 import 'package:punch_detection_demo/features/session/presentation/controllers/free_session_controller.dart';
 import 'package:punch_detection_demo/features/vision_detection/data/face/subject_face_checker.dart';
+import 'package:punch_detection_demo/features/vision_detection/domain/services/camera_tracker_guard.dart';
 import 'package:punch_detection_demo/features/vision_detection/domain/subject_lock/appearance_signature.dart';
 import 'package:punch_detection_demo/features/vision_detection/domain/subject_lock/face_alignment.dart';
 import 'package:punch_detection_demo/features/vision_detection/domain/subject_lock/i_face_embedder.dart';
@@ -405,6 +406,34 @@ void main() {
       expect(controller.liveCameraGateState.value, CameraGateState.noPerson);
       expect(controller.summaryTable.toCsv(), contains('other person (face)'));
     });
+  });
+
+  test('a tracker stuck on an object asks for a reset, a real person does not',
+      () {
+    final CameraTrackerGuard guard = CameraTrackerGuard();
+    controller.onClose();
+    controller = FreeSessionController(
+      audioLevelService: _MockAudioLevelService(),
+      trackerGuard: guard,
+    );
+    controller.toggleSubjectLock(false);
+    const int start = 2000000000000;
+    controller.analyzePoseForTesting(bottlePose(), frameMs: start);
+    controller.analyzePoseForTesting(
+      bottlePose(),
+      frameMs: start + guard.maxRefusedMs - 1,
+    );
+    expect(guard.takeReset(), isFalse);
+    controller.analyzePoseForTesting(
+      bottlePose(),
+      frameMs: start + guard.maxRefusedMs,
+    );
+    expect(guard.takeReset(), isTrue);
+
+    controller.analyzePoseForTesting(bottlePose(), frameMs: start + 2000);
+    controller.analyzePoseForTesting(personPose(), frameMs: start + 2500);
+    controller.analyzePoseForTesting(bottlePose(), frameMs: start + 3000);
+    expect(guard.takeReset(), isFalse);
   });
 
   test('the CSV table records the confidences of each camera change', () {
