@@ -49,8 +49,8 @@ enum CaptureStep {
 /// Nothing is learned until [beginCapture] (the user's tap). Once ready the
 /// lock is frozen; [takeLock] hands it over.
 class SubjectCaptureService {
-  /// After the lock, wait this long at most for the face template.
-  static const int faceTemplateWaitMs = 3000;
+  /// Waiting this long for the face template, ask the user to show it.
+  static const int faceTemplateHintMs = 3000;
 
   /// How often the countdown on screen is updated (between camera frames).
   static const Duration _tick = Duration(milliseconds: 50);
@@ -278,7 +278,7 @@ class SubjectCaptureService {
         countdownMs.value = left;
         progress.value = 1 - left / max(1, _lock.holdStillMs);
       case CaptureStep.learning:
-        _updateLearningProgress(now);
+        _updateLearningProgress();
       case CaptureStep.idle:
       case CaptureStep.findUser:
       case CaptureStep.ready:
@@ -286,15 +286,10 @@ class SubjectCaptureService {
     }
   }
 
-  void _updateLearningProgress(int nowMs) {
+  void _updateLearningProgress() {
     final double look = _lock.enrollProgress;
     final double face = (_faceChecker?.isAvailable ?? false)
-        ? max(
-            _lock.faceTemplateProgress,
-            _lockedAtMs == 0
-                ? 0.0
-                : min(1.0, (nowMs - _lockedAtMs) / faceTemplateWaitMs),
-          )
+        ? _lock.faceTemplateProgress
         : 1.0;
     progress.value = 0.6 * look + 0.4 * face;
   }
@@ -339,6 +334,8 @@ class SubjectCaptureService {
       final Pose? pose = poses.isEmpty ? null : poses.first;
       livePose.value = pose;
       if (pose == null) {
+        // The tracker lost the person: the next pose may be someone else.
+        if (_isCapturing) _lock.poseLost();
         if (step.value == CaptureStep.findUser) {
           _setHint('Step into the camera view', frameMs);
         }
@@ -401,6 +398,12 @@ class SubjectCaptureService {
     if (observation == null) return;
     final CaptureStep before = step.value;
     final SubjectDecision decision = _lock.observe(observation);
+    // The tracked person may have changed before their face was learned, so
+    // the face would have to be learned from someone else: start over.
+    if (decision.isBreak && _lock.isLocked && !_lock.hasFaceTemplate) {
+      _restartPhoto('You moved — hold still', frameMs);
+      return;
+    }
     if (decision.isPhotoFrame) {
       unawaited(_takePhoto(pixels, observation));
     }
@@ -424,10 +427,11 @@ class SubjectCaptureService {
         hint.value = 'Hold still';
       case SubjectLockState.enrolling:
       case SubjectLockState.locked:
+      case SubjectLockState.verifying:
       case SubjectLockState.otherPerson:
         _holdStillDeadlineMs = null;
         _setStep(CaptureStep.learning);
-        hint.value = 'Keep facing the camera';
+        _setHint('Keep facing the camera', frameMs);
     }
     // Faces for the template are collected while holding still, learning
     // and after the lock until the template is ready.
@@ -436,9 +440,25 @@ class SubjectCaptureService {
       pose,
       pixels,
       frameMs,
-      (FaceCheckResult result, int _) => state.value = result.state,
+      (FaceCheckResult result, int _) {
+        state.value = result.state;
+        if (result.faceConflict) {
+          _restartPhoto(
+            'Two faces seen — stay closest to the camera',
+            DateTime.now().millisecondsSinceEpoch,
+          );
+        }
+      },
     );
     _updateReady(frameMs);
+  }
+
+  /// Throws the photo away and looks for the user again, keeping [message] on
+  /// screen for a moment.
+  void _restartPhoto(String message, int nowMs) {
+    _resetLock();
+    _setStep(CaptureStep.findUser);
+    _setHint(message, nowMs, holdMs: 2000);
   }
 
   void _updateReady(int nowMs) {
@@ -448,19 +468,28 @@ class SubjectCaptureService {
     }
     if (_lockedAtMs == 0) _lockedAtMs = nowMs;
     final bool faceModelMissing = !(_faceChecker?.isAvailable ?? false);
-    if (_lock.hasFaceTemplate ||
-        faceModelMissing ||
-        nowMs - _lockedAtMs >= faceTemplateWaitMs) {
-      // Freeze: later frames must not change the learned lock.
-      _isCapturing = false;
-      isCapturing.value = false;
-      isReady.value = true;
-      _ticker?.cancel();
-      _ticker = null;
-      _setStep(CaptureStep.ready);
-      progress.value = 1;
-      hint.value = '';
+    // The face is the only proof of who is tracked, so the photo is not done
+    // without it while the model can run. Cancel and Skip stay available.
+    if (!_lock.hasFaceTemplate && !faceModelMissing) {
+      if (nowMs - _lockedAtMs >= faceTemplateHintMs) {
+        _setHint(
+          'Look at the camera so your face can be learned',
+          nowMs,
+          holdMs: 1000,
+        );
+      }
+      return;
     }
+    // Freeze: later frames must not change the learned lock.
+    _faceChecker?.cancelRunning();
+    _isCapturing = false;
+    isCapturing.value = false;
+    isReady.value = true;
+    _ticker?.cancel();
+    _ticker = null;
+    _setStep(CaptureStep.ready);
+    progress.value = 1;
+    hint.value = '';
   }
 
   Future<void> _takePhoto(FramePixels pixels, SubjectObservation obs) async {

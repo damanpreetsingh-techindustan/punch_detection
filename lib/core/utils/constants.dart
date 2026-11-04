@@ -392,18 +392,17 @@ class AppConstants {
   // body confirms or rejects the user's punches.
   //
   // At session start the user stands in front of the camera and holds still;
-  // a reference photo is taken from the camera stream and the user's look is
-  // learned from it: the shirt at the shoulders and the hair (colour
-  // histograms, no extra model). Nothing the camera sees counts before that.
-  // Afterwards every frame is checked for a jump (a person cannot teleport)
-  // and compared with the photo's look. A clear mismatch = "other person": the
-  // camera then reports no user, and the other person is briefly hidden from
-  // ML Kit so it finds the user again.
+  // a reference photo is taken from the camera stream and the user's face and
+  // look are learned from it. Nothing the camera sees counts before that.
+  // Afterwards the face proves who is tracked and continuity carries that
+  // proof: when the tracker loses or jumps off the person, nothing counts until
+  // the face proves it again (see SubjectLock). Someone proven to be someone
+  // else is briefly hidden from ML Kit so it finds the user again.
   //
-  // How to tune: SESSION TOTALS shows `subject.similarity` (min / avg / max)
-  // and `subject.gated_frames`. In a solo session gated frames should be ~0
-  // and similarity well above [subjectRejectSimilarity]; with a second person
-  // in frame their frames should score below it.
+  // How to tune: SESSION TOTALS shows `subject.verify_ms` (how long the user
+  // waits after a change), `subject.verifying_frames`, `subject.gated_frames`
+  // and `subject.breaks`; `subject_break` rows in the raw log say why. In a solo
+  // session all of these should be close to zero.
 
   /// Default of the settings switch at the start of every session.
   static const bool subjectLockEnabledDefault = true;
@@ -463,47 +462,49 @@ class AppConstants {
 
   // ─── Face check (part of the subject lock) ──────────────────────────────────
   // A face embedding (SFace, assets/models/README.md) compared with the faces
-  // seen while the reference photo was taken. Decides who it is when a clear
-  // face is visible; the look match covers the frames where it is not (guard,
-  // head turned, blur). Clothes cannot tell two people in the same shirt
-  // apart; a face can.
+  // seen while the reference photo was taken. It is the only proof of who is
+  // tracked: other people's colours can match the user's (0.92-0.94 measured).
   //
   // How to tune: SESSION TOTALS shows `subject.face_cosine`. The user should
   // sit well above [subjectFaceUserCosine]; other people below it.
 
-  /// Face-match levels (cosine), around SFace's published operating point
-  /// (0.363 on LFW): at or above user = the user, below other = someone
-  /// else, between = unsure (no face decision).
-  static const double subjectFaceUserCosine = 0.45;
-  static const double subjectFaceOtherCosine = 0.30;
+  /// Face-match level (cosine): at or above = the user. Above SFace's published
+  /// LFW point (0.363), which has to cover years and poses between two photos;
+  /// the reference here is minutes old. Measured: user 0.51-0.94 (rare blur
+  /// dips recover on the next check), other people 0.05-0.43.
+  static const double subjectFaceUserCosine = 0.50;
 
-  /// A face verdict is the median of this many recent checks, none older
-  /// than [subjectFaceMaxAgeMs].
-  static const int subjectFaceVotes = 3;
-  static const int subjectFaceMaxAgeMs = 1500;
+  /// Failing checks in a row before it is called another person. One already
+  /// stops the frames counting; this only avoids hiding the user on a blur dip.
+  static const int subjectFaceOtherChecks = 2;
+
+  /// How long a "user" face check overrules a look that disagrees (ms).
+  static const int subjectFaceTrustMs = 1500;
 
   /// Faces from the reference photo needed for a face template (more are
   /// averaged in up to the max).
   static const int subjectFaceTemplateFaces = 3;
   static const int subjectFaceMaxTemplateFaces = 10;
 
-  /// Time between face checks while the same person is tracked. Right after
-  /// a jump / reappearance checks run as fast as one finishes.
+  /// Time between face checks while the same person is tracked. While it is
+  /// unproven who is tracked, checks run as fast as one finishes.
   static const int subjectFaceCheckIntervalMs = 300;
 
   /// A face is only checked when it is roughly frontal: the nose may be at
   /// most this many eye distances beside the middle of the eyes.
   static const double subjectFaceMaxTurn = 0.35;
 
-  /// Mismatching frames needed to call it another person: right after a
-  /// jump / reappearance, and without one (slow drift onto someone behind).
+  /// Mismatching look frames needed to act on it: right after a jump /
+  /// reappearance when there is no face to ask, and otherwise (slow drift onto
+  /// someone behind, or time for the face to answer first).
   static const int subjectConfirmFramesAfterBreak = 2;
   static const int subjectConfirmFramesDrift = 8;
 
   /// Frames that count as "right after a jump / reappearance".
   static const int subjectRecentBreakFrames = 6;
 
-  /// Matching frames in a row needed before the user counts again.
+  /// Matching look frames in a row before the user counts again (only without
+  /// a face template; with one, only the face can bring the user back).
   static const int subjectRecoverFrames = 2;
 
   /// One attempt to hide the wrong person (ms), then a pause before retrying.

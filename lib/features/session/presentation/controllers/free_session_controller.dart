@@ -171,6 +171,9 @@ class FreeSessionController extends GetxController {
   SubjectEnrollment? _preEnrollment;
   final PoseSubjectMapper _subjectMapper;
 
+  /// When the lock started asking for proof (for `subject.verify_ms`).
+  int? _verifyingSinceMs;
+
   /// Face checks for the lock (face model loaded in onInit; without it the
   /// lock works on look and movement only).
   final SubjectFaceChecker _faceChecker;
@@ -2646,6 +2649,8 @@ class FreeSessionController extends GetxController {
               } else {
                 // Camera covered or no body visible -> Reset pose & evaluation scores to 0!
                 _consecutiveNearFrames = 0;
+                // The tracker lost the person: the next pose may be anyone.
+                _subjectLock.poseLost();
                 // User left the frame: the next user must prove near again.
                 _nearLatch.reset();
                 // Positions of the user who left must not be compared with
@@ -2757,14 +2762,21 @@ class FreeSessionController extends GetxController {
       pixels: pixels,
       enrollEligible: isNear,
     );
-    if (observation == null) return true;
+    // Too few landmarks to tell who this is: it cannot count as the user.
+    if (observation == null) return _blockSubjectFrame('no usable landmarks');
     final SubjectDecision decision = _subjectLock.observe(observation);
     cost.stop();
     _recorder.stat('subject.cost_us', cost.elapsedMicroseconds.toDouble());
     if (decision.similarity != null) {
       _recorder.stat('subject.similarity', decision.similarity!);
     }
-    if (decision.isBreak) _recorder.count('subject.breaks');
+    if (decision.isBreak) {
+      _recorder.count('subject.breaks');
+      _recorder.record('subject_break', <String, Object?>{
+        'reason': decision.breakReason,
+        'state': decision.state.name,
+      }, atEpochMs: frameMs);
+    }
     subjectHoldStillSeconds.value =
         ((decision.holdStillRemainingMs ?? 0) / 1000).ceil();
     if (decision.isPhotoFrame) {
@@ -2781,25 +2793,26 @@ class FreeSessionController extends GetxController {
       onNoFace: () => _recorder.count('subject.face_not_found'),
     );
     if (decision.isUser) return true;
+    return _blockSubjectFrame(decision.reason);
+  }
 
-    final bool hasPhoto = _subjectLock.isLocked;
-    _recorder.count(
-      hasPhoto ? 'subject.gated_frames' : 'subject.waiting_frames',
-    );
+  /// Records this frame as "no user". Always returns false.
+  bool _blockSubjectFrame(String reason) {
+    _recorder.count(switch (_subjectLock.state) {
+      SubjectLockState.verifying => 'subject.verifying_frames',
+      SubjectLockState.otherPerson => 'subject.gated_frames',
+      _ => 'subject.waiting_frames',
+    });
     // Same resets as "no pose": the user's old positions must not be compared
     // with where they are when they come back.
     _nearLatch.reset();
     _bodyMotionGate.reset();
     _temporalPunchDetector.resetTrackers();
-    _setInvalidEvaluationResult(
-      hasPhoto ? 'Other person in view' : 'Waiting for the reference photo',
-      noteCamera: false,
-    );
+    final String message = _subjectLock.blockedMessage;
+    _setInvalidEvaluationResult(message, noteCamera: false);
     _noteCameraObservation(
       CameraGateState.noPerson,
-      detail: hasPhoto
-          ? 'other person: ${decision.reason}'
-          : 'no reference photo yet: ${decision.reason}',
+      detail: '$message: $reason',
     );
     return false;
   }
@@ -2867,6 +2880,15 @@ class FreeSessionController extends GetxController {
           ? ''
           : ' (face ${result.cosine!.toStringAsFixed(2)})';
       _noteSubjectState(result.state, '${result.reason}$cosine', atMs: now);
+      // Takes effect now, not on the next camera frame: a punch may be being
+      // decided right at this moment.
+      if (result.state != SubjectLockState.locked) {
+        _noteCameraObservation(
+          CameraGateState.noPerson,
+          detail: '${_subjectLock.blockedMessage}: ${result.reason}',
+          atMs: now,
+        );
+      }
     }
   }
 
@@ -2876,6 +2898,12 @@ class FreeSessionController extends GetxController {
     required int atMs,
   }) {
     if (state == subjectLockState.value) return;
+    if (state == SubjectLockState.verifying) {
+      _verifyingSinceMs = atMs;
+    } else if (state == SubjectLockState.locked && _verifyingSinceMs != null) {
+      _recorder.stat('subject.verify_ms', (atMs - _verifyingSinceMs!).toDouble());
+      _verifyingSinceMs = null;
+    }
     subjectLockState.value = state;
     subjectReferenceColor.value = _colorOf(_subjectLock.referenceColor);
     // Waiting / countdown changes are only shown on screen, not logged (they

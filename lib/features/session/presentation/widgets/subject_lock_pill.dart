@@ -49,6 +49,9 @@ class SubjectLockPill extends StatelessWidget {
         case SubjectLockState.locked:
           label = 'Tracking you';
           color = AppColors.lime;
+        case SubjectLockState.verifying:
+          label = 'Show your face to confirm it is you';
+          color = AppColors.amber;
         case SubjectLockState.otherPerson:
           label = 'Other person in view · tap to retake photo';
           color = AppColors.red;
@@ -145,6 +148,7 @@ class ReferencePhotoCard extends StatelessWidget {
       final Color color;
       switch (state.value) {
         case SubjectLockState.locked:
+        case SubjectLockState.verifying:
         case SubjectLockState.otherPerson:
           return const SizedBox.shrink();
         case SubjectLockState.waitingForUser:

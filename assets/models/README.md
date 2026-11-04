@@ -11,7 +11,8 @@ Face embedding model used by the subject lock's face check
   mirrored at https://huggingface.co/opencv/face_recognition_sface).
 - **License:** Apache License 2.0 (all files in that model directory).
 - **Published accuracy:** 99.60 % on LFW at cosine similarity 0.363 (OpenCV
-  DNN face tutorial). The lock's user / other levels sit around that point.
+  DNN face tutorial). The lock's user level sits above that point, since its
+  reference photo is only minutes old (`AppConstants.subjectFaceUserCosine`).
 - **Input:** 1 × 112 × 112 × 3, RGB, float 0–255, face aligned to the
   standard 5-point template (eyes, nose tip, mouth corners). **Output:** 1 × 128.
 - **Conversion:** ONNX → TFLite with onnx2tf 1.28.8 (float32), then

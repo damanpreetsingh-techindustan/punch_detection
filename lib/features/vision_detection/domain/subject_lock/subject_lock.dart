@@ -18,8 +18,12 @@ enum SubjectLockState {
   /// the next few frames.
   enrolling,
 
-  /// The tracked pose is the user in the reference photo.
+  /// The tracked pose is the user in the reference photo: their frames count.
   locked,
+
+  /// The tracked pose may have changed (the tracker lost the person or jumped,
+  /// or a face check failed). Nothing counts until the face proves who it is.
+  verifying,
 
   /// The tracked pose is someone else: their frames must not count.
   otherPerson,
@@ -81,8 +85,9 @@ class SubjectDecision {
   /// Look match with the reference photo (0-1), null when unknown.
   final double? similarity;
 
-  /// True when the tracked pose jumped or reappeared on this frame.
-  final bool isBreak;
+  /// Why the tracked pose may be someone new from this frame on (it reappeared
+  /// or jumped), null while the same person is followed.
+  final String? breakReason;
 
   /// True on the frame the reference photo was taken from.
   final bool isPhotoFrame;
@@ -90,21 +95,19 @@ class SubjectDecision {
   /// Countdown left while [SubjectLockState.holdStill], else null.
   final int? holdStillRemainingMs;
 
-  /// What the recent face checks say.
-  final FaceVerdict faceVerdict;
-
   final String reason;
 
   const SubjectDecision({
     required this.state,
     required this.isUser,
     required this.similarity,
-    required this.isBreak,
+    required this.breakReason,
     required this.reason,
     this.isPhotoFrame = false,
     this.holdStillRemainingMs,
-    this.faceVerdict = FaceVerdict.none,
   });
+
+  bool get isBreak => breakReason != null;
 }
 
 /// Result of one face check given to [SubjectLock.addFace].
@@ -117,6 +120,10 @@ class FaceCheckResult {
 
   /// True when this check changed [state].
   final bool changedState;
+
+  /// True when two different faces were seen during the photo, which was
+  /// therefore thrown away.
+  final bool faceConflict;
   final String reason;
 
   const FaceCheckResult({
@@ -125,48 +132,38 @@ class FaceCheckResult {
     required this.state,
     required this.changedState,
     required this.reason,
+    this.faceConflict = false,
   });
 }
 
-/// Keeps the camera on the user in the reference photo.
+/// Decides whether the tracked pose is the user in the reference photo.
 ///
-/// ML Kit pose detection follows ONE person: "the most prominent" one. When
-/// someone else walks in, or the user is hidden for a moment, ML Kit can
-/// switch to that other person without telling us. Three signals decide who
-/// is tracked, each where it is reliable:
+/// ML Kit pose detection follows ONE person and can move to someone else
+/// without telling us: when it loses the user it picks whoever is most
+/// prominent. So identity is verified, then tracked:
 ///
-///  1. CONTINUITY (every frame, physical): a person cannot teleport. A jump
-///     of the shoulder midpoint larger than [jumpBase] + [jumpPer100Ms] ×
-///     (time / 100 ms) body widths, or a gap of more than [gapMs] without a
-///     person, is a BREAK: the next frames may be someone else.
-///  2. LOOK (every frame, cheap): colours of the clothing and hair vs the
-///     reference photo. Its accept / reject levels are learned from the
-///     user's own scores this session ([UserMatchStats]), because clothes,
-///     light and camera change what a "good" match is. Strong mismatches
-///     ([confirmFramesAfterBreak] right after a break, [confirmFramesDrift]
-///     otherwise) → [SubjectLockState.otherPerson].
-///  3. FACE (when a clear frontal face is visible, a few times a second):
-///     the face embedding vs the faces seen while the photo was taken
-///     ([FaceIdentity]). It tells apart people in the same clothes and
-///     outranks the look: face "other" blocks at once, face "user" keeps or
-///     brings back the lock (and re-learns the look when the look kept
-///     failing, i.e. the clothes or the light changed).
+///  1. FACE proves who the tracked pose is. Each check counts on its own
+///     ([FaceIdentity]): "user" → [SubjectLockState.locked]. Not the user →
+///     frames stop counting at once, and after [faceOtherChecks] such checks
+///     in a row it is [SubjectLockState.otherPerson].
+///  2. CONTINUITY carries that proof between face checks, so a guard or a
+///     turned head does not matter while the same person is followed. Anything
+///     that may have changed the person is a BREAK: the tracker reported no
+///     pose ([poseLost]), a gap of more than [gapMs], or a jump of the shoulder
+///     midpoint larger than [jumpBase] + [jumpPer100Ms] × (time / 100 ms) body
+///     widths. After a break nothing counts until the face proves it again.
+///  3. LOOK (colours of the clothing and hair, levels learned per session by
+///     [UserMatchStats]) can only take trust away: other people can match the
+///     user's look (0.92-0.94 for a face scoring 0.3 in a real session), so
+///     with a face template it never proves anyone. It catches a slow drift
+///     onto someone whose face is not visible, and marks a stranger as
+///     [SubjectLockState.otherPerson] so steering can look for the user.
 ///
-/// After a change (a break), a visible face must prove it is the user: an
-/// "unsure" face then counts as someone else until it says "user" (the
-/// user's own face scores clearly as "user" when visible; a look-alike
-/// often only reaches "unsure"). While the same person is tracked, "unsure"
-/// (head turned, blur) decides nothing.
+/// Without a face template (face model unavailable) the look has to stand in
+/// and can bring the lock back. With neither, only continuity is left.
 ///
-/// Losing the lock is easy, getting it back needs proof: once someone else
-/// is tracked, the look alone may bring the lock back only if no face was
-/// checked since the tracked person changed; otherwise the face must say
-/// "user". (A person who leans into a shadow can look like the user's
-/// clothes; their face does not.)
-///
-/// Fail-open once locked: a frame without any evidence (look hidden, no face)
-/// counts as the user. The user is only blocked by evidence that it is
-/// someone else, never by missing evidence.
+/// Requiring proof after a break costs the user little: a real session lost no
+/// pose in 16 s of the user boxing, and a check takes about 300 ms.
 ///
 /// Pure: no clocks, no ML Kit / TFLite types; time comes from the inputs.
 class SubjectLock {
@@ -175,6 +172,7 @@ class SubjectLock {
   final int enrollFrames;
   final int enrollMinSamples;
   final int gapMs;
+  final int faceOtherChecks;
   final double jumpBase;
   final double jumpPer100Ms;
   final int liveWindowFrames;
@@ -194,6 +192,9 @@ class SubjectLock {
   /// Time between face checks while the same person is tracked.
   final int faceCheckIntervalMs;
 
+  /// How long a "user" face check overrules a look that disagrees.
+  final int faceTrustMs;
+
   /// Weight of the torso match vs. the head match.
   static const double torsoWeight = 0.7;
 
@@ -206,6 +207,7 @@ class SubjectLock {
     this.enrollFrames = AppConstants.subjectEnrollFrames,
     this.enrollMinSamples = AppConstants.subjectEnrollMinSamples,
     this.gapMs = AppConstants.subjectGapMs,
+    this.faceOtherChecks = AppConstants.subjectFaceOtherChecks,
     this.jumpBase = AppConstants.subjectJumpBase,
     this.jumpPer100Ms = AppConstants.subjectJumpPer100Ms,
     this.liveWindowFrames = AppConstants.subjectLiveWindowFrames,
@@ -217,6 +219,7 @@ class SubjectLock {
     this.steerMaxMs = AppConstants.subjectSteerMaxMs,
     this.steerCooldownMs = AppConstants.subjectSteerCooldownMs,
     this.faceCheckIntervalMs = AppConstants.subjectFaceCheckIntervalMs,
+    this.faceTrustMs = AppConstants.subjectFaceTrustMs,
     FaceIdentity? face,
     UserMatchStats? stats,
   }) : _face = face ?? FaceIdentity(),
@@ -237,11 +240,12 @@ class SubjectLock {
   int _framesSinceBreak = 0;
   int _lastBreakMs = 0;
   bool _breakSinceLock = false;
-
-  /// False from a break until the face says "user" again: after the tracked
-  /// person may have changed, a visible face must prove it is the user.
-  bool _verifiedSinceBreak = true;
   int _lastFaceCheckMs = 0;
+
+  /// Frame of the last "user" face check on this track; null when there is
+  /// none or a later check disagreed.
+  int? _faceUserAtMs;
+  int _notUserChecks = 0;
   int _strikes = 0;
   int _matches = 0;
   Rectangle<double>? _otherPersonBox;
@@ -252,7 +256,15 @@ class SubjectLock {
   /// True once the reference photo is taken and learned.
   bool get isLocked =>
       _state == SubjectLockState.locked ||
+      _state == SubjectLockState.verifying ||
       _state == SubjectLockState.otherPerson;
+
+  /// What a frame that does not count is reported as.
+  String get blockedMessage => switch (_state) {
+    SubjectLockState.verifying => 'Confirming it is you',
+    SubjectLockState.otherPerson => 'Other person in view',
+    _ => 'Waiting for the reference photo',
+  };
 
   /// False when no colours could be learned from the photo: the look then
   /// never rejects anyone (the face still can).
@@ -282,21 +294,22 @@ class SubjectLock {
           .meanColor;
 
   SubjectDecision observe(SubjectObservation obs) {
-    final bool isBreak = _isBreak(obs);
+    final String? breakReason = _breakReasonFor(obs);
     _last = obs;
-    if (isBreak) {
+    if (breakReason != null) {
       _framesSinceBreak = 0;
       _lastBreakMs = obs.tMs;
       if (isLocked) _breakSinceLock = true;
-      _verifiedSinceBreak = false;
       _liveTorso.clear();
       _liveHead.clear();
-      _face.clearScores();
       _strikes = 0;
       _matches = 0;
-      // Someone new: the wrong person may have left, look again.
-      if (_state == SubjectLockState.otherPerson) {
-        _state = SubjectLockState.locked;
+      _faceUserAtMs = null;
+      _notUserChecks = 0;
+      // A break proves nothing about the new pose. It never clears
+      // otherPerson, and it takes away the trust of locked.
+      if (_state == SubjectLockState.locked && _canVerify) {
+        _state = SubjectLockState.verifying;
       }
     } else {
       _framesSinceBreak++;
@@ -305,26 +318,39 @@ class SubjectLock {
     switch (_state) {
       case SubjectLockState.waitingForUser:
       case SubjectLockState.holdStill:
-        return _awaitPhoto(obs, isBreak);
+        return _awaitPhoto(obs, breakReason);
       case SubjectLockState.enrolling:
-        return _enroll(obs, isBreak);
+        return _enroll(obs, breakReason);
       case SubjectLockState.locked:
+      case SubjectLockState.verifying:
       case SubjectLockState.otherPerson:
-        return _check(obs, isBreak);
+        return _check(obs, breakReason);
+    }
+  }
+
+  /// The pose detector found nobody on this frame. It re-detects from scratch
+  /// after that and takes the most prominent person, who may be someone else,
+  /// so the next pose is a break however close in time and place it is.
+  void poseLost() => _last = null;
+
+  /// The face model cannot run: the lock goes on without the face.
+  void dropFaceTemplate() {
+    _face.reset();
+    if (_state == SubjectLockState.verifying && !_canVerify) {
+      _state = SubjectLockState.locked;
     }
   }
 
   /// True when a face check should start now (the caller also needs a clear
   /// frontal face and no check already running). While the photo is taken
-  /// it collects faces for the template; right after the tracked person
-  /// changed it checks as fast as checks finish; otherwise every
-  /// [faceCheckIntervalMs].
+  /// it collects faces for the template; while it is unproven who is tracked
+  /// it checks as fast as checks finish; otherwise every [faceCheckIntervalMs].
   bool wantsFaceCheck(int nowMs) {
     if (_isCollectingFaces) {
       return _face.enrolledFaces < _face.maxTemplateFaces;
     }
     if (!_face.hasTemplate || !isLocked) return false;
-    if (_face.recentScoreCount < _face.votes) return true;
+    if (_state == SubjectLockState.verifying) return true;
     return nowMs - _lastFaceCheckMs >= faceCheckIntervalMs;
   }
 
@@ -336,7 +362,15 @@ class SubjectLock {
       return _faceResult(null, false, 'ignored: from before a change');
     }
     if (_isCollectingFaces) {
-      _face.enroll(embedding);
+      if (!_face.enroll(embedding)) {
+        relock();
+        return _faceResult(
+          null,
+          true,
+          'two different faces during the photo: taking it again',
+          faceConflict: true,
+        );
+      }
       return _faceResult(
         null,
         false,
@@ -348,28 +382,35 @@ class SubjectLock {
     if (cosine == null || !isLocked) {
       return _faceResult(null, false, 'ignored: no face template');
     }
-    _face.addScore(cosine, frameMs);
-    final FaceVerdict verdict = _face.verdict(frameMs);
+    final FaceVerdict verdict = _face.verdictFor(cosine);
     final SubjectLockState before = _state;
-    String reason = 'face ${verdict.name}';
-    if (_state == SubjectLockState.locked && _faceSaysOther(verdict)) {
-      _becomeOther(frameMs, _last?.box);
-      reason = _faceOtherReason(verdict);
-    } else if (verdict == FaceVerdict.user) {
+    String reason;
+    if (verdict == FaceVerdict.user) {
       // The look kept failing (it would have called this someone else) but
       // the face says user: clothes or light changed. Learn the look again.
       final bool relearn = _strikes >= confirmFramesDrift && _relearnLook();
       _state = SubjectLockState.locked;
-      _verifiedSinceBreak = true;
+      _faceUserAtMs = frameMs;
+      _notUserChecks = 0;
       _strikes = 0;
       _otherPersonBox = null;
-      if (relearn) {
-        reason = 'user (face); look re-learned';
-      } else {
-        reason = before == SubjectLockState.otherPerson
-            ? 'user is back (face)'
-            : 'user (face)';
+      reason = relearn
+          ? 'user (face); look re-learned'
+          : before == SubjectLockState.locked
+          ? 'user (face)'
+          : 'user confirmed (face)';
+    } else {
+      _faceUserAtMs = null;
+      _notUserChecks++;
+      if (_state != SubjectLockState.otherPerson &&
+          _notUserChecks >= faceOtherChecks) {
+        _becomeOther(frameMs, _last?.box);
+      } else if (_state == SubjectLockState.locked) {
+        _state = SubjectLockState.verifying;
       }
+      reason = _state == SubjectLockState.otherPerson
+          ? 'other person (face)'
+          : 'face does not match';
     }
     return _faceResult(cosine, _state != before, reason, verdict: verdict);
   }
@@ -395,7 +436,8 @@ class SubjectLock {
     _face.reset();
     _stats.bootstrap(const <double>[]);
     _breakSinceLock = false;
-    _verifiedSinceBreak = true;
+    _faceUserAtMs = null;
+    _notUserChecks = 0;
     _strikes = 0;
     _matches = 0;
     _otherPersonBox = null;
@@ -421,15 +463,20 @@ class SubjectLock {
     bool changed,
     String reason, {
     FaceVerdict verdict = FaceVerdict.none,
+    bool faceConflict = false,
   }) => FaceCheckResult(
     cosine: cosine,
     verdict: verdict,
     state: _state,
     changedState: changed,
     reason: reason,
+    faceConflict: faceConflict,
   );
 
-  SubjectDecision _awaitPhoto(SubjectObservation obs, bool isBreak) {
+  /// False when there is nothing to prove anyone with.
+  bool get _canVerify => _face.hasTemplate || hasSignature;
+
+  SubjectDecision _awaitPhoto(SubjectObservation obs, String? breakReason) {
     // The photo needs a near person whose colours can be read.
     final bool ready =
         obs.enrollEligible && (obs.torso != null || obs.head != null);
@@ -440,7 +487,7 @@ class SubjectLock {
           obs.anchorIsShoulders != _holdStillAnchorIsShoulders ||
           obs.anchor.distanceTo(start) >
               holdStillMaxMove * max(obs.bodyScale, 1.0);
-      if (!ready || isBreak || moved) {
+      if (!ready || breakReason != null || moved) {
         // Faces collected so far may be someone else's: start over.
         _state = SubjectLockState.waitingForUser;
         _face.reset();
@@ -450,12 +497,12 @@ class SubjectLock {
         _enrollTorso.clear();
         _enrollHead.clear();
         _enrolledFrames = 0;
-        final SubjectDecision first = _enroll(obs, false);
+        final SubjectDecision first = _enroll(obs, null);
         return SubjectDecision(
           state: first.state,
           isUser: first.isUser,
           similarity: null,
-          isBreak: isBreak,
+          breakReason: breakReason,
           isPhotoFrame: true,
           reason: 'reference photo taken',
         );
@@ -472,7 +519,7 @@ class SubjectLock {
       state: _state,
       isUser: false,
       similarity: null,
-      isBreak: isBreak,
+      breakReason: breakReason,
       holdStillRemainingMs: holding
           ? max(0, holdStillMs - (obs.tMs - _holdStillStartMs))
           : null,
@@ -482,12 +529,12 @@ class SubjectLock {
     );
   }
 
-  SubjectDecision _enroll(SubjectObservation obs, bool isBreak) {
+  SubjectDecision _enroll(SubjectObservation obs, String? breakReason) {
     // Learn ONE continuous person: a break means the next frames may be
     // someone else's, so take the photo again.
-    if (isBreak) {
+    if (breakReason != null) {
       relock();
-      return _awaitPhoto(obs, isBreak);
+      return _awaitPhoto(obs, breakReason);
     }
     if (obs.enrollEligible) {
       if (obs.torso != null) _enrollTorso.add(obs.torso!);
@@ -499,7 +546,7 @@ class SubjectLock {
         state: _state,
         isUser: false,
         similarity: null,
-        isBreak: isBreak,
+        breakReason: breakReason,
         reason: 'learning the user ($_enrolledFrames/$enrollFrames)',
       );
     }
@@ -519,13 +566,12 @@ class SubjectLock {
     _state = SubjectLockState.locked;
     _breakSinceLock = false;
     // The photo is the verification.
-    _verifiedSinceBreak = true;
     _framesSinceBreak = recentBreakFrames;
     return SubjectDecision(
       state: _state,
       isUser: true,
       similarity: null,
-      isBreak: isBreak,
+      breakReason: breakReason,
       reason: hasSignature
           ? 'locked on the user'
           : 'locked without colours (face / movement only)',
@@ -538,7 +584,7 @@ class SubjectLock {
     return frames.sublist(max(0, end - liveWindowFrames), end);
   }
 
-  SubjectDecision _check(SubjectObservation obs, bool isBreak) {
+  SubjectDecision _check(SubjectObservation obs, String? breakReason) {
     _push(_liveTorso, obs.torso);
     _push(_liveHead, obs.head);
     final double? sim = _match(_liveTorso, _liveHead);
@@ -552,72 +598,57 @@ class SubjectLock {
       _matches = 0;
     }
 
-    final FaceVerdict face = _face.verdict(obs.tMs);
-    final bool justBroke = _framesSinceBreak < recentBreakFrames;
+    final bool hasFace = _face.hasTemplate;
     String reason;
     if (_state == SubjectLockState.locked) {
-      final int needed = justBroke
-          ? confirmFramesAfterBreak
-          : confirmFramesDrift;
-      if (_faceSaysOther(face)) {
-        _becomeOther(obs.tMs, obs.box);
-        reason = _faceOtherReason(face);
-      } else if (_strikes >= needed && face != FaceVerdict.user) {
-        _becomeOther(obs.tMs, obs.box);
-        reason = 'other person (look differs, $_strikes frames)';
+      final int? faceAt = _faceUserAtMs;
+      final bool faceVouches = faceAt != null && obs.tMs - faceAt <= faceTrustMs;
+      if (_strikes >= confirmFramesDrift && !faceVouches) {
+        // Slow drift onto someone else, or the user's clothes or light
+        // changed. The face tells which; without one the look has to decide.
+        if (hasFace) {
+          _state = SubjectLockState.verifying;
+          reason = 'look differs ($_strikes frames): checking the face';
+        } else {
+          _becomeOther(obs.tMs, obs.box);
+          reason = 'other person (look differs, $_strikes frames)';
+        }
       } else {
-        reason = _strikes == 0 ? 'user' : 'user? ($_strikes/$needed)';
+        reason = _strikes == 0 ? 'user' : 'user? ($_strikes/$confirmFramesDrift)';
       }
+    } else if (!hasFace && _matches >= recoverFrames) {
+      _state = SubjectLockState.locked;
+      _strikes = 0;
+      _otherPersonBox = null;
+      reason = 'user is back (look)';
+    } else if (_state == SubjectLockState.verifying &&
+        // With a face, give it time to answer first: it can clear the user.
+        _strikes >= (hasFace ? confirmFramesDrift : confirmFramesAfterBreak)) {
+      _becomeOther(obs.tMs, obs.box);
+      reason = 'other person (look differs, $_strikes frames)';
+    } else if (_state == SubjectLockState.verifying) {
+      reason = hasFace
+          ? 'waiting for a clear face'
+          : 'waiting for a matching look';
     } else {
-      if (face == FaceVerdict.user) {
-        _state = SubjectLockState.locked;
-        _verifiedSinceBreak = true;
-        _strikes = 0;
-        _otherPersonBox = null;
-        reason = 'user is back (face)';
-      } else if (_matches >= recoverFrames && !_face.seenSinceClear) {
-        // Only when no face was checked since the change: a visible face
-        // that is not the user's outranks a matching look.
-        _state = SubjectLockState.locked;
-        _strikes = 0;
-        _otherPersonBox = null;
-        reason = 'user is back (look)';
-      } else {
-        // Follow the wrong person, except while they are being hidden (a
-        // pose seen then is only the part of them the mask did not cover).
-        if (!_isSteering(obs.tMs)) _otherPersonBox = obs.box ?? _otherPersonBox;
-        reason = face == FaceVerdict.none
-            ? 'other person'
-            : 'other person (face ${face.name})';
-      }
+      // Follow the wrong person, except while they are being hidden (a pose
+      // seen then is only the part of them the mask did not cover).
+      if (!_isSteering(obs.tMs)) _otherPersonBox = obs.box ?? _otherPersonBox;
+      reason = 'other person';
     }
 
-    // Right after a break the first mismatching frame already does not count,
-    // so a newly tracked person never gets a free frame (unless the face
-    // already says it is the user).
-    final bool isUser =
-        _state == SubjectLockState.locked &&
-        !(justBroke && _strikes > 0 && face != FaceVerdict.user);
-    if (isUser && !justBroke && sim != null) _stats.add(sim);
+    final bool isUser = _state == SubjectLockState.locked;
+    if (isUser && _framesSinceBreak >= recentBreakFrames && sim != null) {
+      _stats.add(sim);
+    }
     return SubjectDecision(
       state: _state,
       isUser: isUser,
       similarity: sim,
-      isBreak: isBreak,
-      faceVerdict: face,
+      breakReason: breakReason,
       reason: sim == null ? '$reason, no colour evidence' : reason,
     );
   }
-
-  /// Face "other" always; face "unsure" only after a break, until the face
-  /// has said "user" again (a person who may be new must prove it).
-  bool _faceSaysOther(FaceVerdict face) =>
-      face == FaceVerdict.other ||
-      (face == FaceVerdict.unsure && !_verifiedSinceBreak);
-
-  String _faceOtherReason(FaceVerdict face) => face == FaceVerdict.other
-      ? 'other person (face)'
-      : 'other person (face not the user\'s after a change)';
 
   void _becomeOther(int tMs, Rectangle<double>? box) {
     _state = SubjectLockState.otherPerson;
@@ -655,15 +686,18 @@ class SubjectLock {
     return false;
   }
 
-  bool _isBreak(SubjectObservation obs) {
+  /// Why [obs] may be someone new, null when it continues the tracked person.
+  String? _breakReasonFor(SubjectObservation obs) {
     final SubjectObservation? last = _last;
-    if (last == null) return true;
+    if (last == null) return 'pose reappeared';
     final int dt = obs.tMs - last.tMs;
-    if (dt < 0 || dt > gapMs) return true;
-    if (obs.anchorIsShoulders != last.anchorIsShoulders) return false;
+    if (dt < 0 || dt > gapMs) return 'gap ${dt}ms';
+    if (obs.anchorIsShoulders != last.anchorIsShoulders) return null;
     final double jump = obs.anchor.distanceTo(last.anchor) /
         max(last.bodyScale, 1.0);
-    return jump > jumpBase + jumpPer100Ms * dt / 100;
+    return jump > jumpBase + jumpPer100Ms * dt / 100
+        ? 'jump ${jump.toStringAsFixed(2)} body widths'
+        : null;
   }
 
   void _push(List<AppearanceHistogram> window, AppearanceHistogram? frame) {

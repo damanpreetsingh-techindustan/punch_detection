@@ -16,6 +16,7 @@ import 'sface_embedder.dart';
 class SubjectFaceChecker {
   final PoseSubjectMapper _mapper;
   IFaceEmbedder? _embedder;
+  bool _loadFailed = false;
   bool _busy = false;
   int _generation = 0;
 
@@ -31,6 +32,7 @@ class SubjectFaceChecker {
   /// lock simply works on look and movement.
   Future<void> load() async {
     _embedder ??= await SFaceEmbedder.create();
+    _loadFailed = _embedder == null;
   }
 
   /// Call for every tracked frame after [SubjectLock.observe].
@@ -43,6 +45,8 @@ class SubjectFaceChecker {
     void Function()? onNoFace,
   }) {
     final IFaceEmbedder? embedder = _embedder;
+    // No model means no check can ever prove the user: do not wait for one.
+    if (_loadFailed) lock.dropFaceTemplate();
     if (embedder == null || _busy || !lock.wantsFaceCheck(frameMs)) return;
     final FacePoints? face = _mapper.checkableFace(pose, pixels);
     if (face == null) return;

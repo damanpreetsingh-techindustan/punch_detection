@@ -2,124 +2,92 @@ import 'dart:math';
 
 import '../../../../core/utils/constants.dart';
 
-/// What the recent face checks say about the tracked person.
+/// What a face check says about the tracked person.
 enum FaceVerdict {
-  /// Not enough recent face checks (face hidden, turned or too small).
+  /// No check result (ignored, or no template yet).
   none,
 
   /// The face matches the reference photo.
   user,
 
-  /// Checks seen, but neither clearly the user nor clearly someone else.
-  unsure,
-
-  /// The face clearly is not the person in the reference photo.
+  /// The face does not match the reference photo.
   other,
 }
 
 /// Face part of the subject lock: the user's face template, built from the
-/// faces seen while the reference photo was taken, and a verdict from the
-/// last few face checks.
+/// faces seen while the reference photo was taken.
 ///
-/// One face check can be wrong (blur, a glove at the edge of the face), so
-/// the verdict uses the median of the last [votes] checks within [maxAgeMs].
-/// The user / other levels sit around the face model's published operating
-/// point (SFace: cosine 0.363 on LFW), with an "unsure" band in between.
+/// Every check is decided on its own against [userCosine]. Faces of the same
+/// person and of different people score far apart (real sessions: user
+/// 0.51-0.94, others 0.05-0.43), so one check is meaningful, and voting over
+/// several would keep calling a new person "user" for two more checks.
 ///
 /// Pure: no clocks, no ML Kit / TFLite; embeddings come in as numbers.
 class FaceIdentity {
   final double userCosine;
-  final double otherCosine;
-  final int votes;
   final int templateFaces;
   final int maxTemplateFaces;
-  final int maxAgeMs;
 
   FaceIdentity({
     this.userCosine = AppConstants.subjectFaceUserCosine,
-    this.otherCosine = AppConstants.subjectFaceOtherCosine,
-    this.votes = AppConstants.subjectFaceVotes,
     this.templateFaces = AppConstants.subjectFaceTemplateFaces,
     this.maxTemplateFaces = AppConstants.subjectFaceMaxTemplateFaces,
-    this.maxAgeMs = AppConstants.subjectFaceMaxAgeMs,
   });
 
   final List<List<double>> _enrolled = <List<double>>[];
   List<double>? _template;
-  final List<double> _scores = <double>[];
-  final List<int> _scoreTimes = <int>[];
 
   bool get hasTemplate => _template != null;
   int get enrolledFaces => _enrolled.length;
 
-  /// True when a face check was scored since the last [clearScores].
-  bool get seenSinceClear => _scores.isNotEmpty;
-
-  /// Face checks scored since the last [clearScores] (kept up to 4 × votes).
-  int get recentScoreCount => _scores.length;
-
   /// Adds a face seen while the reference photo is taken. The template is the
   /// average of the first [templateFaces] … [maxTemplateFaces] faces.
-  void enroll(List<double> embedding) {
-    if (_enrolled.length >= maxTemplateFaces) return;
-    _enrolled.add(_unit(embedding));
-    if (_enrolled.length >= templateFaces) {
-      final List<double> sum = List<double>.filled(embedding.length, 0);
-      for (final List<double> e in _enrolled) {
-        for (int i = 0; i < sum.length; i++) {
-          sum[i] += e[i];
-        }
-      }
-      _template = _unit(sum);
+  ///
+  /// Returns false, adding nothing, when the face is not the same person as
+  /// the faces so far: the tracker moved to someone else during the photo.
+  /// An average of two people would accept both of them.
+  bool enroll(List<double> embedding) {
+    if (_enrolled.length >= maxTemplateFaces) return true;
+    final List<double> face = _unit(embedding);
+    if (_enrolled.isNotEmpty && _dot(_averageOfEnrolled(), face) < userCosine) {
+      return false;
     }
+    _enrolled.add(face);
+    if (_enrolled.length >= templateFaces) _template = _averageOfEnrolled();
+    return true;
   }
 
   /// Cosine similarity with the template (null without a template).
   double? score(List<double> embedding) {
     final List<double>? t = _template;
-    if (t == null) return null;
-    final List<double> e = _unit(embedding);
-    double dot = 0;
-    for (int i = 0; i < t.length; i++) {
-      dot += t[i] * e[i];
-    }
-    return dot;
+    return t == null ? null : _dot(t, _unit(embedding));
   }
 
-  void addScore(double score, int tMs) {
-    _scores.add(score);
-    _scoreTimes.add(tMs);
-    if (_scores.length > votes * 4) {
-      _scores.removeAt(0);
-      _scoreTimes.removeAt(0);
-    }
-  }
-
-  /// Median of the last [votes] scores not older than [maxAgeMs].
-  FaceVerdict verdict(int nowMs) {
-    final List<double> recent = <double>[];
-    for (int i = _scores.length - 1; i >= 0 && recent.length < votes; i--) {
-      if (nowMs - _scoreTimes[i] <= maxAgeMs) recent.add(_scores[i]);
-    }
-    if (recent.length < votes) return FaceVerdict.none;
-    recent.sort();
-    final double median = recent[recent.length ~/ 2];
-    if (median >= userCosine) return FaceVerdict.user;
-    if (median < otherCosine) return FaceVerdict.other;
-    return FaceVerdict.unsure;
-  }
-
-  /// Forget the recent checks (the tracked person may have changed).
-  void clearScores() {
-    _scores.clear();
-    _scoreTimes.clear();
-  }
+  FaceVerdict verdictFor(double cosine) =>
+      cosine >= userCosine ? FaceVerdict.user : FaceVerdict.other;
 
   /// Forget everything, including the template (new reference photo).
   void reset() {
     _enrolled.clear();
     _template = null;
-    clearScores();
+  }
+
+  List<double> _averageOfEnrolled() {
+    final List<double> sum = List<double>.filled(_enrolled.first.length, 0);
+    for (final List<double> e in _enrolled) {
+      for (int i = 0; i < sum.length; i++) {
+        sum[i] += e[i];
+      }
+    }
+    return _unit(sum);
+  }
+
+  static double _dot(List<double> a, List<double> b) {
+    double dot = 0;
+    for (int i = 0; i < a.length; i++) {
+      dot += a[i] * b[i];
+    }
+    return dot;
   }
 
   static List<double> _unit(List<double> v) {

@@ -101,28 +101,41 @@ void main() {
       expect(face.score(axis)!, greaterThan(0.95));
     });
 
-    test('verdict is the median of the last 3 recent checks', () {
+    test('each check decides on its own', () {
       final FaceIdentity face = FaceIdentity();
-      for (int i = 0; i < 3; i++) {
-        face.enroll(axis);
-      }
-      void add(double cosine, int t) =>
-          face.addScore(face.score(atCosine(cosine))!, t);
-      add(0.8, 0);
-      add(0.8, 100);
-      expect(face.verdict(100), FaceVerdict.none); // only 2 checks
-      add(0.1, 200); // one bad check does not flip it
-      expect(face.verdict(200), FaceVerdict.user);
-      add(0.1, 300);
-      expect(face.verdict(300), FaceVerdict.other);
-      add(0.38, 400);
-      add(0.38, 500);
-      expect(face.verdict(500), FaceVerdict.unsure);
-      // Older than the max age: no verdict.
-      expect(face.verdict(500 + face.maxAgeMs + 1000), FaceVerdict.none);
-      face.clearScores();
-      expect(face.seenSinceClear, isFalse);
-      expect(face.verdict(500), FaceVerdict.none);
+      expect(face.verdictFor(0.72), FaceVerdict.user);
+      expect(face.verdictFor(face.userCosine), FaceVerdict.user);
+      expect(face.verdictFor(0.43), FaceVerdict.other);
+      expect(face.verdictFor(0.165), FaceVerdict.other);
+    });
+
+    test('the template is never a blend: a different face is refused', () {
+      final FaceIdentity face = FaceIdentity();
+      expect(face.enroll(axis), isTrue);
+      expect(face.enroll(atCosine(0.1)), isFalse);
+      expect(face.enrolledFaces, 1);
+      expect(face.enroll(atCosine(0.9)), isTrue);
+      expect(face.enroll(atCosine(0.9)), isTrue);
+      expect(face.hasTemplate, isTrue);
+      expect(face.score(axis)!, greaterThan(0.9));
+      face.reset();
+      expect(face.hasTemplate, isFalse);
+      expect(face.enrolledFaces, 0);
+    });
+
+    test('the face checked is the one on the pose, not the biggest', () {
+      const FacePoints pose = FacePoints(
+        leftEye: Point<double>(90, 90),
+        rightEye: Point<double>(110, 90),
+        nose: Point<double>(100, 100),
+        leftMouth: Point<double>(92, 112),
+        rightMouth: Point<double>(108, 112),
+      );
+      const Rectangle<double> own = Rectangle<double>(80, 70, 40, 50);
+      const Rectangle<double> biggerNeighbour = Rectangle<double>(125, 20, 90, 110);
+      expect(pose.indexOfOwnFace(const <Rectangle<double>>[biggerNeighbour, own]), 1);
+      expect(pose.indexOfOwnFace(const <Rectangle<double>>[biggerNeighbour]), isNull);
+      expect(pose.indexOfOwnFace(const <Rectangle<double>>[]), isNull);
     });
   });
 

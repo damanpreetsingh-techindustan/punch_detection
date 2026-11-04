@@ -335,6 +335,8 @@ void main() {
         frameMs: nextFrameMs(),
         pixels: redShirt,
       );
+      // Blocked from the first frame, before anything has proven who it is.
+      expect(controller.subjectLockState.value, SubjectLockState.verifying);
       expect(controller.liveCameraGateState.value, CameraGateState.noPerson);
       punchWithVibration();
       expect(controller.punchCount.value, 0);
@@ -342,6 +344,12 @@ void main() {
         controller.telemetryEvents.map((e) => e.decisionCode),
         contains('IMPACT_REJECTED_CAMERA_NO_PERSON'),
       );
+      controller.analyzePoseForTesting(
+        shifted(personPose(), 400),
+        frameMs: nextFrameMs(),
+        pixels: redShirt,
+      );
+      expect(controller.subjectLockState.value, SubjectLockState.otherPerson);
       expect(controller.summaryTable.toCsv(), contains('other person'));
     });
 

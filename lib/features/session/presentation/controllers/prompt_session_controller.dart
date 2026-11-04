@@ -1576,6 +1576,8 @@ class PromptSessionController extends GetxController {
                 );
               } else {
                 // Camera covered or no body visible -> Reset pose & evaluation scores to 0!
+                // The tracker lost the person: the next pose may be anyone.
+                _subjectLock.poseLost();
                 livePose.value = null;
                 visionConfidence.value = 0;
                 liveEvaluationResult.value =
@@ -1697,33 +1699,33 @@ class PromptSessionController extends GetxController {
         pixels: pixels,
         enrollEligible: isNear,
       );
-      if (observation != null) {
-        final SubjectDecision decision = _subjectLock.observe(observation);
-        subjectLockState.value = decision.state;
-        subjectHoldStillSeconds.value =
-            ((decision.holdStillRemainingMs ?? 0) / 1000).ceil();
-        if (decision.isPhotoFrame) {
-          unawaited(_takeReferencePhoto(pixels, observation));
-        }
-        // Face check in the background when one is due (never awaited).
-        _faceChecker.maybeCheck(
-          _subjectLock,
-          pose,
-          pixels,
-          frameMs,
-          (FaceCheckResult result, int _) {
-            if (result.changedState) subjectLockState.value = result.state;
-          },
-        );
-        if (!decision.isUser) {
-          _temporalPunchDetector.resetTrackers();
-          _setInvalidEvaluationResult(
-            _subjectLock.isLocked
-                ? 'Other person in view'
-                : 'Waiting for the reference photo',
-          );
-          return;
-        }
+      // Too few landmarks to tell who this is: it cannot count as the user.
+      if (observation == null) {
+        _temporalPunchDetector.resetTrackers();
+        _setInvalidEvaluationResult(_subjectLock.blockedMessage);
+        return;
+      }
+      final SubjectDecision decision = _subjectLock.observe(observation);
+      subjectLockState.value = decision.state;
+      subjectHoldStillSeconds.value =
+          ((decision.holdStillRemainingMs ?? 0) / 1000).ceil();
+      if (decision.isPhotoFrame) {
+        unawaited(_takeReferencePhoto(pixels, observation));
+      }
+      // Face check in the background when one is due (never awaited).
+      _faceChecker.maybeCheck(
+        _subjectLock,
+        pose,
+        pixels,
+        frameMs,
+        (FaceCheckResult result, int _) {
+          if (result.changedState) subjectLockState.value = result.state;
+        },
+      );
+      if (!decision.isUser) {
+        _temporalPunchDetector.resetTrackers();
+        _setInvalidEvaluationResult(_subjectLock.blockedMessage);
+        return;
       }
     }
 

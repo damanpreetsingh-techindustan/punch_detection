@@ -15,7 +15,8 @@ import '../../domain/subject_lock/i_face_embedder.dart';
 ///     image;
 ///  2. ML Kit face detection with contours on that cut-out: eye centres from
 ///     the eye outlines, nose tip, mouth corners from the lip outline (the
-///     coarse pose points are not precise enough to align a face);
+///     coarse pose points are not precise enough to align a face). Only the
+///     face on the pose's own nose is used: the cut-out can show a neighbour;
 ///  3. align to the 112 × 112 template and run SFace (TFLite, int8 weights,
 ///     assets/models/README.md) in a background isolate.
 ///
@@ -76,11 +77,17 @@ class SFaceEmbedder implements IFaceEmbedder {
         ),
       ),
     );
-    if (faces.isEmpty) return null;
-    final Face face = faces.reduce(
-      (Face a, Face b) => a.boundingBox.width >= b.boundingBox.width ? a : b,
-    );
-    final FacePoints? points = _facePoints(face, head.uprightOrigin);
+    final int? own = poseFace.indexOfOwnFace(<Rectangle<double>>[
+      for (final Face f in faces)
+        Rectangle<double>(
+          head.uprightOrigin.x + f.boundingBox.left,
+          head.uprightOrigin.y + f.boundingBox.top,
+          f.boundingBox.width,
+          f.boundingBox.height,
+        ),
+    ]);
+    if (own == null) return null;
+    final FacePoints? points = _facePoints(faces[own], head.uprightOrigin);
     if (points == null) return null;
 
     final Float32List input = FaceAlignment.alignedRgb(pixels, points);

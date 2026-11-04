@@ -2,7 +2,6 @@ import 'dart:math';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:punch_detection_demo/features/vision_detection/domain/subject_lock/appearance_signature.dart';
-import 'package:punch_detection_demo/features/vision_detection/domain/subject_lock/face_identity.dart';
 import 'package:punch_detection_demo/features/vision_detection/domain/subject_lock/subject_lock.dart';
 
 const YuvColor blueShirt = YuvColor(41, 240, 110);
@@ -144,15 +143,15 @@ void main() {
     expect(lock.state, SubjectLockState.locked);
   });
 
-  test('a different person tracked after a jump is blocked from the first '
-      'frame and confirmed after 2', () {
+  test('no face template: a different person after a jump is blocked from the '
+      'first frame and confirmed after 2', () {
     enroll();
     final SubjectDecision first = feed(
       (int ms) => person(ms, x: 300 + 2 * bodyWidth, shirt: redShirt),
     );
     expect(first.isBreak, isTrue);
     expect(first.isUser, isFalse);
-    expect(first.state, SubjectLockState.locked);
+    expect(first.state, SubjectLockState.verifying);
     final SubjectDecision second = feed(
       (int ms) => person(ms, x: 300 + 2 * bodyWidth, shirt: redShirt),
     );
@@ -161,15 +160,19 @@ void main() {
     expect(lock.steerBox(t), isNotNull);
   });
 
-  test('the user coming back (jump) counts at once', () {
+  test('no face template: the user coming back counts after 2 matching frames',
+      () {
     enroll();
     for (int i = 0; i < 5; i++) {
       feed((int ms) => person(ms, x: 700, shirt: redShirt));
     }
     expect(lock.state, SubjectLockState.otherPerson);
     final SubjectDecision back = feed((int ms) => person(ms, x: 300));
-    expect(back.isUser, isTrue);
-    expect(back.state, SubjectLockState.locked);
+    expect(back.isBreak, isTrue);
+    expect(back.isUser, isFalse);
+    expect(back.state, SubjectLockState.otherPerson);
+    expect(feed((int ms) => person(ms, x: 300)).isUser, isTrue);
+    expect(lock.state, SubjectLockState.locked);
   });
 
   test('the user taking the same spot again counts once the window agrees',
@@ -203,14 +206,56 @@ void main() {
     expect(lock.state, SubjectLockState.otherPerson);
   });
 
-  test('missing colour evidence never blocks (fail-open)', () {
+  test('missing evidence does not block the person being followed', () {
     enroll();
+    final SubjectDecision d = feed((int ms) => person(ms, shirt: null));
+    expect(d.isBreak, isFalse);
+    expect(d.similarity, isNull);
+    expect(d.isUser, isTrue);
+  });
+
+  test('missing evidence never proves a pose that may be someone new', () {
+    enroll();
+    // This is how the other person's punches got through in the real session:
+    // right after a break, nothing to compare, so they counted as the user.
     final SubjectDecision d = feed(
       (int ms) => person(ms, x: 300 + 2 * bodyWidth, shirt: null),
     );
     expect(d.isBreak, isTrue);
     expect(d.similarity, isNull);
-    expect(d.isUser, isTrue);
+    expect(d.isUser, isFalse);
+    expect(d.state, SubjectLockState.verifying);
+  });
+
+  test('a lost pose makes the next one a break, however close it is', () {
+    enroll();
+    // The real switch: pose gone for 283 ms and back nearby, inside the gap
+    // and jump limits.
+    lock.poseLost();
+    t += 283;
+    final SubjectDecision next = lock.observe(person(t, x: 320));
+    expect(next.isBreak, isTrue);
+    expect(next.isUser, isFalse);
+  });
+
+  test('a break does not clear another person', () {
+    enroll();
+    for (int i = 0; i < 3; i++) {
+      feed((int ms) => person(ms, x: 700, shirt: redShirt));
+    }
+    expect(lock.state, SubjectLockState.otherPerson);
+    // Steering hides them, then they are found again: the old loop that
+    // flipped to "locked" every 1.85 s and let their punches through.
+    for (int i = 0; i < 20; i++) {
+      lock.poseLost();
+      t += 300;
+      final SubjectDecision d = lock.observe(
+        person(t, x: 700, shirt: redShirt),
+      );
+      expect(d.isBreak, isTrue);
+      expect(d.isUser, isFalse);
+      expect(d.state, SubjectLockState.otherPerson);
+    }
   });
 
   test('retaking the photo locks on the person now in front of the camera',
@@ -229,13 +274,15 @@ void main() {
     );
   });
 
-  test('known limit: a person in the same clothes is accepted', () {
+  test('known limit without a face template: the same clothes are accepted',
+      () {
     enroll();
     final SubjectDecision d = feed(
       (int ms) => person(ms, x: 300 + 2 * bodyWidth),
     );
     expect(d.isBreak, isTrue);
-    expect(d.isUser, isTrue);
+    expect(d.isUser, isFalse);
+    expect(feed((int ms) => person(ms, x: 300 + 2 * bodyWidth)).isUser, isTrue);
   });
 
   test('steering hides the other person for a while, then pauses', () {
@@ -268,7 +315,8 @@ void main() {
     ];
     final List<double> userFace = faceAt(1);
     final List<double> otherFace = faceAt(0.1);
-    final List<double> unsureFace = faceAt(0.38);
+    // Just below the level; the best a different person scored in tests.
+    final List<double> closeFace = faceAt(0.43);
 
     /// One frame, then a face check of that frame when the lock wants one.
     SubjectDecision frameWithFace(
@@ -305,7 +353,7 @@ void main() {
       // break (gap), so whoever stands there must match again.
       void startSession() => t += 60000;
 
-      test('the user counts from the first session frame', () {
+      test('the user counts as soon as their face is checked', () {
         enrollWithFace();
         startSession();
         final SubjectDecision first = frameWithFace(
@@ -313,7 +361,8 @@ void main() {
           userFace,
         );
         expect(first.isBreak, isTrue);
-        expect(first.isUser, isTrue);
+        expect(first.isUser, isFalse);
+        expect(lock.state, SubjectLockState.locked);
         for (int i = 0; i < 10; i++) {
           expect(
             frameWithFace((int ms) => person(ms, x: 320), userFace).isUser,
@@ -326,11 +375,14 @@ void main() {
       test('someone else at the start of the session is blocked', () {
         enrollWithFace();
         startSession();
-        final SubjectDecision first = feed(
-          (int ms) => person(ms, shirt: redShirt),
-        );
-        expect(first.isUser, isFalse);
-        feed((int ms) => person(ms, shirt: redShirt));
+        // Face not visible: no proof, so nothing counts. Once the look has
+        // disagreed long enough, it is called someone else (and steered).
+        for (int i = 0; i < lock.confirmFramesDrift; i++) {
+          final SubjectDecision d = feed(
+            (int ms) => person(ms, shirt: redShirt),
+          );
+          expect(d.isUser, isFalse, reason: 'frame $i');
+        }
         expect(lock.state, SubjectLockState.otherPerson);
       });
 
@@ -354,28 +406,27 @@ void main() {
       ];
       expect(d.first.isBreak, isTrue);
       expect(lock.state, SubjectLockState.otherPerson);
-      expect(d.last.isUser, isFalse);
-      expect(d.last.faceVerdict, FaceVerdict.other);
+      expect(d.map((SubjectDecision x) => x.isUser), everyElement(isFalse));
     });
 
     test('once someone else is tracked, a matching look alone cannot bring '
         'the lock back while their face is visible', () {
       enrollWithFace();
       for (int i = 0; i < 3; i++) {
-        frameWithFace((int ms) => person(ms, x: 700, shirt: redShirt), unsureFace);
+        frameWithFace((int ms) => person(ms, x: 700, shirt: redShirt), closeFace);
       }
       expect(lock.state, SubjectLockState.otherPerson);
       // They lean into a shadow: their shirt now looks like the user's,
-      // but their face is not the user's (unsure).
+      // but their face is not the user's.
       for (int i = 0; i < 20; i++) {
         final SubjectDecision d = frameWithFace(
           (int ms) => person(ms, x: 700),
-          unsureFace,
+          closeFace,
         );
         expect(d.isUser, isFalse, reason: 'frame $i');
       }
       // The user's face (same track, no jump, so checks run at the normal
-      // interval): back after three checks, within a second.
+      // interval): back on the first check.
       int frames = 0;
       while (lock.state != SubjectLockState.locked && frames < 60) {
         frameWithFace((int ms) => person(ms, x: 700), userFace);
@@ -385,16 +436,73 @@ void main() {
       expect(frames * frameMs, lessThanOrEqualTo(1000));
     });
 
-    test('without a face in view, a matching look still brings the lock back',
-        () {
+    test('without a face in view, a matching look alone proves nothing', () {
       enrollWithFace();
-      for (int i = 0; i < 3; i++) {
-        feed((int ms) => person(ms, x: 700, shirt: redShirt));
+      // In the real session look reached 0.92-0.94 for a face scoring 0.3.
+      for (int i = 0; i < 30; i++) {
+        expect(feed((int ms) => person(ms, x: 700)).isUser, isFalse);
       }
+      expect(lock.state, SubjectLockState.verifying);
+      frameWithFace((int ms) => person(ms, x: 700), userFace);
+      expect(lock.state, SubjectLockState.locked);
+    });
+
+    test('a face that stops matching stops counting at once, even with no '
+        'break, and one good check brings it back', () {
+      enrollWithFace();
+      void faceCheck(List<double> face) {
+        lock.faceCheckStarted(t);
+        lock.addFace(face, t);
+      }
+
+      // The real switch was 0.72 → 0.165 with no break seen; voting over the
+      // last 3 checks still called that "user".
+      faceCheck(otherFace);
+      expect(lock.state, SubjectLockState.verifying);
+      expect(feed((int ms) => person(ms)).isUser, isFalse);
+      // Blur on one check is not another person: nobody is hidden from ML Kit.
+      expect(lock.steerBox(t), isNull);
+      faceCheck(userFace);
+      expect(lock.state, SubjectLockState.locked);
+      expect(feed((int ms) => person(ms)).isUser, isTrue);
+      // A second failed check in a row is another person.
+      faceCheck(otherFace);
+      faceCheck(otherFace);
       expect(lock.state, SubjectLockState.otherPerson);
-      for (int i = 0; i < lock.liveWindowFrames; i++) {
-        feed((int ms) => person(ms, x: 700));
+      expect(lock.steerBox(t), isNotNull);
+    });
+
+    test('the proof is carried while the same person is followed: a hidden '
+        'face in guard keeps counting', () {
+      enrollWithFace();
+      for (int i = 0; i < 300; i++) {
+        expect(feed((int ms) => person(ms)).isUser, isTrue, reason: 'frame $i');
       }
+    });
+
+    test('two different faces during the photo restart it, so the template '
+        'is never a blend of two people', () {
+      // Hold still with the user's face, then the tracker moves to someone
+      // else without any jump.
+      feed((int ms) => person(ms));
+      expect(lock.state, SubjectLockState.holdStill);
+      lock.addFace(userFace, t);
+      final FaceCheckResult result = lock.addFace(otherFace, t);
+      expect(result.faceConflict, isTrue);
+      expect(result.changedState, isTrue);
+      expect(lock.state, SubjectLockState.waitingForUser);
+      expect(lock.hasFaceTemplate, isFalse);
+      expect(lock.isLocked, isFalse);
+    });
+
+    test('with no way to run face checks the lock falls back to the look', () {
+      enrollWithFace();
+      feed((int ms) => person(ms, x: 700));
+      expect(lock.state, SubjectLockState.verifying);
+      lock.dropFaceTemplate();
+      expect(lock.hasFaceTemplate, isFalse);
+      feed((int ms) => person(ms, x: 700));
+      feed((int ms) => person(ms, x: 700));
       expect(lock.state, SubjectLockState.locked);
     });
 
@@ -420,20 +528,17 @@ void main() {
       feed((int ms) => person(ms, x: 700)); // jump: maybe someone else
       final FaceCheckResult late = lock.addFace(otherFace, before);
       expect(late.reason, contains('ignored'));
-      expect(lock.state, SubjectLockState.locked);
+      expect(lock.state, SubjectLockState.verifying);
     });
 
-    test('checks run fast after a change, then every interval', () {
+    test('checks run fast while unproven, otherwise every interval', () {
       enrollWithFace();
-      // Steady tracking with a full window: only after the interval.
-      for (int i = 0; i < 3; i++) {
-        frameWithFace((int ms) => person(ms), userFace);
-      }
       lock.faceCheckStarted(t);
       feed((int ms) => person(ms));
       expect(lock.wantsFaceCheck(t), isFalse);
       expect(lock.wantsFaceCheck(t + lock.faceCheckIntervalMs), isTrue);
-      // After a jump the window is cleared: check right away.
+      // After a jump: check right away.
+      lock.faceCheckStarted(t);
       feed((int ms) => person(ms, x: 700));
       expect(lock.wantsFaceCheck(t), isTrue);
     });

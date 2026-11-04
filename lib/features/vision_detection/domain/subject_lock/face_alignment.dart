@@ -45,6 +45,27 @@ class FacePoints {
   ];
 
   double get eyeDistance => leftEye.distanceTo(rightEye);
+
+  /// Index of the detected face that belongs to this (pose) face: the box
+  /// around [nose] nearest its centre, null when no box contains it. A head
+  /// cut-out can also show a neighbour's face, and checking that one would
+  /// judge the wrong person.
+  int? indexOfOwnFace(List<Rectangle<double>> boxes) {
+    int? best;
+    double bestDistance = double.infinity;
+    for (int i = 0; i < boxes.length; i++) {
+      final Rectangle<double> box = boxes[i];
+      if (!box.containsPoint(nose)) continue;
+      final double distance = nose.distanceTo(
+        Point<double>(box.left + box.width / 2, box.top + box.height / 2),
+      );
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = i;
+      }
+    }
+    return best;
+  }
 }
 
 /// Rotation + uniform scale + translation:
