@@ -118,6 +118,10 @@ void main() {
       expect(controller.punchCount.value, 0, reason: 'waiting for vibration');
       quiet(70, 140);
       vibe(0.6, 140);
+      // A knock after the sound may be the next punch's knock, so it is only
+      // taken when the window closes (60 + 150 ms).
+      expect(controller.punchCount.value, 0);
+      quiet(150, 220);
       expect(controller.punchCount.value, 1);
     });
 
@@ -150,6 +154,7 @@ void main() {
       camera(CameraGateState.valid, 200);
       frame(95.0, 215);
       vibe(0.6, 230);
+      quiet(225, 380); // knock after the sound: taken when B's window closes
       expect(controller.punchCount.value, 1);
     });
 
@@ -162,6 +167,7 @@ void main() {
       camera(CameraGateState.valid, 250);
       frame(95.0, 260);
       vibe(0.6, 280);
+      quiet(270, 420); // knock after the sound: taken when the window closes
       expect(controller.punchCount.value, 2);
     });
 
@@ -171,11 +177,37 @@ void main() {
       vibe(0.6, 60);
       frame(95.0, 60);
       expect(controller.punchCount.value, 1);
-      quiet(70, 130);
+      quiet(70, 100);
+      vibe(0.6, 100);
+      frame(95.0, 100); // 40 ms later: inside the 60 ms knock lockout
+      quiet(110, 300);
+      expect(controller.punchCount.value, 1);
+    });
+
+    test('fast combo: a punch 70 ms later with its own knock counts', () {
+      quiet(0, 60);
+      camera(CameraGateState.valid, 50);
+      vibe(0.6, 60);
+      frame(95.0, 60);
+      expect(controller.punchCount.value, 1);
+      quiet(70, 120);
+      vibe(0.0, 120);
       vibe(0.6, 130);
-      frame(95.0, 130); // 70 ms later
+      frame(95.0, 130); // 70 ms later, past the 60 ms knock lockout
+      quiet(140, 300);
+      expect(controller.punchCount.value, 2);
+    });
+
+    test('a sound 70 ms after a punch without its own knock is not counted', () {
+      quiet(0, 60);
+      camera(CameraGateState.valid, 50);
+      vibe(0.6, 60);
+      frame(95.0, 60);
+      quiet(70, 130);
+      frame(95.0, 130); // echo-like: loud, but no new vibration
       quiet(140, 300);
       expect(controller.punchCount.value, 1);
+      expect(codes(), contains('IMPACT_REJECTED_NO_VIBRATION'));
     });
   });
 
@@ -308,9 +340,11 @@ void main() {
     }
 
     test('a hit hidden by the lockout is logged as suppressed', () {
+      // Pole mount keeps the long 160 ms lockout, where a hidden hit can be
+      // a separate punch and gets a summary row.
+      controller.mountType.value = MountType.pole;
       quiet(0, 60);
       camera(CameraGateState.valid, 50);
-      vibe(0.6, 60);
       frame(95.0, 60);
       quiet(70, 130);
       frame(95.0, 130); // 70 ms later: inside the 160 ms lockout

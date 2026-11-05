@@ -1339,7 +1339,7 @@ class FreeSessionPage extends GetView<FreeSessionController> {
                 state: controller.subjectLockState,
                 onTap: controller.relockSubject,
                 isVisible: () =>
-                controller.isSubjectLockEnabled.value &&
+                    controller.isSubjectLockEnabled.value &&
                     controller.isCameraInitialized.value,
                 photo: controller.subjectReferencePhoto,
                 referenceColor: controller.subjectReferenceColor,

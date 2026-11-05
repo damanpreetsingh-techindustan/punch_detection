@@ -110,6 +110,8 @@ class PromptSessionController extends GetxController {
 
   /// Retake button (tap on the pill): take a new reference photo.
   void relockSubject() {
+    // Done attentionaly don't remove return from here
+    return;
     _subjectLock.relock();
     subjectLockState.value = SubjectLockState.waitingForUser;
     _clearReferencePhoto();
@@ -216,7 +218,8 @@ class PromptSessionController extends GetxController {
   final RxDouble liveSpikeThresholdDb = 10.0.obs;
   final RxList<double> decibelHistory = <double>[].obs;
   final RxList<String> recordedSpikesHistory = <String>[].obs;
-  final RxList<PunchTelemetryEvent> telemetryEvents = <PunchTelemetryEvent>[].obs;
+  final RxList<PunchTelemetryEvent> telemetryEvents =
+      <PunchTelemetryEvent>[].obs;
   final RxString detectionStatusText = 'Initializing Session Engine…'.obs;
 
   int _lastCandidateLogMs = 0;
@@ -296,7 +299,8 @@ class PromptSessionController extends GetxController {
       _openSettingsViewsCount--;
       if (_openSettingsViewsCount == 0) {
         _settingsCooldownUntilMs =
-            DateTime.now().millisecondsSinceEpoch + AppConstants.postSettingsCooldownMs;
+            DateTime.now().millisecondsSinceEpoch +
+            AppConstants.postSettingsCooldownMs;
         developer.log(
           'Settings view closed. Post-settings cooldown active until $_settingsCooldownUntilMs (${AppConstants.postSettingsCooldownMs}ms).',
           name: 'PromptSessionController',
@@ -518,13 +522,13 @@ class PromptSessionController extends GetxController {
             ? customTargetAudioDb.value
             : (staticCalibratedAudioDb.value + minAudioPunchSpikeDb.value);
 
-        final bool hasRecentAudio = (nowMs - _lastPendingAudioSpikeMs) <= 120 &&
+        final bool hasRecentAudio =
+            (nowMs - _lastPendingAudioSpikeMs) <= 120 &&
             _lastPendingAudioSpikeMs > 0 &&
             _lastPendingAudioSpikeDb >= effectiveTargetDb;
 
         if (hasRecentAudio) {
           if (sessionMode.value == DetectionMode.audioVibration) {
-
             final syncEvent = PunchTelemetryEvent(
               timestampMs: nowMs,
               peakAudioDb: _lastPendingAudioSpikeDb,
@@ -548,7 +552,10 @@ class PromptSessionController extends GetxController {
               mountType: mountType.value.name,
               isVibrationGateEnabled: isVibrationGateEnabled.value,
               isVisionConfirmationRequired: isVisionConfirmationRequired.value,
-              refractoryElapsedMs: (nowMs - _lastPunchTimestampMs).clamp(0, 99999),
+              refractoryElapsedMs: (nowMs - _lastPunchTimestampMs).clamp(
+                0,
+                99999,
+              ),
             );
             _recordTelemetryEvent(syncEvent);
 
@@ -621,8 +628,12 @@ class PromptSessionController extends GetxController {
                 sessionMode: sessionMode.value.name,
                 mountType: mountType.value.name,
                 isVibrationGateEnabled: isVibrationGateEnabled.value,
-                isVisionConfirmationRequired: isVisionConfirmationRequired.value,
-                refractoryElapsedMs: (nowMs - _lastPunchTimestampMs).clamp(0, 99999),
+                isVisionConfirmationRequired:
+                    isVisionConfirmationRequired.value,
+                refractoryElapsedMs: (nowMs - _lastPunchTimestampMs).clamp(
+                  0,
+                  99999,
+                ),
               );
               _recordTelemetryEvent(syncEvent);
 
@@ -938,7 +949,8 @@ class PromptSessionController extends GetxController {
 
     // Audio target check: Must strictly meet both the onset envelope target and effective decibel floor
     final bool isAudioTargetReached =
-        confirmedSpike.isTargetMet && confirmedSpike.peakDb >= effectiveTargetDb;
+        confirmedSpike.isTargetMet &&
+        confirmedSpike.peakDb >= effectiveTargetDb;
 
     if (!isAudioInRefractory && isAudioTargetReached) {
       _lastAudioPunchTimestampMs = spikeTimeMs;
@@ -986,8 +998,8 @@ class PromptSessionController extends GetxController {
     // Clean Impact Coincidence: Vibration peak must be temporally coincident with audio spike onset (<= 120ms).
     // Lingering mechanical sway / old peaks from past punches (> 120ms) are strictly ignored.
     final int peakVibeTime = _vibrationService.recentPeakTimestampMs;
-    final bool isVibeCoincident = peakVibeTime > 0 &&
-        (spikeTimeMs - peakVibeTime).abs() <= 120;
+    final bool isVibeCoincident =
+        peakVibeTime > 0 && (spikeTimeMs - peakVibeTime).abs() <= 120;
     final double peakVibeInWindow = isVibeCoincident
         ? _vibrationService.recentPeakVibrationMagnitude
         : 0.0;
@@ -1058,7 +1070,10 @@ class PromptSessionController extends GetxController {
         reasonLabel = 'Audio spike exceeded target';
       }
     } else if (sessionMode.value == DetectionMode.audioVibration) {
-      final bool isVibeValid = isVibeDisabled || hasRecentVibe || effectiveVibeMag >= minVibrationThreshold.value;
+      final bool isVibeValid =
+          isVibeDisabled ||
+          hasRecentVibe ||
+          effectiveVibeMag >= minVibrationThreshold.value;
       if (isAudioInRefractory) {
         isRejected = true;
         decisionCode = 'VIBE_REFRACTORY';
@@ -1066,11 +1081,14 @@ class PromptSessionController extends GetxController {
       } else if (isVibeValid) {
         isValidPunch = true;
         decisionCode = isVibeDisabled ? 'AUDIO_POLE_DUAL' : 'AUDIO_VIBE_DUAL';
-        reasonLabel = isVibeDisabled ? 'Vibration Bypass' : 'Audio + Vibration confirmed';
+        reasonLabel = isVibeDisabled
+            ? 'Vibration Bypass'
+            : 'Audio + Vibration confirmed';
       } else {
         isRejected = true;
         decisionCode = 'VIBE_BELOW_THRESHOLD';
-        reasonLabel = 'Vibration below ${minVibrationThreshold.value.toStringAsFixed(2)} m/s²';
+        reasonLabel =
+            'Vibration below ${minVibrationThreshold.value.toStringAsFixed(2)} m/s²';
       }
     } else if (sessionMode.value == DetectionMode.fusion) {
       if (isAudioInRefractory) {
@@ -1124,7 +1142,10 @@ class PromptSessionController extends GetxController {
       mountType: mountType.value.name,
       isVibrationGateEnabled: isVibrationGateEnabled.value,
       isVisionConfirmationRequired: isVisionConfirmationRequired.value,
-      refractoryElapsedMs: (spikeTimeMs - _lastPunchTimestampMs).clamp(0, 99999),
+      refractoryElapsedMs: (spikeTimeMs - _lastPunchTimestampMs).clamp(
+        0,
+        99999,
+      ),
     );
     _recordTelemetryEvent(telemetryEvent);
 
@@ -1284,7 +1305,8 @@ class PromptSessionController extends GetxController {
         minAudioPunchSpikeDb.value = value;
         _adaptiveBaseline.spikeThresholdDb = value;
         final double minAllowedTarget =
-            (AppConstants.minCalibratedTargetPunchDb + AppConstants.minAudioSpikeSliderDb)
+            (AppConstants.minCalibratedTargetPunchDb +
+                    AppConstants.minAudioSpikeSliderDb)
                 .clamp(40.0, AppConstants.minCalibratedTargetPunchDb);
         final double newTarget = (staticCalibratedAudioDb.value + value).clamp(
           minAllowedTarget,
@@ -1332,12 +1354,12 @@ class PromptSessionController extends GetxController {
     final double baseDb = staticCalibratedAudioDb.value > 0
         ? staticCalibratedAudioDb.value
         : (customTargetAudioDb.value - minAudioPunchSpikeDb.value);
-    final double calculatedTarget =
-        (baseDb + result.recommendedSpikeDb).clamp(
+    final double calculatedTarget = (baseDb + result.recommendedSpikeDb).clamp(
       AppConstants.minCalibratedTargetPunchDb,
       AppConstants.maxCalibratedTargetPunchDb,
     );
-    final double finalTarget = result.recommendedTargetAudioDb > 0 &&
+    final double finalTarget =
+        result.recommendedTargetAudioDb > 0 &&
             (result.recommendedTargetAudioDb - calculatedTarget).abs() <= 1.0
         ? result.recommendedTargetAudioDb
         : calculatedTarget.roundToDouble();
@@ -1670,7 +1692,11 @@ class PromptSessionController extends GetxController {
   ///   - Enforces an explosive velocity floor to eliminate false punches during rest
   ///   - Z-axis depth acceleration bonus for forward punches
   ///   - Torso rotation contraction & head-drop bonus
-  void _analyzeLivePose(Pose pose, {required int frameMs, FramePixels? pixels}) {
+  void _analyzeLivePose(
+    Pose pose, {
+    required int frameMs,
+    FramePixels? pixels,
+  }) {
     // ─── SUBJECT LOCK ─────────────────────────────────────────────────────
     // Nothing counts before the reference photo; afterwards frames of another
     // person stop here. Without pixels (unknown format) the lock is skipped.
@@ -1713,15 +1739,12 @@ class PromptSessionController extends GetxController {
         unawaited(_takeReferencePhoto(pixels, observation));
       }
       // Face check in the background when one is due (never awaited).
-      _faceChecker.maybeCheck(
-        _subjectLock,
-        pose,
-        pixels,
-        frameMs,
-        (FaceCheckResult result, int _) {
-          if (result.changedState) subjectLockState.value = result.state;
-        },
-      );
+      _faceChecker.maybeCheck(_subjectLock, pose, pixels, frameMs, (
+        FaceCheckResult result,
+        int _,
+      ) {
+        if (result.changedState) subjectLockState.value = result.state;
+      });
       if (!decision.isUser) {
         _temporalPunchDetector.resetTrackers();
         _setInvalidEvaluationResult(_subjectLock.blockedMessage);
@@ -1888,9 +1911,12 @@ class PromptSessionController extends GetxController {
                 : '🟡 [CANDIDATE] CAMERA_POSE_EXTENSION | Camera Arm Extension Confirmed ($armStr Arm)');
 
       // Throttle candidate camera pose logs to prevent 30 FPS frame spam from evicting punches
-      final bool isNewArmAction = tempResult.confirmedArm != _lastLoggedCandidateArm;
+      final bool isNewArmAction =
+          tempResult.confirmedArm != _lastLoggedCandidateArm;
       final bool isCandidateThrottled = (nowMs - _lastCandidateLogMs) < 350;
-      if (sessionMode.value == DetectionMode.camera || isNewArmAction || !isCandidateThrottled) {
+      if (sessionMode.value == DetectionMode.camera ||
+          isNewArmAction ||
+          !isCandidateThrottled) {
         _lastCandidateLogMs = nowMs;
         _lastLoggedCandidateArm = tempResult.confirmedArm;
         _insertSpikeLog(
@@ -2014,16 +2040,13 @@ class PromptSessionController extends GetxController {
       await _flutterTts.setPitch(1.0);
 
       // On iOS: Configure Audio Session Category so TTS audio playback routes to connected Bluetooth Earbuds/Headphones!
-      await _flutterTts.setIosAudioCategory(
-        IosTextToSpeechAudioCategory.playback,
-        [
-          IosTextToSpeechAudioCategoryOptions.allowBluetooth,
-          IosTextToSpeechAudioCategoryOptions.allowBluetoothA2DP,
-          IosTextToSpeechAudioCategoryOptions.defaultToSpeaker,
-          IosTextToSpeechAudioCategoryOptions.mixWithOthers,
-        ],
-        IosTextToSpeechAudioMode.defaultMode,
-      );
+      await _flutterTts
+          .setIosAudioCategory(IosTextToSpeechAudioCategory.playback, [
+            IosTextToSpeechAudioCategoryOptions.allowBluetooth,
+            IosTextToSpeechAudioCategoryOptions.allowBluetoothA2DP,
+            IosTextToSpeechAudioCategoryOptions.defaultToSpeaker,
+            IosTextToSpeechAudioCategoryOptions.mixWithOthers,
+          ], IosTextToSpeechAudioMode.defaultMode);
 
       _flutterTts.setStartHandler(() {
         _isTtsSpeaking = true;

@@ -159,7 +159,9 @@ class FreeSessionController extends GetxController {
   /// working). Audio-only, audio + vibration, camera-only and "camera off"
   /// sessions are never affected.
   bool get _isBodyMotionRequired =>
-      isBodyMotionGateEnabled.value && _usesImpactWindow && _isCameraGateRequired;
+      isBodyMotionGateEnabled.value &&
+      _usesImpactWindow &&
+      _isCameraGateRequired;
 
   // Subject lock: keeps the camera on the user who started the session.
   // ML Kit follows the "most prominent" person and can switch to someone who
@@ -219,6 +221,8 @@ class FreeSessionController extends GetxController {
 
   /// Retake button (tap on the pill): take a new reference photo.
   void relockSubject() {
+    // Done attentionaly don't remove return from here
+    return;
     _subjectLock.relock();
     _faceChecker.cancelRunning();
     subjectLockState.value = SubjectLockState.waitingForUser;
@@ -327,9 +331,14 @@ class FreeSessionController extends GetxController {
   final RxInt rightPunchCount = 0.obs;
 
   void resetPunchCount() {
-    _recorder.record('reset', <String, Object?>{
-      'previousCount': punchCount.value,
-    });
+    // Clear every log the results screen exports, so the export only holds
+    // what happens after the reset.
+    recordedSpikesHistory.clear();
+    confirmedPunchLog.clear();
+    telemetryEvents.clear();
+    summaryTable.clear();
+    _prevRegisteredPunchMs = 0;
+    unawaited(_recorder.clearRecorded(config: _configSnapshot()));
     punchCount.value = 0;
     leftPunchCount.value = 0;
     rightPunchCount.value = 0;
@@ -672,6 +681,7 @@ class FreeSessionController extends GetxController {
   /// Whether camera vision confirmation is strictly required in Fusion mode
   /// true = Strict (Punch only counts if camera confirms), false = Optional (Audio+Vibe dual counts)
   final RxBool isVisionConfirmationRequired = true.obs;
+
   /// Default "Max Camera Distance" (approx. metres).
   // Previously derived from the shoulder ratio (0.16 / 0.20 = 0.8 m):
   // static const double defaultMaxCameraDistanceM =
@@ -1688,8 +1698,7 @@ class FreeSessionController extends GetxController {
   /// same "too far" result that rejects punches with
   /// IMPACT_REJECTED_CAMERA_TOO_FAR). The page draws the skeleton grey then.
   /// Reads an Rx, so it is reactive inside Obx.
-  bool get isUserTooFar =>
-      liveCameraGateState.value == CameraGateState.tooFar;
+  bool get isUserTooFar => liveCameraGateState.value == CameraGateState.tooFar;
 
   /// True when the camera takes part in punch decisions as a person / distance
   /// gate (fusion mode with vision confirmation on). Then the CAM status shows
@@ -1852,6 +1861,10 @@ class FreeSessionController extends GetxController {
       threshold: minVibrationThreshold.value,
       windowClosed: windowClosed,
       isVibrationDisabled: !vibeRequired,
+      otherOpenAudioTsMs: <int>[
+        for (final _PendingImpact other in _pendingImpacts)
+          if (other.audioTsMs != impact.audioTsMs) other.audioTsMs,
+      ],
     );
 
     final _VibeWindowInfo legacyVibeWindow = _vibrationWindow(
@@ -2175,6 +2188,14 @@ class FreeSessionController extends GetxController {
 
   void checkPunchDetectionForTesting({int? frameTimestampMs}) =>
       _checkPunchDetection(frameTimestampMs: frameTimestampMs);
+
+  /// Test hook: one microphone frame, handled like the live stream does
+  /// (including the previous-frame level the onset check compares against).
+  void feedAudioFrameForTesting(double db, {required int atEpochMs}) {
+    liveDecibelLevel.value = db;
+    _checkPunchDetection(frameTimestampMs: atEpochMs);
+    _prevFrameDb = db;
+  }
 
   void insertSpikeLogForTesting(
     String logEntry, {
@@ -2911,7 +2932,10 @@ class FreeSessionController extends GetxController {
     if (state == SubjectLockState.verifying) {
       _verifyingSinceMs = atMs;
     } else if (state == SubjectLockState.locked && _verifyingSinceMs != null) {
-      _recorder.stat('subject.verify_ms', (atMs - _verifyingSinceMs!).toDouble());
+      _recorder.stat(
+        'subject.verify_ms',
+        (atMs - _verifyingSinceMs!).toDouble(),
+      );
       _verifyingSinceMs = null;
     }
     subjectLockState.value = state;
@@ -3515,12 +3539,9 @@ class FreeSessionController extends GetxController {
     }
     cameraDistanceUnknownIsValid.value =
         AppConstants.cameraDistanceUnknownIsValid;
-    minVibrationThreshold.value =
-        AppConstants.defaultImpactVibrationThreshold;
-    isDeviceStabilityEnabled.value =
-        AppConstants.enableDeviceStabilityCheck;
-    audioSampleIntervalMs.value =
-        AppConstants.globalAudioSampleIntervalMs;
+    minVibrationThreshold.value = AppConstants.defaultImpactVibrationThreshold;
+    isDeviceStabilityEnabled.value = AppConstants.enableDeviceStabilityCheck;
+    audioSampleIntervalMs.value = AppConstants.globalAudioSampleIntervalMs;
     isVisionConfirmationRequired.value = true;
     isVibrationGateEnabled.value = !mountType.value.isVibrationDisabled;
     maxCameraDistanceM.value = defaultMaxCameraDistanceM;

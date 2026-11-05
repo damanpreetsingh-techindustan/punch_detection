@@ -193,6 +193,46 @@ class SessionEventRecorder {
     } catch (_) {}
   }
 
+  /// Empties the raw file and the totals but keeps the session running, so the
+  /// export only holds what happened after a count reset. Elapsed times keep
+  /// counting from the original session start.
+  Future<void> clearRecorded({
+    Map<String, Object?> config = const <String, Object?>{},
+  }) async {
+    if (!_begun || _finished) return;
+    await _opening;
+    final IOSink? oldSink = _sink;
+    // Events arriving while the file is reopened are buffered in _pending.
+    _sink = null;
+    _pending.clear();
+    eventCount = 0;
+    droppedCount = 0;
+    totals.counters.clear();
+    totals.stats.clear();
+    record('session_start', <String, Object?>{
+      ...config,
+      'os': Platform.operatingSystem,
+      'osVersion': Platform.operatingSystemVersion,
+      'afterReset': true,
+    });
+    final String? path = _filePath;
+    try {
+      await oldSink?.close();
+    } catch (_) {}
+    if (path == null || _finished) return;
+    try {
+      // FileMode.write truncates the old content.
+      final IOSink sink = File(path).openWrite(mode: FileMode.write);
+      if (_pending.isNotEmpty) {
+        sink.write(_pending.toString());
+        _pending.clear();
+      }
+      _sink = sink;
+    } catch (_) {
+      _filePath = null;
+    }
+  }
+
   /// Writes the closing `session_end` record with all totals and closes the file.
   Future<void> finish({
     Map<String, Object?> extra = const <String, Object?>{},

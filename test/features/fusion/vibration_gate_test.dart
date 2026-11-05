@@ -304,6 +304,73 @@ void main() {
       // The closer knock stays free for the next punch.
       expect(tracker.allKnocks.last.claimedByAudioTsMs, isNull);
     });
+
+    // Readings below are real 50 Hz wall-mount samples from a session where
+    // these punches were lost (2026-11-05 rapid flurries).
+    void feed(List<List<double>> rows) {
+      for (final List<double> r in rows) {
+        tracker.addSample(
+          sensorMs: r[0].toInt(),
+          x: r[1],
+          y: r[2],
+          z: r[3],
+          rawMag: r[4],
+        );
+      }
+    }
+
+    test('a hit jumping from near rest on a big shake is a new knock', () {
+      feed(const <List<double>>[
+        [15253, 2.089, -2.956, 4.206, 5.549],
+        [15273, -34.390, -1.993, 5.993, 34.965], // hit 2
+        [15293, -12.231, -6.172, -20.037, 24.272],
+        [15313, -8.926, 1.060, 19.871, 21.810],
+        [15333, 5.774, -0.891, -9.047, 10.770],
+        [15353, 1.673, 1.414, 1.978, 2.951],
+        [15373, 1.310, -0.150, 1.591, 2.066],
+        [15393, -7.435, -9.500, 21.770, 24.889], // hit 3: 2.1 -> 24.9
+        [15413, -7.782, 3.779, -10.441, 13.559],
+        [15433, 0.075, 1.066, 5.241, 5.349],
+        [15453, 8.529, -5.059, 1.892, 10.096], // tail bump, not a hit
+      ]);
+      // Hit 3 starts at 15393; its knock keeps the strongest jerk (15413).
+      expect(tracker.allKnocks.map((k) => k.timestampMs).toList(), <int>[
+        15273,
+        15413,
+      ]);
+    });
+
+    test('the merge window does not slide onto the next punch', () {
+      feed(const <List<double>>[
+        [22939, 2.673, -0.535, -1.020, 2.910],
+        [22959, -7.565, 1.114, -1.180, 7.737], // hit A starts
+        [22979, 0.779, 5.041, -2.253, 5.576],
+        [22999, 3.378, -5.364, 9.962, 11.808],
+        [23019, 1.139, -1.075, -1.713, 2.321],
+        [23039, 23.207, 9.464, 0.465, 25.066], // hit B, 80 ms after A
+        [23059, 13.648, -3.388, -4.869, 14.881],
+      ]);
+      expect(tracker.allKnocks, hasLength(2));
+      expect(tracker.allKnocks.last.timestampMs, 23039);
+    });
+
+    test('fast combo hit 60 ms after a hit gets its own knock; tail does not', () {
+      feed(const <List<double>>[
+        [24800, -4.511, -6.444, 4.560, 9.093],
+        [24820, -20.576, -2.748, -18.068, 27.521], // hit
+        [24840, 0.199, 5.280, 6.702, 8.535],
+        [24860, 2.823, -4.612, 2.702, 6.045],
+        [24880, -24.858, 2.110, 5.433, 25.532], // next hit: 6.0 -> 25.5
+        [24900, 3.193, 1.024, -9.679, 10.243],
+        [24921, -1.940, -0.307, 10.897, 11.073],
+        [24941, 3.848, -0.750, -4.665, 6.094],
+        [24961, -0.656, 2.605, -0.602, 2.753],
+        [24981, 1.955, -1.471, 2.989, 3.863],
+        [25001, 2.315, 0.807, -1.333, 2.790],
+      ]);
+      expect(tracker.allKnocks, hasLength(2));
+      expect(tracker.allKnocks.last.timestampMs, inInclusiveRange(24880, 24900));
+    });
   });
 
   group('FreshKnockGate Strategy Unit Tests', () {
@@ -560,24 +627,124 @@ void main() {
       quiet(0, 60);
       camera(CameraGateState.valid, 40);
 
-      frame(95.0, 60); // punch 1 audio, its vibration is late
-      rest(60, 180);
+      frame(95.0, 60); // punch 1 audio
+      rest(60, 100);
+      rawVibe(1.0, 100, x: 0.8, y: 0.2, z: 0.6); // its knock, 40 ms late
+      rest(120, 180);
       quiet(70, 170);
+      expect(controller.punchCount.value, 0, reason: 'late knock: waits');
+
       frame(92.0, 170); // punch 2 audio while punch 1 is still open
-      expect(controller.punchCount.value, 0, reason: 'both still waiting');
+      rawVibe(2.0, 180, x: 1.6, y: 0.3, z: 1.1); // knock of punch 2
+      quiet(180, 200);
+      expect(controller.punchCount.value, 1, reason: 'punch 2 has its knock');
 
-      rawVibe(1.0, 180, x: 0.8, y: 0.2, z: 0.6); // knock of punch 1
-      rest(200, 260);
-      quiet(180, 260);
-      expect(controller.punchCount.value, 1);
-
-      rawVibe(2.0, 260, x: 1.6, y: 0.3, z: 1.1); // knock of punch 2
-      rest(280, 400);
-      quiet(260, 400);
+      camera(CameraGateState.valid, 200);
+      rest(200, 400);
+      quiet(200, 400);
 
       // Before: punch 2 was dropped as IMPACT_ALREADY_PENDING.
       expect(controller.punchCount.value, 2);
       expect(codes(), isNot(contains('IMPACT_ALREADY_PENDING')));
+    });
+
+    test('a sound with no hit on the bag cannot take the next punch\'s knock', () {
+      rest(0, 60);
+      quiet(0, 60);
+      camera(CameraGateState.valid, 40);
+
+      frame(95.0, 60); // loud sound, bag at rest
+      rest(60, 140);
+      quiet(70, 150);
+      rawVibe(2.0, 140, x: 1.6, y: 0.3, z: 1.1); // knock of the next punch
+      frame(95.0, 150); // next punch, 90 ms later
+      rest(160, 400);
+      quiet(160, 400);
+
+      // Before: the first sound took this knock (80 ms after it) and the real
+      // punch was rejected; the last punch of a fast combo was lost this way.
+      expect(controller.punchCount.value, 1);
+      final valid =
+          controller.telemetryEvents.where((e) => e.isValidPunch).toList();
+      expect(valid.single.timestampMs, t0 + 150);
+    });
+
+    test('a punch landing on the still-shaking bag is counted (recorded readings)', () {
+      // Real 50 Hz readings of two punches 142 ms apart. The second hit the
+      // bag while it was still shaking and made no clean knock.
+      rest(0, 40);
+      quiet(0, 90);
+      camera(CameraGateState.valid, 30);
+      rawVibe(1.084, 40, x: -0.194, y: 0.288, z: 1.027);
+      rawVibe(1.393, 60, x: -0.603, y: 0.026, z: -1.256);
+      rawVibe(12.830, 80, x: -12.759, y: 0.740, z: 1.128);
+      frame(95.0, 93);
+      expect(controller.punchCount.value, 1);
+
+      rawVibe(8.149, 100, x: -4.478, y: 4.304, z: 5.276);
+      rawVibe(10.908, 120, x: 6.763, y: -5.416, z: 6.626);
+      rawVibe(5.288, 140, x: 3.358, y: 0.597, z: -4.041);
+      rawVibe(5.448, 160, x: -4.915, y: 2.265, z: -0.630);
+      rawVibe(2.753, 180, x: 0.362, y: -2.634, z: 0.716);
+      rawVibe(7.916, 200, x: 7.243, y: 2.848, z: -1.448);
+      rawVibe(12.167, 220, x: 3.245, y: -0.883, z: -11.693);
+      quiet(103, 235);
+      frame(95.0, 235);
+      rawVibe(5.754, 240, x: 3.309, y: 1.907, z: 4.303);
+      rawVibe(2.138, 260, x: 0.629, y: -0.147, z: -2.038);
+      rawVibe(1.964, 280, x: -1.216, y: 0.252, z: -1.521);
+      rawVibe(2.794, 300, x: -0.620, y: -0.578, z: 2.662);
+      rest(320, 420);
+      quiet(245, 420);
+
+      expect(controller.punchCount.value, 2);
+    });
+
+    test('a loud sound while the bag barely moves is not counted (recorded readings)', () {
+      // Real readings and sound times of three punches of a fast combo,
+      // then a loud sound 98 ms later while the bag stays at 3-6 m/s².
+      quiet(0, 30);
+      camera(CameraGateState.valid, 0);
+      rawVibe(2.577, 6, x: 0.000, y: -0.607, z: -2.504);
+      rawVibe(13.325, 26, x: -12.751, y: 3.113, z: -2.298);
+      frame(95.0, 36); // punch 1
+      rawVibe(9.388, 46, x: 0.826, y: 2.803, z: 8.922);
+      rawVibe(9.508, 66, x: 6.778, y: -5.828, z: 3.241);
+      rawVibe(6.079, 86, x: 3.474, y: 2.480, z: -4.328);
+      rawVibe(1.998, 106, x: -1.740, y: 0.951, z: -0.252);
+      rawVibe(14.613, 126, x: -14.099, y: -2.218, z: 3.134);
+      rawVibe(14.765, 146, x: 11.725, y: -0.614, z: -8.952);
+      quiet(46, 150);
+      frame(95.0, 152); // punch 2
+      rawVibe(12.276, 166, x: -9.394, y: 0.440, z: 7.891);
+      rawVibe(6.740, 186, x: 3.569, y: -1.398, z: -5.544);
+      rawVibe(2.028, 206, x: 0.448, y: 1.380, z: -1.416);
+      rawVibe(1.263, 226, x: 0.195, y: -1.117, z: 0.557);
+      rawVibe(3.318, 246, x: 1.319, y: 0.500, z: -3.004);
+      rawVibe(20.196, 266, x: 18.859, y: 4.687, z: -5.500);
+      quiet(162, 287);
+      frame(95.0, 287); // punch 3
+      rawVibe(18.074, 286, x: 3.077, y: 6.355, z: -16.638);
+      rawVibe(13.753, 306, x: -3.190, y: -4.580, z: 12.569);
+      rawVibe(4.789, 326, x: 0.464, y: -2.670, z: -3.949);
+      rawVibe(5.692, 346, x: -4.194, y: 3.585, z: -1.402);
+      rawVibe(4.257, 366, x: -2.146, y: -3.344, z: 1.528);
+      camera(CameraGateState.valid, 370);
+      quiet(297, 385);
+      frame(95.0, 385); // loud sound, no hit on the bag
+      rawVibe(2.877, 386, x: -0.791, y: -1.246, z: -2.470);
+      rawVibe(4.436, 406, x: -2.325, y: 1.536, z: 3.452);
+      rawVibe(5.445, 426, x: 3.460, y: -1.068, z: -4.065);
+      rawVibe(2.909, 446, x: 1.242, y: 0.163, z: 2.626);
+      rawVibe(1.230, 466, x: 1.000, y: -0.123, z: -0.706);
+      rawVibe(0.165, 486, x: 0.077, y: -0.104, z: -0.102);
+      rawVibe(0.335, 506, x: -0.028, y: -0.276, z: 0.189);
+      rawVibe(0.748, 526, x: 0.169, y: 0.062, z: -0.726);
+      rawVibe(0.707, 546, x: 0.502, y: -0.320, z: 0.381);
+      quiet(395, 560);
+
+      expect(controller.punchCount.value, 3);
+      expect(codes().first, 'IMPACT_REJECTED_NO_VIBRATION');
     });
 
     test('shout 170 ms after a hard hit, during the ring-down: NOT counted', () {

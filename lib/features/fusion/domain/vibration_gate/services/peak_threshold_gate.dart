@@ -56,6 +56,7 @@ class PeakThresholdGate implements IVibrationGate {
     required double threshold,
     required bool windowClosed,
     required bool isVibrationDisabled,
+    List<int> otherOpenAudioTsMs = const <int>[],
   }) {
     if (isVibrationDisabled) {
       return const VibrationGateEvaluation(

@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import '../../../../../core/utils/constants.dart';
 import '../../services/impact_gate_evaluator.dart';
 import '../i_vibration_gate.dart';
@@ -64,6 +66,7 @@ class FreshKnockGate implements IVibrationGate {
     required double threshold,
     required bool windowClosed,
     required bool isVibrationDisabled,
+    List<int> otherOpenAudioTsMs = const <int>[],
   }) {
     if (isVibrationDisabled) {
       return const VibrationGateEvaluation(
@@ -72,12 +75,34 @@ class FreshKnockGate implements IVibrationGate {
       );
     }
 
-    final VibrationKnock? knock = tracker.findUnusedKnock(
+    final double? minRawMag = threshold > 0 ? threshold : null;
+    // A knock after the sound may be the next punch's knock, so it is only
+    // taken once the window closes (the next punch has claimed its own knock
+    // by then). A knock closer to another waiting sound is never taken.
+    VibrationKnock? knock = tracker.findUnusedKnock(
       fromMs: fromMs,
-      toMs: toMs,
+      toMs: min(toMs, audioTsMs + AppConstants.knockMatchAfterMs),
       audioTsMs: audioTsMs,
-      minRawMag: threshold > 0 ? threshold : null,
+      minRawMag: minRawMag,
+      rivalAudioTsMs: otherOpenAudioTsMs,
     );
+    String label = 'Knock verified';
+    if (knock == null && windowClosed) {
+      knock = tracker.findUnusedKnock(
+        fromMs: fromMs,
+        toMs: min(toMs, audioTsMs + AppConstants.knockLateMatchAfterMs),
+        audioTsMs: audioTsMs,
+        minRawMag: minRawMag,
+        rivalAudioTsMs: otherOpenAudioTsMs,
+      );
+      if (knock == null) {
+        knock = tracker.claimRiseNear(
+          audioTsMs: audioTsMs,
+          rivalAudioTsMs: otherOpenAudioTsMs,
+        );
+        label = 'Knock on shaking bag';
+      }
+    }
 
     if (knock != null) {
       knock.claimedByAudioTsMs = audioTsMs;
@@ -86,7 +111,7 @@ class FreshKnockGate implements IVibrationGate {
         matchedKnock: knock,
         peakMagnitude: knock.rawMag,
         detail:
-            'Knock verified: Δ${knock.deltaMag.toStringAsFixed(2)} m/s² @ ${knock.timestampMs}ms (Raw: ${knock.rawMag.toStringAsFixed(2)} m/s²)',
+            '$label: Δ${knock.deltaMag.toStringAsFixed(2)} m/s² @ ${knock.timestampMs}ms (Raw: ${knock.rawMag.toStringAsFixed(2)} m/s²)',
       );
     }
 

@@ -49,6 +49,12 @@ class SessionSummaryTable {
     _rows.add(columns.map((String c) => _cell(values[c])).toList());
   }
 
+  /// Removes all rows (used when the count is reset mid-session).
+  void clear() {
+    _rows.clear();
+    droppedRows = 0;
+  }
+
   String toCsv() {
     final StringBuffer buffer = StringBuffer()..writeln(columns.join(','));
     for (final List<String> row in _rows) {

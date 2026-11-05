@@ -53,7 +53,7 @@ class SubjectLockPill extends StatelessWidget {
           label = 'Show your face to confirm it is you';
           color = AppColors.amber;
         case SubjectLockState.otherPerson:
-          label = 'Other person in view · tap to retake photo';
+          label = 'Other person in view';
           color = AppColors.red;
       }
       final ui.Image? image = photo?.value;

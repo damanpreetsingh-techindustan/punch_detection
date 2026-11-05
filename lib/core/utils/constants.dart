@@ -49,7 +49,7 @@ class AppConstants {
 
   static const bool testingNeedStaticZoom = false;
   static const double testingZoomValue = 1.0;
-  static const bool showAllFeatures = true;
+  static const bool showAllFeatures = false;
   static const bool useAvarageAudioFormate = false;
   static const int globalStaticAudioMsg = 10;
 
@@ -90,7 +90,9 @@ class AppConstants {
   /// Pole mount, vibration off or the Legacy Peak gate keep [audioRefractoryMs].
   /// How to tune: look at `msSinceLastSpike` of `spike_suppressed` lines in the
   /// session log; real combo punches should land above this value.
-  static const int audioRefractoryKnockMs = 100;
+  /// 100 dropped real flurry punches landing 71-99 ms apart; one hit's own
+  /// echo spikes arrive within ~35 ms and stay locked out.
+  static const int audioRefractoryKnockMs = 60;
 
   /// Impacts that may wait for their vibration / camera at the same time.
   /// More than one is only possible with the short knock lockout above; each
@@ -268,6 +270,43 @@ class AppConstants {
 
   /// How far back (ms) the "recent jerk" used by [knockRiseFactor] looks.
   static const int knockRingDownWindowMs = 60;
+
+  /// A reading that jumps from near rest to at least this level (m/s²) in one
+  /// step is a new hit even while the previous hit's shake is still big
+  /// (rapid combos on a heavy bag). Tuned on a recorded 50 Hz wall-mount
+  /// session: the fading shake never did this, real punches did.
+  static const double knockOnsetMinRawMag = 10.0;
+
+  /// "Near rest" for [knockOnsetMinRawMag]: the previous reading was at most
+  /// this fraction of the new one. Real combo hits measured 0.08-0.31; the
+  /// first fake knock appeared at 0.6.
+  static const double knockOnsetMaxPrevFraction = 0.4;
+
+  /// A sound takes a knock at once only if the knock happened at most this
+  /// long after it (sensor time); a later knock waits until the window closes.
+  /// Real hits measured -52..+29 ms (most before the sound); a knock 40-130 ms
+  /// after a sound was the NEXT punch's knock, and taking it made the last
+  /// punch of a fast combo lose its knock.
+  static const int knockMatchAfterMs = 10;
+
+  /// When the impact window closes without a knock, a knock up to this long
+  /// after the sound is still accepted (timing on other devices). By then the
+  /// next punch has already taken its own knock.
+  static const int knockLateMatchAfterMs = 100;
+
+  /// A punch landing on a bag still shaking from the previous punch often
+  /// makes no clean knock at 50 Hz. When a loud sound has no knock, a reading
+  /// of at least [knockRiseMinRawMag] (m/s²) that is [knockRiseOverTroughFactor]
+  /// × the lowest reading of the [knockRiseLookbackMs] before it, between
+  /// [knockRiseBeforeMs] before and [knockRiseAfterMs] after the sound, and not
+  /// part of another hit, is taken as its knock. Tuned on a recorded session:
+  /// missed hits measured 7.4-14.8 m/s² at 2.7-10.9 × the trough; loud sounds
+  /// with no hit on the bag stayed at or below 5 m/s².
+  static const double knockRiseMinRawMag = 7.0;
+  static const double knockRiseOverTroughFactor = 2.0;
+  static const int knockRiseLookbackMs = 60;
+  static const int knockRiseBeforeMs = 50;
+  static const int knockRiseAfterMs = 30;
 
   /// A gap between two sensor readings longer than this (ms) means the sensor
   /// was paused or restarted; the next reading only becomes the new starting

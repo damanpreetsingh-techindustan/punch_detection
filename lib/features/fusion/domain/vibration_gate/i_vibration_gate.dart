@@ -22,6 +22,8 @@ abstract class IVibrationGate {
   /// [threshold]: Configured vibration sensitivity threshold.
   /// [windowClosed]: True when the full impact window duration has elapsed.
   /// [isVibrationDisabled]: True if the vibration gate is bypassed (pole mount or toggle off).
+  /// [otherOpenAudioTsMs]: Sounds of the other impacts still waiting. A knock
+  /// closer to one of them belongs to that impact, not to this one.
   VibrationGateEvaluation evaluate({
     required int audioTsMs,
     required int fromMs,
@@ -29,6 +31,7 @@ abstract class IVibrationGate {
     required double threshold,
     required bool windowClosed,
     required bool isVibrationDisabled,
+    List<int> otherOpenAudioTsMs = const <int>[],
   });
 
   /// Ingests a raw accelerometer sample (before deadband) with optional 3D axes.
