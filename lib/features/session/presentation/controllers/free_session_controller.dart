@@ -315,6 +315,11 @@ class FreeSessionController extends GetxController {
 
   FastComboFusionSynchronizer get fusionSynchronizer => _fusionSynchronizer;
 
+  /// Session type stored in the results ('free' here). The Prompt session
+  /// extends this controller for the same detection and overrides it.
+  @protected
+  String get sessionTypeId => 'free';
+
   // Selected session mode: strongly-typed DetectionMode enum
   final Rx<DetectionMode> sessionMode = DetectionMode.fusion.obs;
   // Selected mount type: strongly-typed MountType enum
@@ -3454,7 +3459,7 @@ class FreeSessionController extends GetxController {
       averageLatencyMs: averageFrameLatencyMs,
       accuracyPercentage: dynamicAccuracyPercentage,
       durationSeconds: durationSec,
-      sessionType: 'free',
+      sessionType: sessionTypeId,
       detectionMode: sessionMode.value.id,
       peakAudioDb: peakAudioDbRecorded.value,
       averageConfidence: visionConfidence.value.toDouble(),

@@ -64,7 +64,7 @@ class SessionPreCheckController extends GetxController {
   final RxDouble avgAmbientDb = 48.0.obs;
   final RxDouble spikeThresholdDb = 20.0.obs;
 
-  // Reference photo for the subject lock (free session, camera modes), taken
+  // Reference photo for the subject lock (free and prompt sessions, camera modes), taken
   // here so the session starts already locked on the user.
   final SubjectCaptureService captureService = SubjectCaptureService();
 
@@ -125,10 +125,9 @@ class SessionPreCheckController extends GetxController {
     return needsPermissionsStep ? (steps + 1) : steps;
   }
 
-  /// The reference-photo step: free session, a mode that uses the camera,
-  /// subject lock on by default.
+  /// The reference-photo step: free or prompt session (both use the same
+  /// detection), a mode that uses the camera, subject lock on by default.
   bool get needsCaptureStep =>
-      sessionType == 'free' &&
       selectedMode.value.requiresCamera &&
       AppConstants.subjectLockEnabledDefault;
 
