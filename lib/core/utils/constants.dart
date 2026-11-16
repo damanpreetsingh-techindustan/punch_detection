@@ -221,6 +221,13 @@ class AppConstants {
   /// Use the Android `unprocessed` audio source (no gain or filtering).
   static const bool audioExperimentUnprocessedSource = false;
 
+  /// ANDROID_CALL_MODE_AEC (Android only, Prompt session only).
+  /// true = record with the `voiceCommunication` source in call mode and speak
+  /// the prompt numbers as voice-call audio, so Android's echo canceller removes
+  /// them from the mic. false = the previous behaviour (flutter_tts + default mic).
+  /// iOS ignores this flag.
+  static const bool androidCallModeEchoCancel = true;
+
   /// TESTING CONFIGURATION:
   /// Absolute minimum safety floor for punch audio detection.
   /// Sounds below this dB are never considered punches.

@@ -5,6 +5,7 @@ import 'dart:math';
 import 'dart:typed_data';
 import 'package:record/record.dart';
 import '../../utils/constants.dart';
+import 'android_call_mode_audio.dart';
 import 'audio_level_sample.dart';
 import 'i_audio_level_service.dart';
 import 'pcm_level_extractor.dart';
@@ -18,10 +19,36 @@ import 'pcm_level_extractor.dart';
 ///    10 ms blocks with back-dated timestamps and published on [sampleStream].
 ///    Falls back to legacy automatically if the PCM stream cannot start.
 class RecordAudioLevelService implements IAudioLevelService {
-  RecordAudioLevelService({this.enableSubBlockPcm = false});
+  RecordAudioLevelService({
+    this.enableSubBlockPcm = false,
+    this.useAndroidCallMode = false,
+  });
 
   /// Whether to use the sub-block PCM pipeline for [sampleStream].
   final bool enableSubBlockPcm;
+
+  /// ANDROID_CALL_MODE_AEC: record in call mode with the `voiceCommunication`
+  /// source so Android's echo canceller removes the prompt voice. Ignored
+  /// unless [AndroidCallModeAudio.isEnabled] (Android + constant flag).
+  final bool useAndroidCallMode;
+
+  bool get _androidCallMode =>
+      useAndroidCallMode && AndroidCallModeAudio.isEnabled;
+
+  /// Android mic settings. Call mode uses the `voiceCommunication` source,
+  /// which is the one Android's echo canceller works with.
+  AndroidRecordConfig _androidRecordConfig() {
+    if (_androidCallMode) {
+      return const AndroidRecordConfig(
+        audioSource: AndroidAudioSource.voiceCommunication,
+      );
+    }
+    return AndroidRecordConfig(
+      audioSource: AppConstants.audioExperimentUnprocessedSource
+          ? AndroidAudioSource.unprocessed
+          : AndroidAudioSource.defaultSource,
+    );
+  }
 
   static RecordAudioLevelService? _activeGlobalService;
 
@@ -267,11 +294,7 @@ class RecordAudioLevelService implements IAudioLevelService {
           autoGain:
               false, // Disables Automatic Gain Control so quiet background noise isn't boosted
           noiseSuppress: !AppConstants.audioExperimentDisableMicProcessing,
-          androidConfig: AndroidRecordConfig(
-            audioSource: AppConstants.audioExperimentUnprocessedSource
-                ? AndroidAudioSource.unprocessed
-                : AndroidAudioSource.defaultSource,
-          ),
+          androidConfig: _androidRecordConfig(),
           streamBufferSize: bufferBytes,
         );
         _extractor = PcmLevelExtractor(
@@ -361,6 +384,10 @@ class RecordAudioLevelService implements IAudioLevelService {
         echoCancel: true,
         noiseSuppress: true,
         autoGain: false,
+        // ANDROID_CALL_MODE_AEC: unchanged default source unless call mode is on.
+        androidConfig: _androidCallMode
+            ? _androidRecordConfig()
+            : const AndroidRecordConfig(),
       );
     }
 
@@ -452,6 +479,13 @@ class RecordAudioLevelService implements IAudioLevelService {
       }
       _isEarbudsConnected = earbudsDetected;
 
+      // ANDROID_CALL_MODE_AEC: call mode must be on before the recorder
+      // starts, so the echo canceller attaches to the call audio path.
+      if (_androidCallMode) {
+        _startInfo['androidCallMode'] =
+            await AndroidCallModeAudio.enterCallMode() ?? 'failed';
+      }
+
       bool pcmStarted = false;
       if (enableSubBlockPcm) {
         pcmStarted = await _startSubBlockPcm(
@@ -539,6 +573,11 @@ class RecordAudioLevelService implements IAudioLevelService {
       }
     } catch (_) {}
     _audioRecorder = null;
+
+    // ANDROID_CALL_MODE_AEC: back to normal audio once the mic is released.
+    if (_androidCallMode) {
+      await AndroidCallModeAudio.exitCallMode();
+    }
   }
 
   @override

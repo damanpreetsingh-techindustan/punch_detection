@@ -24,6 +24,7 @@ import '../../../vision_detection/domain/subject_lock/appearance_signature.dart'
 import '../../../vision_detection/domain/subject_lock/subject_lock.dart';
 import '../../../fusion/domain/services/tri_sensor_matrix_evaluator.dart';
 import '../../../fusion/domain/services/fast_combo_fusion_synchronizer.dart';
+import '../../../../core/services/audio_level/android_call_mode_audio.dart';
 import '../../../../core/services/audio_level/i_audio_level_service.dart';
 import '../../../../core/services/audio_level/adaptive_audio_baseline.dart';
 import '../../../../core/services/audio_level/record_audio_level_service.dart';
@@ -161,7 +162,12 @@ class PromptSessionController extends GetxController {
     ShoulderStabilityTracker? stabilityTracker,
     AdaptiveAudioBaseline? adaptiveBaseline,
     FlutterTts? flutterTts,
-  }) : _audioLevelService = audioLevelService ?? RecordAudioLevelService(),
+  }) : _audioLevelService =
+           audioLevelService ??
+           RecordAudioLevelService(
+             // ANDROID_CALL_MODE_AEC (no effect on iOS).
+             useAndroidCallMode: AndroidCallModeAudio.isEnabled,
+           ),
        _stabilityService = stabilityService ?? DeviceStabilityService(),
        _vibrationService = vibrationService ?? DeviceVibrationService(),
        _flutterTts = flutterTts ?? FlutterTts(),
@@ -2034,6 +2040,31 @@ class PromptSessionController extends GetxController {
   }
 
   void _initTts() async {
+    // ANDROID_CALL_MODE_AEC: speak on the voice-call stream so the mic's echo
+    // canceller removes the prompt voice. iOS keeps flutter_tts below.
+    if (AndroidCallModeAudio.isEnabled) {
+      try {
+        await AndroidCallModeAudio.initTts(
+          language: 'en-US',
+          rate: 1.0, // Same speed as flutter_tts setSpeechRate(0.5) on Android.
+          pitch: 1.0,
+          onStart: () {
+            _isTtsSpeaking = true;
+            _lastTtsSpeechStartTimeMs = DateTime.now().millisecondsSinceEpoch;
+          },
+          onDone: _markTtsEnded,
+          onError: (_) => _markTtsEnded(),
+          onCancel: _markTtsEnded,
+        );
+      } catch (e) {
+        developer.log(
+          'Call mode TTS init error: $e',
+          name: 'PromptSessionController',
+        );
+      }
+      return;
+    }
+
     try {
       await _flutterTts.setLanguage('en-US');
       await _flutterTts.setSpeechRate(0.5);
@@ -2072,11 +2103,21 @@ class PromptSessionController extends GetxController {
     }
   }
 
+  void _markTtsEnded() {
+    _isTtsSpeaking = false;
+    _lastTtsSpeechEndTimeMs = DateTime.now().millisecondsSinceEpoch;
+  }
+
   void _speakSingleNumber(int number) async {
     if (!isTtsEnabled.value) return;
     try {
       _isTtsSpeaking = true;
       _lastTtsSpeechStartTimeMs = DateTime.now().millisecondsSinceEpoch;
+      // ANDROID_CALL_MODE_AEC: native speak() flushes the previous number itself.
+      if (AndroidCallModeAudio.isEnabled) {
+        await AndroidCallModeAudio.speak('$number');
+        return;
+      }
       await _flutterTts.stop();
       await _flutterTts.speak('$number');
     } catch (e) {
@@ -2187,6 +2228,9 @@ class PromptSessionController extends GetxController {
     try {
       _flutterTts.stop().catchError((_) {});
     } catch (_) {}
+    // ANDROID_CALL_MODE_AEC: release the native TTS (call mode itself is
+    // left when the audio service below stops the mic).
+    unawaited(AndroidCallModeAudio.shutdownTts());
     _audioLevelSubscription?.cancel();
     _audioLevelService.dispose();
     _stabilitySubscription?.cancel();
