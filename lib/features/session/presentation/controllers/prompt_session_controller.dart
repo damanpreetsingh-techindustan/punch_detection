@@ -49,18 +49,73 @@ class PromptSessionController extends FreeSessionController {
   final RxInt promptNumber = 1.obs;
   final RxString promptText = '1 - 2'.obs;
   final RxList<int> currentComboSequence = <int>[1, 2].obs;
+
+  /// +1 on every call, so the screen can restart its countdown ring even when
+  /// the same number is called twice in a row (promptNumber would not change).
+  final RxInt promptTick = 0.obs;
   List<int> _activeCombo = [1, 2];
   int _currentComboStepIndex = 0;
 
   Timer? _promptTimer;
   Timer? _promptWarmupTimer;
 
+  // ─── Drill score (screen and results only; detection does not read it) ───
+  // A call is answered when at least one punch is counted before the next
+  // call. The last call of the session is not scored.
+
+  /// Calls answered in a row right now, and the best run this session.
+  final RxInt streak = 0.obs;
+  final RxInt bestStreak = 0.obs;
+
+  /// Result of the most recent scored call; null before the first one.
+  final Rxn<bool> lastCallAnswered = Rxn<bool>();
+  int _callsMade = 0;
+  int _callsAnswered = 0;
+  int _countAtCall = 0;
+  final List<Worker> _scoreWorkers = <Worker>[];
+
+  @override
+  DrillScore get drillScore => DrillScore(
+    difficulty: difficulty.value,
+    bestStreak: bestStreak.value,
+    callsAnswered: _callsAnswered,
+    callsMade: _callsMade,
+  );
+
   @override
   void onInit() {
     super.onInit();
     _readPromptArguments();
     _initTts();
+    _scoreWorkers.addAll([
+      ever<int>(promptTick, _scoreCall),
+      ever<int>(punchCount, _onCountForScore),
+    ]);
     _startPromptRotation();
+  }
+
+  void _scoreCall(int tick) {
+    final int count = punchCount.value;
+    if (tick > 1) {
+      final bool answered = count > _countAtCall;
+      _callsMade++;
+      if (answered) _callsAnswered++;
+      streak.value = answered ? streak.value + 1 : 0;
+      if (streak.value > bestStreak.value) bestStreak.value = streak.value;
+      lastCallAnswered.value = answered;
+    }
+    _countAtCall = count;
+  }
+
+  /// The count was reset from the pause menu: the score starts over too.
+  void _onCountForScore(int count) {
+    if (count >= _countAtCall) return;
+    _countAtCall = count;
+    _callsMade = 0;
+    _callsAnswered = 0;
+    streak.value = 0;
+    bestStreak.value = 0;
+    lastCallAnswered.value = null;
   }
 
   /// Prompt-only route arguments; everything else is read by the Free session.
@@ -164,6 +219,7 @@ class PromptSessionController extends FreeSessionController {
 
     _speakSingleNumber(numberToSpeak);
     _currentComboStepIndex++;
+    promptTick.value++;
   }
 
   int get promptRotationIntervalMs {
@@ -194,6 +250,9 @@ class PromptSessionController extends FreeSessionController {
 
   @override
   void onClose() {
+    for (final w in _scoreWorkers) {
+      w.dispose();
+    }
     _promptTimer?.cancel();
     _promptWarmupTimer?.cancel();
     try {

@@ -1,7 +1,8 @@
 import 'package:get/get.dart';
+import '../../../../core/navigation/app_navigator.dart';
 import '../../../../core/usecases/usecase.dart';
-import '../../domain/entities/lifetime_summary_stats.dart';
 import '../../domain/entities/workout_record.dart';
+import '../../domain/history_insights.dart';
 import '../../domain/usecases/clear_workout_history.dart';
 import '../../domain/usecases/get_workout_history.dart';
 
@@ -10,18 +11,19 @@ class HistoryController extends GetxController {
   final ClearWorkoutHistory clearWorkoutHistoryUseCase;
 
   final RxList<WorkoutRecord> records = <WorkoutRecord>[].obs;
-  final Rx<LifetimeSummaryStats> summaryStats = const LifetimeSummaryStats(
-    totalWorkouts: 0,
-    totalPunches: 0,
-    lifetimeAvgReactionMs: 0.0,
-    bestReactionMs: 0,
-  ).obs;
   final RxBool isLoading = false.obs;
 
   HistoryController({
     required this.getWorkoutHistoryUseCase,
     required this.clearWorkoutHistoryUseCase,
   });
+
+  DateTime get now => DateTime.now();
+
+  List<DayTotal> get week => HistoryInsights.lastSevenDays(records, now);
+  int get dayStreak => HistoryInsights.dayStreak(records, now);
+  PersonalBests get bests => HistoryInsights.bests(records);
+  int get totalPunches => HistoryInsights.totalPunches(records);
 
   @override
   void onInit() {
@@ -32,9 +34,7 @@ class HistoryController extends GetxController {
   Future<void> loadHistory() async {
     isLoading.value = true;
     try {
-      final list = await getWorkoutHistoryUseCase(NoParams());
-      records.value = list;
-      summaryStats.value = LifetimeSummaryStats.fromRecords(list);
+      records.value = await getWorkoutHistoryUseCase(NoParams());
     } finally {
       isLoading.value = false;
     }
@@ -44,4 +44,7 @@ class HistoryController extends GetxController {
     await clearWorkoutHistoryUseCase(NoParams());
     await loadHistory();
   }
+
+  void openSession(WorkoutRecord record) =>
+      AppNavigator.toHistoryDetail(record);
 }

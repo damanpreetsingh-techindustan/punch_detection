@@ -1,7 +1,7 @@
 /// Strongly-typed enums for Punch Detection, Mounting Types, and Environment Presets.
 library;
 
-/// Phone Mount Types supported by HyperHitter
+/// Phone Mount Types supported by the app
 enum MountType {
   wall,
   pole;

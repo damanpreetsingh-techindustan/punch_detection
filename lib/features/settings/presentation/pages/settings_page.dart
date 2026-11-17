@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:get/get.dart';
-import '../../../../core/navigation/app_navigator.dart';
+import '../../../../core/enums/sensitivity_level.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_text_styles.dart';
 import '../../../../core/utils/size_box.dart';
+import '../../../../core/widgets/ui/app_buttons.dart';
+import '../../../../core/widgets/ui/glass_card.dart';
+import '../../../../core/widgets/ui/press_scale.dart';
 import '../controllers/settings_controller.dart';
 
 class SettingsPage extends GetView<SettingsController> {
@@ -13,119 +17,85 @@ class SettingsPage extends GetView<SettingsController> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.background,
-      body: SafeArea(
-        child: Padding(
-          padding: EdgeInsets.symmetric(horizontal: 22.w),
-          child: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                16.height,
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    IconButton(
-                      onPressed: AppNavigator.back,
-                      icon: const Icon(
-                        Icons.arrow_back_ios_new,
-                        color: AppColors.textPrimary,
-                      ),
-                    ),
-                    Text(
-                      'Settings & Configuration',
-                      style: AppTextStyles.bodyMedium(
-                        context,
-                      ).copyWith(fontWeight: FontWeight.w800),
-                    ),
-                  ],
-                ),
-                20.height,
-                Text(
-                  'DETECTION ENGINE PARAMS',
-                  style: AppTextStyles.tag(context),
-                ),
-                4.height,
-                Text(
-                  'Tunable Thresholds',
-                  style: AppTextStyles.heading2(context),
-                ),
-                16.height,
-
-                Obx(
-                  () => _buildSlider(
-                    context: context,
-                    title: 'Audio Impact Energy Threshold',
-                    subtitle:
-                        'Minimum RMS energy to register audio punch candidate.',
-                    value: controller.audioEnergyThreshold.value,
-                    min: 0.1,
-                    max: 1.0,
-                    onChanged: (v) => controller.audioEnergyThreshold.value = v,
-                  ),
-                ),
-                12.height,
-                Obx(
-                  () => _buildSlider(
-                    context: context,
-                    title: 'Vision Motion Confirmation Threshold',
-                    subtitle:
-                        'Minimum pose displacement required for vision vote.',
-                    value: controller.visionMotionThreshold.value,
-                    min: 0.1,
-                    max: 1.0,
-                    onChanged: (v) =>
-                        controller.visionMotionThreshold.value = v,
-                  ),
-                ),
-                12.height,
-                Obx(
-                  () => _buildSlider(
-                    context: context,
-                    title: 'Audio vs. Vision Signal Weighting',
-                    subtitle:
-                        'Audio weight: ${(controller.audioWeight.value * 100).round()}% | Vision weight: ${((1.0 - controller.audioWeight.value) * 100).round()}%.',
-                    value: controller.audioWeight.value,
-                    min: 0.10,
-                    max: 0.90,
-                    onChanged: (v) => controller.setAudioWeight(v),
-                  ),
-                ),
-                12.height,
-                Obx(
-                  () => _buildSlider(
-                    context: context,
-                    title: 'Minimum Fused Confidence Threshold',
-                    subtitle:
-                        'Minimum score required to confirm a fused audio+vision punch.',
-                    value: controller.minFusionConfidenceThreshold.value,
-                    min: 0.40,
-                    max: 0.95,
-                    onChanged: (v) =>
-                        controller.setMinFusionConfidenceThreshold(v),
-                  ),
-                ),
-
-                32.height,
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primary,
-                    minimumSize: Size(double.infinity, 54.h),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16.r),
-                    ),
-                  ),
-                  onPressed: controller.saveSettings,
-                  child: Text(
-                    'Save detection parameters',
-                    style: AppTextStyles.buttonLabel(context).copyWith(
-                      color: AppColors.ink,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                ),
-                20.height,
-              ],
+      body: AppBackground(
+        child: SafeArea(
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 560),
+              child: ListView(
+                padding: EdgeInsets.symmetric(horizontal: 20.w, vertical: 12.h),
+                children:
+                    [
+                          Row(
+                            children: [
+                              GlassIconButton(
+                                icon: Icons.arrow_back_rounded,
+                                onPressed: Get.back,
+                              ),
+                              14.width,
+                              Text(
+                                'Settings',
+                                style: AppTextStyles.heading2(context),
+                              ),
+                            ],
+                          ),
+                          24.height,
+                          GlassCard(
+                            padding: EdgeInsets.zero,
+                            borderColor: AppColors.gold.withValues(alpha: 0.5),
+                            child: _row(
+                              context,
+                              icon: Icons.workspace_premium_rounded,
+                              title: 'KnockUp Pro',
+                              subtitle:
+                                  'Unlimited punches, plans and restore purchases',
+                              onTap: controller.openPaywall,
+                            ),
+                          ),
+                          24.height,
+                          _sectionLabel(context, 'Punch sensitivity'),
+                          _sensitivity(context),
+                          24.height,
+                          _sectionLabel(context, 'Setup'),
+                          GlassCard(
+                            padding: EdgeInsets.zero,
+                            child: Column(
+                              children: [
+                                _row(
+                                  context,
+                                  icon: Icons.replay_rounded,
+                                  title: 'Replay intro',
+                                  subtitle:
+                                      'See the welcome and phone setup tips',
+                                  onTap: controller.replayIntro,
+                                ),
+                              ],
+                            ),
+                          ),
+                          Obx(
+                            () => controller.developerMode.value
+                                ? _developer(context)
+                                : const SizedBox.shrink(),
+                          ),
+                          32.height,
+                          Center(
+                            child: PressScale(
+                              haptic: false,
+                              onTap: controller.onVersionTap,
+                              child: Padding(
+                                padding: EdgeInsets.all(8.r),
+                                child: Text(
+                                  'KnockUp ${controller.versionLabel}',
+                                  style: AppTextStyles.bodyMedium(context),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ]
+                        .animate(interval: 40.ms)
+                        .fadeIn(duration: 300.ms)
+                        .slideY(begin: 0.08),
+              ),
             ),
           ),
         ),
@@ -133,71 +103,166 @@ class SettingsPage extends GetView<SettingsController> {
     );
   }
 
-  Widget _buildSlider({
-    required BuildContext context,
-    required String title,
-    required String subtitle,
-    required double value,
-    required double min,
-    required double max,
-    required ValueChanged<double> onChanged,
-  }) {
-    return Container(
-      padding: EdgeInsets.all(16.r),
-      decoration: BoxDecoration(
-        color: AppColors.panel,
-        borderRadius: BorderRadius.circular(18.r),
-        border: Border.all(color: AppColors.border),
+  Widget _sectionLabel(BuildContext context, String text) {
+    return Padding(
+      padding: EdgeInsets.only(left: 4.w, bottom: 10.h),
+      child: Text(
+        text.toUpperCase(),
+        style: AppTextStyles.tag(
+          context,
+        ).copyWith(color: AppColors.textSecondary),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    );
+  }
+
+  Widget _sensitivity(BuildContext context) {
+    return Obx(() {
+      final current = controller.sensitivity.value;
+      return Column(
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          Container(
+            padding: EdgeInsets.all(4.r),
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              borderRadius: BorderRadius.circular(18.r),
+              border: Border.all(color: AppColors.glassStroke),
+            ),
+            child: Row(
+              children: [
+                for (final level in SensitivityLevel.values)
+                  Expanded(
+                    child: PressScale(
+                      onTap: () => controller.setSensitivity(level),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 220),
+                        curve: Curves.easeOut,
+                        padding: EdgeInsets.symmetric(vertical: 12.h),
+                        decoration: BoxDecoration(
+                          gradient: level == current
+                              ? AppColors.primaryGradient
+                              : null,
+                          borderRadius: BorderRadius.circular(14.r),
+                        ),
+                        alignment: Alignment.center,
+                        child: Text(
+                          level.label,
+                          style: AppTextStyles.buttonLabel(context).copyWith(
+                            color: level == current
+                                ? AppColors.onPrimary
+                                : AppColors.textSecondary,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          10.height,
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 200),
+            child: Text(
+              current.description,
+              key: ValueKey(current),
+              textAlign: TextAlign.center,
+              style: AppTextStyles.bodyMedium(context),
+            ),
+          ),
+        ],
+      );
+    });
+  }
+
+  Widget _developer(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        24.height,
+        _sectionLabel(context, 'Developer'),
+        GlassCard(
+          padding: EdgeInsets.zero,
+          borderColor: AppColors.warning.withValues(alpha: 0.4),
+          child: Column(
             children: [
-              Expanded(
-                child: Text(
-                  title,
-                  style: AppTextStyles.heading3(
-                    context,
-                  ).copyWith(fontSize: 14.ts(context)),
-                ),
+              _row(
+                context,
+                icon: Icons.tune_rounded,
+                title: 'Advanced setup',
+                subtitle: 'Step-by-step pre-check with every detection mode',
+                onTap: controller.openAdvancedSetup,
               ),
-              12.width,
-              Text(
-                value.toStringAsFixed(2),
-                style: TextStyle(
-                  color: AppColors.lime,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 13.ts(context),
+              _divider(),
+              _row(
+                context,
+                icon: Icons.monitor_heart_rounded,
+                title: 'Diagnostics',
+                subtitle: 'Live sensor telemetry',
+                onTap: controller.openDiagnostics,
+              ),
+              _divider(),
+              Padding(
+                padding: EdgeInsets.symmetric(horizontal: 16.w, vertical: 4.h),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.developer_mode_rounded,
+                      color: AppColors.warning,
+                      size: 20.r,
+                    ),
+                    14.width,
+                    Expanded(
+                      child: Text(
+                        'Developer mode',
+                        style: AppTextStyles.bodyLarge(context),
+                      ),
+                    ),
+                    Switch(value: true, onChanged: controller.setDeveloperMode),
+                  ],
                 ),
               ),
             ],
           ),
-          4.height,
-          Text(
-            subtitle,
-            style: AppTextStyles.bodyMedium(
-              context,
-            ).copyWith(fontSize: 11.ts(context)),
-          ),
-          8.height,
-          SliderTheme(
-            data: SliderThemeData(
-              trackHeight: 4.h,
-              thumbShape: RoundSliderThumbShape(enabledThumbRadius: 8.r),
-              activeTrackColor: AppColors.lime,
-              inactiveTrackColor: AppColors.border,
-              thumbColor: AppColors.lime,
+        ),
+      ],
+    );
+  }
+
+  Widget _divider() =>
+      Divider(height: 1, thickness: 1, color: AppColors.stroke, indent: 50.w);
+
+  Widget _row(
+    BuildContext context, {
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    VoidCallback? onTap,
+  }) {
+    return PressScale(
+      onTap: onTap,
+      pressedScale: 0.98,
+      child: Padding(
+        padding: EdgeInsets.symmetric(horizontal: 16.w, vertical: 14.h),
+        child: Row(
+          children: [
+            Icon(icon, color: AppColors.primary, size: 20.r),
+            14.width,
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: AppTextStyles.bodyLarge(context)),
+                  2.height,
+                  Text(subtitle, style: AppTextStyles.bodyMedium(context)),
+                ],
+              ),
             ),
-            child: Slider(
-              value: value,
-              min: min,
-              max: max,
-              onChanged: onChanged,
+            Icon(
+              Icons.chevron_right_rounded,
+              color: AppColors.textSecondary,
+              size: 20.r,
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

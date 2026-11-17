@@ -48,7 +48,7 @@ class SubjectLockPill extends StatelessWidget {
           return const SizedBox.shrink();
         case SubjectLockState.locked:
           label = 'Tracking you';
-          color = AppColors.lime;
+          color = AppColors.success;
         case SubjectLockState.verifying:
           label = 'Show your face to confirm it is you';
           color = AppColors.amber;
@@ -72,7 +72,7 @@ class SubjectLockPill extends StatelessWidget {
         child: Container(
           padding: EdgeInsets.symmetric(horizontal: 10.w, vertical: 4.h),
           decoration: BoxDecoration(
-            color: const Color(0xFF0F1E2E).withValues(alpha: 0.92),
+            color: AppColors.bg.withValues(alpha: 0.7),
             borderRadius: BorderRadius.circular(999.r),
             border: Border.all(color: color),
           ),
@@ -152,8 +152,8 @@ class ReferencePhotoCard extends StatelessWidget {
         case SubjectLockState.otherPerson:
           return const SizedBox.shrink();
         case SubjectLockState.waitingForUser:
-          title = 'Reference photo';
-          subtitle = 'Stand in front of the camera, face and shoulders in view';
+          title = 'Quick photo of you';
+          subtitle = 'Face and shoulders in view, so only your punches count';
           color = AppColors.amber;
         case SubjectLockState.holdStill:
           title = 'Hold still… ${holdStillSeconds.value}';
@@ -169,7 +169,7 @@ class ReferencePhotoCard extends StatelessWidget {
       return Container(
         padding: EdgeInsets.all(10.w),
         decoration: BoxDecoration(
-          color: const Color(0xFF0F1E2E).withValues(alpha: 0.92),
+          color: AppColors.bg.withValues(alpha: 0.7),
           borderRadius: BorderRadius.circular(12.r),
           border: Border.all(color: color),
         ),

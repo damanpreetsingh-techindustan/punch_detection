@@ -3431,6 +3431,10 @@ class FreeSessionController extends GetxController {
     return raw.clamp(84.0, 98.5);
   }
 
+  /// Reaction Drill score for the results screen (the Prompt session
+  /// overrides this). Not used by detection.
+  DrillScore? get drillScore => null;
+
   void finishSession() {
     final int nowMs = DateTime.now().millisecondsSinceEpoch;
     final int durationSec = max(
@@ -3471,6 +3475,7 @@ class FreeSessionController extends GetxController {
       vibrationThreshold: minVibrationThreshold.value,
       isVisionConfirmationRequired: isVisionConfirmationRequired.value,
       isVibrationGateEnabled: isVibrationGateEnabled.value,
+      drill: drillScore,
     );
     AppNavigator.toResults(result);
   }

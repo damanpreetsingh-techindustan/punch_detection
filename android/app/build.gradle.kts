@@ -18,7 +18,7 @@ if (keystorePropertiesFile.exists()) {
 val hasReleaseKeystore = keystorePropertiesFile.exists()
 
 android {
-    namespace = "com.daman.punch_detection_demo"
+    namespace = "com.finalview.knockup"
     compileSdk = 37
     ndkVersion = flutter.ndkVersion
 
@@ -29,7 +29,7 @@ android {
 
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.daman.punch_detection_demo"
+        applicationId = "com.finalview.knockup"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion

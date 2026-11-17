@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../../../../core/navigation/app_navigator.dart';
+import '../../../../core/services/storage_service.dart';
 import '../../../../core/utils/constants.dart';
 import '../../../../core/widgets/common_permission_dialog.dart';
 
@@ -28,6 +30,15 @@ class SessionPreCheckController extends GetxController {
   final Rx<DetectionMode> selectedMode = DetectionMode.fusion.obs;
   final Rx<MountType> selectedMountType = MountType.wall.obs;
   final String sessionType; // 'prompt' or 'free'
+
+  /// True for the one-screen "Get Ready" flow: photo and room calibration
+  /// run together and the session starts on its own. False = the step-by-step
+  /// pre-check (Developer mode).
+  final bool express;
+
+  /// Prompt drill pace passed from Home ('beginner' / 'intermediate' /
+  /// 'advanced'); falls back to the Workout Setup page's choice.
+  final String? difficulty;
 
   // Permissions state
   final RxBool micGranted = false.obs;
@@ -72,8 +83,29 @@ class SessionPreCheckController extends GetxController {
   final RxBool captureSkipped = false.obs;
   bool _captureHandedOver = false;
 
+  // Express ("Get Ready") flow state
+  final RxBool expressStarted = false.obs;
+  final RxBool captureDone = false.obs;
+  final RxBool calibrationDone = false.obs;
+  final RxBool isLaunching = false.obs;
+
+  /// 3-2-1 before the session opens; 0 = not counting.
+  final RxInt launchCountdown = 0.obs;
+
+  /// The first room check caught a loud moment (talking, a door): the room is
+  /// measured once more.
+  final RxBool roomRechecking = false.obs;
+  bool _roomRetried = false;
+
+  /// The room is loud enough to push the punch target to its upper limit, so
+  /// soft punches may be missed. The session shows a hint.
+  final RxBool roomNoisy = false.obs;
+  Worker? _captureStepWorker;
+
   SessionPreCheckController({
     this.sessionType = 'prompt',
+    this.express = false,
+    this.difficulty,
     IAudioLevelService? audioLevelService,
     IDeviceStabilityService? stabilityService,
   }) : _audioLevelService = audioLevelService ?? RecordAudioLevelService(),
@@ -142,10 +174,147 @@ class SessionPreCheckController extends GetxController {
   void onInit() {
     super.onInit();
     AppConstants.changeSettingToDefault();
+    _applySensitivity();
     selectedMountType.value = MountType.wall;
     pageController = PageController();
-    checkPermissions();
+    if (express) {
+      unawaited(_prepareExpress());
+    } else {
+      checkPermissions();
+    }
     _startDeviceStabilityMonitor();
+  }
+
+  /// The user's Sensitivity setting (Settings). Normal keeps the defaults.
+  void _applySensitivity() {
+    final preset = StorageService.to.sensitivity.preset;
+    if (preset != null) {
+      AppConstants.defaultImpactVibrationThreshold = preset.vibrationMag;
+    }
+  }
+
+  double get _spikeThresholdDb =>
+      StorageService.to.sensitivity.preset?.spikeDb ??
+      AppConstants.defaultAudioSpikeThresholdDb;
+
+  // ─── Express ("Get Ready") flow ────────────────────────────────────────────
+  // One screen: the camera opens, the user taps "I'm ready", the reference
+  // photo is taken and, while the user holds still, the room noise is
+  // measured (every session, so a new room is never judged by an old check).
+  // The 3-2-1 starts as soon as the photo is done and overlaps the end of the
+  // room check; the session opens when both are finished.
+
+  Future<void> _prepareExpress() async {
+    await checkPermissions();
+    if (!hasRequiredPermissions) await requestPermissions();
+    if (isClosed || !cameraGranted.value) return;
+    unawaited(captureService.start());
+    _captureStepWorker = ever<CaptureStep>(
+      captureService.step,
+      _onExpressCaptureStep,
+    );
+  }
+
+  /// "I'm ready" button.
+  Future<void> startExpress() async {
+    if (expressStarted.value) return;
+    if (!hasRequiredPermissions) {
+      await requestPermissions();
+      if (!hasRequiredPermissions) {
+        Get.snackbar(
+          'Camera and microphone needed',
+          'Allow both so KnockUp can see and hear your punches.',
+          snackPosition: SnackPosition.BOTTOM,
+        );
+        return;
+      }
+      _captureStepWorker ??= ever<CaptureStep>(
+        captureService.step,
+        _onExpressCaptureStep,
+      );
+      await captureService.start();
+    }
+    expressStarted.value = true;
+    captureDone.value = false;
+    calibrationDone.value = false;
+    roomRechecking.value = false;
+    roomNoisy.value = false;
+    _roomRetried = false;
+
+    if (captureService.isCameraUnavailable.value) {
+      skipReferencePhoto();
+      return;
+    }
+    captureReferencePhoto();
+  }
+
+  void _onExpressCaptureStep(CaptureStep step) {
+    if (!expressStarted.value) return;
+    // The user is still and quiet from here on: measure the room.
+    if (step == CaptureStep.holdStill) _startExpressCalibration();
+    if (step == CaptureStep.ready) {
+      captureDone.value = true;
+      HapticFeedback.mediumImpact();
+      _startExpressCalibration();
+      _maybeLaunch();
+    }
+  }
+
+  void _startExpressCalibration() {
+    if (calibrationDone.value || isCalibrating.value) return;
+    start5sCalibration();
+  }
+
+  /// Starts the 3-2-1 once the photo is done; the room check may still run.
+  void _maybeLaunch() {
+    if (!express || isLaunching.value || !captureDone.value) return;
+    unawaited(_runLaunchCountdown());
+  }
+
+  Future<void> _runLaunchCountdown() async {
+    isLaunching.value = true;
+    for (var n = 3; n >= 1; n--) {
+      if (isClosed) return;
+      launchCountdown.value = n;
+      HapticFeedback.selectionClick();
+      await Future.delayed(const Duration(milliseconds: 800));
+    }
+    if (isClosed) return;
+    launchCountdown.value = 0;
+    // The session needs the room check: wait for its last moments.
+    while (!calibrationDone.value) {
+      await Future.delayed(const Duration(milliseconds: 100));
+      if (isClosed) return;
+    }
+    HapticFeedback.heavyImpact();
+    await launchSession();
+  }
+
+  /// Room check finished (express flow). A loud moment during the check
+  /// (talking, a door) inflates the punch target, so the room is measured once
+  /// more. With no microphone samples, the last good check is used instead of
+  /// the fixed fallback.
+  void _onExpressRoomChecked({required bool hadSamples}) {
+    if (!hadSamples) {
+      final saved = StorageService.to.lastCalibration;
+      if (saved != null) {
+        maxCalibratedDb.value = saved.maxDb;
+        avgAmbientDb.value = saved.avgDb;
+      }
+    } else if (!_roomRetried &&
+        maxCalibratedDb.value - avgAmbientDb.value >=
+            AppConstants.roomCheckSpikeRetryDb) {
+      _roomRetried = true;
+      roomRechecking.value = true;
+      HapticFeedback.lightImpact();
+      start5sCalibration();
+      return;
+    }
+    roomRechecking.value = false;
+    roomNoisy.value =
+        maxCalibratedDb.value + _spikeThresholdDb >=
+        AppConstants.maxCalibratedTargetPunchDb;
+    calibrationDone.value = true;
   }
 
   void _startDeviceStabilityMonitor() {
@@ -201,8 +370,9 @@ class SessionPreCheckController extends GetxController {
         // When disabled: Uses raw instantaneous safeDb directly.
         final double effectiveDb = AppConstants.useAvarageAudioFormate
             ? (decibelHistory.isNotEmpty
-                ? decibelHistory.reduce((a, b) => a + b) / decibelHistory.length
-                : safeDb)
+                  ? decibelHistory.reduce((a, b) => a + b) /
+                        decibelHistory.length
+                  : safeDb)
             : safeDb;
         final int db = effectiveDb.round();
         decibels.value = db;
@@ -346,6 +516,13 @@ class SessionPreCheckController extends GetxController {
   Future<void> skipReferencePhoto() async {
     captureService.retake();
     captureSkipped.value = true;
+    if (express) {
+      expressStarted.value = true;
+      captureDone.value = true;
+      _startExpressCalibration();
+      _maybeLaunch();
+      return;
+    }
     await nextStep();
   }
 
@@ -431,57 +608,63 @@ class SessionPreCheckController extends GetxController {
         currentStep.value = targetStep;
       }
     } else {
-      // Setup complete -> Stop PreCheck audio monitor immediately before navigating so mic is completely free!
-      _audioLevelSubscription?.cancel();
-      _audioLevelSubscription = null;
-      await _audioLevelService.stopMonitoring();
+      await launchSession();
+    }
+  }
 
-      // The session opens the camera next: it must be released first.
-      await captureService.stop();
-      _handOverReferencePhoto();
+  /// Setup complete: hands everything to the session and opens it.
+  Future<void> launchSession() async {
+    // Setup complete -> Stop PreCheck audio monitor immediately before navigating so mic is completely free!
+    _audioLevelSubscription?.cancel();
+    _audioLevelSubscription = null;
+    await _audioLevelService.stopMonitoring();
 
-      // DYNAMIC AUDIO TARGET:
-      // Base audio is the max calibrated average dB recorded during pre-check.
-      // Initial target is Base + Default Spike Threshold (+6 dB, e.g. 80 -> 86 dB).
-      // Strictly clamped between minCalibratedTargetPunchDb and maxCalibratedTargetPunchDb.
-      final double baseAudioDb = maxCalibratedDb.value > 0
-          ? maxCalibratedDb.value
-          : avgAmbientDb.value;
-      final double defaultSpike = AppConstants.defaultAudioSpikeThresholdDb;
-      final double initialTarget = (baseAudioDb + defaultSpike)
-          .clamp(
-            AppConstants.minCalibratedTargetPunchDb,
-            AppConstants.maxCalibratedTargetPunchDb,
-          )
-          .roundToDouble();
+    // The session opens the camera next: it must be released first.
+    await captureService.stop();
+    _handOverReferencePhoto();
 
-      final double safeMaxAudioDb = min(
-        AppConstants.maxCalibratedTargetPunchDb,
-        max(initialTarget, maxCalibratedDb.value.round().toDouble()),
-      );
+    // DYNAMIC AUDIO TARGET:
+    // Base audio is the max calibrated average dB recorded during pre-check.
+    // Initial target is Base + Default Spike Threshold (+6 dB, e.g. 80 -> 86 dB).
+    // Strictly clamped between minCalibratedTargetPunchDb and maxCalibratedTargetPunchDb.
+    final double baseAudioDb = maxCalibratedDb.value > 0
+        ? maxCalibratedDb.value
+        : avgAmbientDb.value;
+    final double defaultSpike = _spikeThresholdDb;
+    final double initialTarget = (baseAudioDb + defaultSpike)
+        .clamp(
+          AppConstants.minCalibratedTargetPunchDb,
+          AppConstants.maxCalibratedTargetPunchDb,
+        )
+        .roundToDouble();
 
-      String? resolvedDifficulty;
-      if (Get.isRegistered<WorkoutSetupController>()) {
-        resolvedDifficulty =
-            Get.find<WorkoutSetupController>().difficulty.value;
-      }
+    final double safeMaxAudioDb = min(
+      AppConstants.maxCalibratedTargetPunchDb,
+      max(initialTarget, maxCalibratedDb.value.round().toDouble()),
+    );
 
-      final args = SessionArguments(
-        sessionType: sessionType,
-        promptMode: selectedMode.value.id,
-        mountType: selectedMountType.value.id,
-        difficulty: resolvedDifficulty,
-        maxAudioDb: safeMaxAudioDb,
-        avgAmbientDb: avgAmbientDb.value,
-        spikeThresholdDb: defaultSpike,
-        targetPunchDb: initialTarget,
-        calibratedDb: baseAudioDb,
-      );
-      if (sessionType == 'prompt') {
-        AppNavigator.toPromptSession(arguments: args);
-      } else {
-        AppNavigator.toFreeSession(arguments: args);
-      }
+    String? resolvedDifficulty = difficulty;
+    if (resolvedDifficulty == null &&
+        Get.isRegistered<WorkoutSetupController>()) {
+      resolvedDifficulty = Get.find<WorkoutSetupController>().difficulty.value;
+    }
+
+    final args = SessionArguments(
+      sessionType: sessionType,
+      promptMode: selectedMode.value.id,
+      mountType: selectedMountType.value.id,
+      difficulty: resolvedDifficulty,
+      maxAudioDb: safeMaxAudioDb,
+      avgAmbientDb: avgAmbientDb.value,
+      spikeThresholdDb: defaultSpike,
+      targetPunchDb: initialTarget,
+      calibratedDb: baseAudioDb,
+      noisyRoom: roomNoisy.value,
+    );
+    if (sessionType == 'prompt') {
+      AppNavigator.toPromptSession(arguments: args);
+    } else {
+      AppNavigator.toFreeSession(arguments: args);
     }
   }
 
@@ -538,6 +721,8 @@ class SessionPreCheckController extends GetxController {
         calibrationProgress.value = 1.0;
         _calibrationTimer?.cancel();
 
+        final bool hadSamples = _calibrationDbSamples.isNotEmpty;
+
         // Calculate AVERAGE ambient baseline from calibration samples
         final double avgDb = _calibrationDbSamples.isNotEmpty
             ? _calibrationDbSamples.reduce((a, b) => a + b) /
@@ -572,6 +757,23 @@ class SessionPreCheckController extends GetxController {
         calibrationButtonText.value = 'Calibration complete';
         isCalibrating.value = false;
 
+        // Keep the last real measurement as a backup (not the 40 dB fallback).
+        if (hadSamples) {
+          unawaited(
+            StorageService.to.saveCalibration(
+              SavedCalibration(
+                maxDb: maxCalibratedDb.value,
+                avgDb: avgAmbientDb.value,
+              ),
+            ),
+          );
+        }
+
+        if (express) {
+          _onExpressRoomChecked(hadSamples: hadSamples);
+          return;
+        }
+
         Future.delayed(const Duration(milliseconds: 600), () {
           nextStep(); // Launch session!
         });
@@ -581,6 +783,7 @@ class SessionPreCheckController extends GetxController {
 
   @override
   void onClose() {
+    _captureStepWorker?.dispose();
     _audioLevelSubscription?.cancel();
     _audioLevelService.dispose();
     _calibrationTimer?.cancel();

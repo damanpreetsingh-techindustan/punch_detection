@@ -1,310 +1,329 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:get/get.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_text_styles.dart';
 import '../../../../core/utils/size_box.dart';
+import '../../../../core/widgets/ui/app_buttons.dart';
+import '../../../../core/widgets/ui/glass_card.dart';
+import '../../../../core/widgets/ui/stat_tile.dart';
 import '../../domain/entities/workout_record.dart';
+import '../../domain/history_insights.dart';
 import '../controllers/history_controller.dart';
+import '../widgets/session_tile.dart';
+import '../widgets/weekly_punch_chart.dart';
 
+/// Progress: totals, this week's chart, personal bests and every saved
+/// session, newest first.
 class HistoryPage extends GetView<HistoryController> {
   const HistoryPage({super.key});
 
   @override
   Widget build(BuildContext context) {
-    final bool isLandscape =
-        MediaQuery.of(context).orientation == Orientation.landscape;
-
     return Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: AppBar(
-        backgroundColor: AppColors.background,
-        elevation: 0,
-        title: Text(
-          'Workout History',
-          style: AppTextStyles.heading2(context),
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.delete_outline, color: AppColors.red),
-            onPressed: () => _confirmClearDialog(context),
+      body: AppBackground(
+        child: SafeArea(
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 560),
+              child: Obx(() {
+                if (controller.isLoading.value && controller.records.isEmpty) {
+                  return Column(
+                    children: [
+                      _header(context, canClear: false),
+                      const Expanded(
+                        child: Center(
+                          child: CircularProgressIndicator(
+                            color: AppColors.primary,
+                          ),
+                        ),
+                      ),
+                    ],
+                  );
+                }
+                if (controller.records.isEmpty) return _empty(context);
+                return _content(context);
+              }),
+            ),
           ),
-        ],
-      ),
-      body: SafeArea(
-        child: Padding(
-          padding: EdgeInsets.symmetric(horizontal: 20.w, vertical: 8.h),
-          child: isLandscape
-              ? Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Left Column: Lifetime Summary Stats Card
-                    Expanded(
-                      flex: 4,
-                      child: Obx(() {
-                        final stats = controller.summaryStats.value;
-                        return Container(
-                          padding: EdgeInsets.all(14.w),
-                          decoration: BoxDecoration(
-                            color: AppColors.surface,
-                            borderRadius: BorderRadius.circular(16.r),
-                            border: Border.all(color: AppColors.border),
-                          ),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              _buildSummaryMetric(
-                                context,
-                                label: 'WORKOUTS',
-                                value: '${stats.totalWorkouts}',
-                                color: AppColors.textPrimary,
-                              ),
-                              Divider(color: AppColors.border, height: 16.h),
-                              _buildSummaryMetric(
-                                context,
-                                label: 'PUNCHES',
-                                value: '${stats.totalPunches}',
-                                color: AppColors.primary,
-                              ),
-                              Divider(color: AppColors.border, height: 16.h),
-                              _buildSummaryMetric(
-                                context,
-                                label: 'AVG REACTION',
-                                value:
-                                    '${stats.lifetimeAvgReactionMs.toStringAsFixed(0)} ms',
-                                color: AppColors.secondary,
-                              ),
-                            ],
-                          ),
-                        );
-                      }),
-                    ),
-                    16.width,
-
-                    // Right Column: History Record List
-                    Expanded(
-                      flex: 6,
-                      child: Obx(() {
-                        if (controller.isLoading.value) {
-                          return const Center(
-                            child: CircularProgressIndicator(color: AppColors.primary),
-                          );
-                        }
-
-                        if (controller.records.isEmpty) {
-                          return Center(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(Icons.history, size: 48.w, color: AppColors.textMuted),
-                                12.height,
-                                Text(
-                                  'No Saved Workouts',
-                                  style: AppTextStyles.heading3(context),
-                                ),
-                                6.height,
-                                Text(
-                                  'Complete a session to record your punch performance.',
-                                  style: AppTextStyles.bodyMedium(context),
-                                  textAlign: TextAlign.center,
-                                ),
-                              ],
-                            ),
-                          );
-                        }
-
-                        return ListView.separated(
-                          itemCount: controller.records.length,
-                          separatorBuilder: (_, index) => 10.height,
-                          itemBuilder: (context, index) {
-                            final record = controller.records[index];
-                            return _buildRecordTile(context, record);
-                          },
-                        );
-                      }),
-                    ),
-                  ],
-                )
-              : Column(
-                  children: [
-                    // Lifetime Summary Header Cards
-                    Obx(() {
-                      final stats = controller.summaryStats.value;
-                      return Container(
-                        padding: EdgeInsets.all(16.w),
-                        decoration: BoxDecoration(
-                          color: AppColors.surface,
-                          borderRadius: BorderRadius.circular(16.r),
-                          border: Border.all(color: AppColors.border),
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceAround,
-                          children: [
-                            _buildSummaryMetric(
-                              context,
-                              label: 'WORKOUTS',
-                              value: '${stats.totalWorkouts}',
-                              color: AppColors.textPrimary,
-                            ),
-                            Container(height: 36.h, width: 1.w, color: AppColors.border),
-                            _buildSummaryMetric(
-                              context,
-                              label: 'PUNCHES',
-                              value: '${stats.totalPunches}',
-                              color: AppColors.primary,
-                            ),
-                            Container(height: 36.h, width: 1.w, color: AppColors.border),
-                            _buildSummaryMetric(
-                              context,
-                              label: 'AVG REACTION',
-                              value: '${stats.lifetimeAvgReactionMs.toStringAsFixed(0)} ms',
-                              color: AppColors.secondary,
-                            ),
-                          ],
-                        ),
-                      );
-                    }),
-                    20.height,
-
-                    // History Record List
-                    Expanded(
-                      child: Obx(() {
-                        if (controller.isLoading.value) {
-                          return const Center(child: CircularProgressIndicator(color: AppColors.primary));
-                        }
-
-                        if (controller.records.isEmpty) {
-                          return Center(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(Icons.history, size: 64.w, color: AppColors.textMuted),
-                                16.height,
-                                Text(
-                                  'No Saved Workouts',
-                                  style: AppTextStyles.heading3(context),
-                                ),
-                                8.height,
-                                Text(
-                                  'Complete a session to record your punch performance.',
-                                  style: AppTextStyles.bodyMedium(context),
-                                  textAlign: TextAlign.center,
-                                ),
-                              ],
-                            ),
-                          );
-                        }
-
-                        return ListView.separated(
-                          itemCount: controller.records.length,
-                          separatorBuilder: (_, index) => 12.height,
-                          itemBuilder: (context, index) {
-                            final record = controller.records[index];
-                            return _buildRecordTile(context, record);
-                          },
-                        );
-                      }),
-                    ),
-                  ],
-                ),
         ),
       ),
     );
   }
 
-  Widget _buildSummaryMetric(
-    BuildContext context, {
-    required String label,
-    required String value,
-    required Color color,
-  }) {
+  Widget _header(BuildContext context, {required bool canClear}) {
+    return Padding(
+      padding: EdgeInsets.fromLTRB(20.w, 12.h, 20.w, 0),
+      child: Row(
+        children: [
+          GlassIconButton(icon: Icons.arrow_back_rounded, onPressed: Get.back),
+          14.width,
+          Expanded(child: Text('Progress', style: AppTextStyles.heading2())),
+          if (canClear)
+            GlassIconButton(
+              icon: Icons.delete_outline_rounded,
+              color: AppColors.textSecondary,
+              onPressed: () => _confirmClear(context),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _empty(BuildContext context) {
     return Column(
       children: [
-        Text(label, style: AppTextStyles.tag(context).copyWith(color: AppColors.textMuted)),
-        6.height,
-        Text(
-          value,
-          style: AppTextStyles.heading2(context).copyWith(color: color, fontSize: 20.ts(context)),
+        _header(context, canClear: false),
+        Expanded(
+          child: Center(
+            child: Padding(
+              padding: EdgeInsets.symmetric(horizontal: 32.w),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.insights_rounded,
+                    size: 72.r,
+                    color: AppColors.primary.withValues(alpha: 0.6),
+                  ),
+                  16.height,
+                  Text('No sessions yet', style: AppTextStyles.heading2()),
+                  8.height,
+                  Text(
+                    'Finish a Free Fight or a Reaction Drill and your progress '
+                    'shows up here.',
+                    textAlign: TextAlign.center,
+                    style: AppTextStyles.bodyMedium(),
+                  ),
+                  24.height,
+                  PrimaryButton(
+                    label: 'Start training',
+                    icon: Icons.sports_mma_rounded,
+                    onPressed: Get.back,
+                  ),
+                ],
+              ).animate().fadeIn(duration: 350.ms).slideY(begin: 0.1),
+            ),
+          ),
         ),
       ],
     );
   }
 
-  Widget _buildRecordTile(BuildContext context, WorkoutRecord record) {
-    return Container(
-      padding: EdgeInsets.all(16.w),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(12.r),
-        border: Border.all(color: AppColors.border),
+  Widget _content(BuildContext context) {
+    final records = controller.records;
+    final week = controller.week;
+    final weekTotal = week.fold<int>(0, (s, d) => s + d.punches);
+    final bests = controller.bests;
+
+    final sections = <Widget>[
+      _summary(context, records.length),
+      16.height,
+      _sectionLabel('This week'),
+      GlassCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.baseline,
+              textBaseline: TextBaseline.alphabetic,
+              children: [
+                Text('$weekTotal', style: AppTextStyles.number(null, 28)),
+                6.width,
+                Text('punches this week', style: AppTextStyles.bodyMedium()),
+              ],
+            ),
+            12.height,
+            WeeklyPunchChart(days: week, height: 150.r),
+          ],
+        ),
       ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Row(
-            children: [
-              Container(
-                padding: EdgeInsets.all(10.w),
-                decoration: BoxDecoration(
-                  color: AppColors.primary.withValues(alpha: 0.15),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(Icons.sports_mma, color: AppColors.primary, size: 24.w),
-              ),
-              12.width,
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '${record.totalPunches} Punches',
-                    style: AppTextStyles.bodyLarge(context).copyWith(fontWeight: FontWeight.bold),
-                  ),
-                  4.height,
-                  Text(
-                    'Avg: ${record.averageReactionMs.toStringAsFixed(0)} ms  •  Best: ${record.bestReactionMs} ms',
-                    style: AppTextStyles.bodyMedium(context),
-                  ),
-                ],
-              ),
-            ],
+      20.height,
+      _sectionLabel('Personal bests'),
+      _bests(bests),
+      20.height,
+      _sectionLabel('Sessions'),
+      ..._sessionList(records),
+    ];
+
+    return Column(
+      children: [
+        _header(context, canClear: true),
+        Expanded(
+          child: RefreshIndicator(
+            color: AppColors.primary,
+            onRefresh: controller.loadHistory,
+            child: ListView(
+              padding: EdgeInsets.fromLTRB(20.w, 16.h, 20.w, 24.h),
+              children: sections
+                  .animate(interval: 40.ms)
+                  .fadeIn(duration: 300.ms)
+                  .slideY(begin: 0.06),
+            ),
           ),
-          Container(
-            padding: EdgeInsets.symmetric(horizontal: 10.w, vertical: 4.h),
-            decoration: BoxDecoration(
-              color: AppColors.surfaceLight,
-              borderRadius: BorderRadius.circular(8.r),
-            ),
-            child: Text(
-              record.detectionMode.toUpperCase(),
-              style: AppTextStyles.tag(context),
-            ),
+        ),
+      ],
+    );
+  }
+
+  Widget _summary(BuildContext context, int sessions) {
+    final streak = controller.dayStreak;
+    Widget item(String value, String label, {Color? color}) => Expanded(
+      child: Column(
+        children: [
+          Text(
+            value,
+            style: AppTextStyles.number(
+              null,
+              24,
+            ).copyWith(color: color ?? AppColors.textPrimary),
+          ),
+          2.height,
+          Text(
+            label,
+            style: AppTextStyles.bodyMedium().copyWith(fontSize: 12.fs),
+          ),
+        ],
+      ),
+    );
+    return GlassCard(
+      padding: EdgeInsets.symmetric(vertical: 16.r, horizontal: 8.r),
+      child: Row(
+        children: [
+          item('$sessions', 'sessions'),
+          item('${controller.totalPunches}', 'punches'),
+          item(
+            '$streak',
+            streak == 1 ? 'day streak' : 'days streak',
+            color: streak > 0 ? AppColors.gold : null,
           ),
         ],
       ),
     );
   }
 
-  void _confirmClearDialog(BuildContext context) {
-    Get.dialog(
-      AlertDialog(
-        backgroundColor: AppColors.surface,
-        title: Text('Clear Workout History', style: AppTextStyles.heading3(context)),
+  Widget _bests(PersonalBests b) {
+    final tiles = <Widget>[
+      StatTile(
+        label: 'Most punches',
+        value: '${b.mostPunches}',
+        icon: Icons.emoji_events_rounded,
+        accent: AppColors.gold,
+      ),
+      StatTile(
+        label: 'Best pace',
+        value: b.bestPace == 0 ? '–' : b.bestPace.round().toString(),
+        unit: b.bestPace == 0 ? null : '/ min',
+        icon: Icons.bolt_rounded,
+      ),
+      StatTile(
+        label: 'Longest',
+        value: DateLabels.duration(b.longestSessionSeconds),
+        icon: Icons.timer_outlined,
+        accent: AppColors.gold,
+      ),
+      StatTile(
+        label: 'Best streak',
+        value: b.longestStreak == 0 ? '–' : '${b.longestStreak}',
+        unit: b.longestStreak == 0 ? null : 'in a row',
+        icon: Icons.local_fire_department_rounded,
+        accent: AppColors.success,
+      ),
+    ];
+    return Column(
+      children: [
+        Row(
+          children: [
+            Expanded(child: tiles[0]),
+            12.width,
+            Expanded(child: tiles[1]),
+          ],
+        ),
+        12.height,
+        Row(
+          children: [
+            Expanded(child: tiles[2]),
+            12.width,
+            Expanded(child: tiles[3]),
+          ],
+        ),
+      ],
+    );
+  }
+
+  /// Sessions grouped under "Today", "Yesterday", "Mon 12 Nov"…
+  List<Widget> _sessionList(List<WorkoutRecord> records) {
+    final now = DateTime.now();
+    final widgets = <Widget>[];
+    String? currentDay;
+    for (final r in records) {
+      final day = DateLabels.relativeDay(r.date, now);
+      if (day != currentDay) {
+        currentDay = day;
+        widgets.add(
+          Padding(
+            padding: EdgeInsets.only(left: 4.w, top: 6.h, bottom: 8.h),
+            child: Text(
+              day,
+              style: AppTextStyles.bodyMedium().copyWith(
+                color: AppColors.textPrimary,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        );
+      }
+      widgets.add(
+        Padding(
+          padding: EdgeInsets.only(bottom: 10.h),
+          child: SessionTile(
+            record: r,
+            showDay: false,
+            onTap: () => controller.openSession(r),
+          ),
+        ),
+      );
+    }
+    return widgets;
+  }
+
+  Widget _sectionLabel(String text) {
+    return Padding(
+      padding: EdgeInsets.only(left: 4.w, bottom: 10.h),
+      child: Text(
+        text.toUpperCase(),
+        style: AppTextStyles.tag().copyWith(color: AppColors.textSecondary),
+      ),
+    );
+  }
+
+  void _confirmClear(BuildContext context) {
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Clear all history?', style: AppTextStyles.heading3()),
         content: Text(
-          'Are you sure you want to delete all saved workout records? This action cannot be undone.',
-          style: AppTextStyles.bodyMedium(context),
+          'Every saved session and personal best will be deleted. This '
+          'can\'t be undone.',
+          style: AppTextStyles.bodyMedium(),
         ),
         actions: [
           TextButton(
-            onPressed: () => Get.back(),
-            child: Text('Cancel', style: AppTextStyles.bodyMedium(context)),
+            onPressed: () => Navigator.pop(context),
+            child: Text('Cancel', style: AppTextStyles.bodyLarge()),
           ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: AppColors.red),
+          TextButton(
             onPressed: () {
-              Get.back();
+              Navigator.pop(context);
               controller.clearAllHistory();
             },
-            child: const Text('Clear All', style: TextStyle(color: Colors.white)),
+            child: Text(
+              'Delete',
+              style: AppTextStyles.bodyLarge().copyWith(
+                color: AppColors.danger,
+              ),
+            ),
           ),
         ],
       ),

@@ -4,7 +4,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 class AppVersionInfo {
   static String _version = '1.0.0';
   static String _buildNumber = '1';
-  static String _appName = 'Hyper Hitter';
+  static String _appName = 'KnockUp';
   static String _packageName = '';
   static bool _isInitialized = false;
 

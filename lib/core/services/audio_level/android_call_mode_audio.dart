@@ -16,7 +16,7 @@ class AndroidCallModeAudio {
   AndroidCallModeAudio._();
 
   static const MethodChannel _channel = MethodChannel(
-    'punch_detection_demo/call_mode_audio',
+    'knockup/call_mode_audio',
   );
 
   static bool get isEnabled =>

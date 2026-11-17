@@ -6,11 +6,17 @@ import 'package:get/get.dart';
 import 'core/di/initial_bindings.dart';
 import 'core/navigation/app_pages.dart';
 import 'core/navigation/app_routes.dart';
+import 'core/services/storage_service.dart';
 import 'core/theme/app_theme.dart';
 import 'core/utils/constants.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  await Get.putAsync<StorageService>(
+    () => StorageService().init(),
+    permanent: true,
+  );
 
   // Global error filter to suppress camera_android_camerax plugin teardown race condition exceptions
   FlutterError.onError = (FlutterErrorDetails details) {
@@ -48,11 +54,11 @@ void main() {
     DeviceOrientation.landscapeRight,
   ]);
 
-  runApp(const HyperHitterApp());
+  runApp(const KnockUpApp());
 }
 
-class HyperHitterApp extends StatelessWidget {
-  const HyperHitterApp({super.key});
+class KnockUpApp extends StatelessWidget {
+  const KnockUpApp({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -68,6 +74,8 @@ class HyperHitterApp extends StatelessWidget {
           title: AppConstants.appName,
           debugShowCheckedModeBanner: false,
           theme: AppTheme.theme,
+          defaultTransition: Transition.cupertino,
+          transitionDuration: const Duration(milliseconds: 320),
           initialBinding: InitialBindings(),
           getPages: AppPages.pages,
           initialRoute: AppRoutes.splash,

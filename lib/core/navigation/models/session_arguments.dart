@@ -30,6 +30,10 @@ class SessionArguments {
   /// Static base calibrated decibel level captured during pre-check calibration.
   final double? calibratedDb;
 
+  /// The room check found a loud room (punch target at its upper limit). The
+  /// session only shows a hint for it; detection does not read it.
+  final bool noisyRoom;
+
   const SessionArguments({
     required this.sessionType,
     this.promptMode,
@@ -44,6 +48,7 @@ class SessionArguments {
     this.spikeThresholdDb = 10.0,
     this.targetPunchDb,
     this.calibratedDb,
+    this.noisyRoom = false,
   });
 
   factory SessionArguments.fromArguments(dynamic args) {
@@ -62,8 +67,9 @@ class SessionArguments {
         avgAmbientDb: args['avgAmbientDb'] as double? ?? 48.0,
         spikeThresholdDb: args['spikeThresholdDb'] as double? ?? 10.0,
         targetPunchDb: args['targetPunchDb'] as double?,
-        calibratedDb: args['calibratedDb'] as double? ??
-            args['maxAudioDb'] as double?,
+        calibratedDb:
+            args['calibratedDb'] as double? ?? args['maxAudioDb'] as double?,
+        noisyRoom: args['noisyRoom'] as bool? ?? false,
       );
     }
     if (args is String) return SessionArguments(sessionType: args);
@@ -85,7 +91,7 @@ class SessionArguments {
       'spikeThresholdDb': spikeThresholdDb,
       'targetPunchDb': targetPunchDb,
       'calibratedDb': calibratedDb,
+      'noisyRoom': noisyRoom,
     };
   }
 }
-

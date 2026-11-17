@@ -2,9 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../../../../core/navigation/app_navigator.dart';
+import '../../../../core/services/storage_service.dart';
 import '../../../../core/widgets/common_permission_dialog.dart';
 
 class OnboardingController extends GetxController {
+  static const int pageCount = 3;
+  static const int permissionsPage = 2;
+
   PageController pageController = PageController();
   final RxInt currentStep = 0.obs;
 
@@ -70,9 +74,10 @@ class OnboardingController extends GetxController {
       }
 
       if (mapToRequest.isNotEmpty) {
-        final results = await CommonPermissionDialog.checkAndRequestMultiplePermissions(
-          permissionNames: mapToRequest,
-        );
+        final results =
+            await CommonPermissionDialog.checkAndRequestMultiplePermissions(
+              permissionNames: mapToRequest,
+            );
         if (results.containsKey(Permission.microphone)) {
           micGranted.value = results[Permission.microphone] ?? false;
         }
@@ -87,27 +92,27 @@ class OnboardingController extends GetxController {
 
   void onPageChanged(int index) {
     currentStep.value = index;
-    if (index == 1) {
+    if (index == permissionsPage) {
       checkAllPermissions();
     }
   }
 
   Future<void> nextStep() async {
-    if (currentStep.value == 1) {
+    if (currentStep.value == permissionsPage) {
       if (!micGranted.value || !cameraGranted.value) {
         await requestRequiredPermissions();
       }
       if (!micGranted.value || !cameraGranted.value) {
         Get.snackbar(
           'Permissions Required',
-          'Both Microphone and Camera permissions are required to use Hyper Hitter.',
+          'Both Microphone and Camera permissions are required to use KnockUp.',
           snackPosition: SnackPosition.BOTTOM,
         );
         return;
       }
     }
 
-    if (currentStep.value < 2) {
+    if (currentStep.value < pageCount - 1) {
       final targetStep = currentStep.value + 1;
       if (pageController.hasClients) {
         pageController.animateToPage(
@@ -119,6 +124,7 @@ class OnboardingController extends GetxController {
         currentStep.value = targetStep;
       }
     } else {
+      await StorageService.to.setOnboardingDone(true);
       AppNavigator.toHome();
     }
   }

@@ -7,13 +7,16 @@ import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_text_styles.dart';
 import '../../../../core/utils/constants.dart';
 import '../../../../core/utils/size_box.dart';
+import '../../../../core/widgets/dev_only.dart';
 import '../controllers/free_session_controller.dart';
+import 'hud/session_hud.dart';
 import 'pose_skeleton_painter.dart';
 import 'subject_lock_pill.dart';
 
 /// Live camera view shared by the Free and Prompt sessions: camera feed with
-/// the pose skeleton, MIC / ARM badges, reference photo card, subject lock
-/// pill and the status badge.
+/// the pose skeleton and, along the top, the camera hint, reference photo
+/// card and subject lock pill. MIC / ARM badges and the raw detector status
+/// are Developer mode only. The bottom is left free for the session HUD.
 class SessionCameraPanel extends StatelessWidget {
   const SessionCameraPanel({
     super.key,
@@ -30,9 +33,9 @@ class SessionCameraPanel extends StatelessWidget {
       width: double.infinity,
       height: double.infinity,
       decoration: BoxDecoration(
-        color: const Color(0xFF070D14),
-        borderRadius: BorderRadius.circular(20.r),
-        border: Border.all(color: AppColors.border, width: 2.w),
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(28.r),
+        border: Border.all(color: AppColors.glassStroke),
       ),
       child: Stack(
         alignment: Alignment.center,
@@ -64,14 +67,14 @@ class SessionCameraPanel extends StatelessWidget {
                     ),
                     10.height,
                     Text(
-                      'Camera View Disabled',
+                      'Camera off',
                       style: AppTextStyles.heading3(context).copyWith(
                         fontSize: isLandscape ? 12.ts(context) : 14.ts(context),
                       ),
                     ),
                     4.height,
                     Text(
-                      'Detecting punches via acoustic audio & impact shockwaves.',
+                      'Counting punches by sound and impact.',
                       style: AppTextStyles.bodyMedium(context).copyWith(
                         color: AppColors.textMuted,
                         fontSize: isLandscape
@@ -97,7 +100,7 @@ class SessionCameraPanel extends StatelessWidget {
                     ),
                     8.height,
                     Text(
-                      'Camera Offline — Audio Only',
+                      'Camera unavailable',
                       style: AppTextStyles.bodyMedium(context),
                     ),
                   ],
@@ -108,7 +111,7 @@ class SessionCameraPanel extends StatelessWidget {
             if (!controller.isCameraInitialized.value ||
                 controller.cameraController == null) {
               return const Center(
-                child: CircularProgressIndicator(color: AppColors.blue),
+                child: CircularProgressIndicator(color: AppColors.primary),
               );
             }
 
@@ -126,7 +129,7 @@ class SessionCameraPanel extends StatelessWidget {
             }
 
             return ClipRRect(
-              borderRadius: BorderRadius.circular(18.r),
+              borderRadius: BorderRadius.circular(27.r),
               child: SizedBox.expand(
                 child: FittedBox(
                   fit: isLandscape ? BoxFit.contain : BoxFit.cover,
@@ -159,332 +162,319 @@ class SessionCameraPanel extends StatelessWidget {
             );
           }),
 
-          // 2. Live dB Level + Confidence Badges
+          // 2. Top overlays: dev MIC / ARM badges, camera hint, reference
+          //    photo card (until the photo is taken), subject lock pill
+          //    afterwards (tap = retake) and the dev raw status.
           Positioned(
-            top: 8.h,
-            left: 8.w,
-            right: 8.w,
-            child: Row(
+            top: 10.h,
+            left: 10.w,
+            right: 10.w,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              spacing: 6.h,
               children: [
-                Expanded(
-                  child: GestureDetector(
-                    onTap: () => controller.showAudioTelemetrySheet(context),
-                    child: Obx(() {
-                      bool isHit = controller.isAudioHitActive.value;
-                      bool isPassing =
-                          controller.liveDecibelLevel.value >=
-                          controller.minPunchAudioDb.value;
-                      bool isHighlighted = isHit || isPassing;
-                      if (!AppConstants.showAllFeatures) {
-                        isHit = false;
-                        isPassing = false;
-                        isHighlighted = false;
-                      }
+                DevOnly(
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: GestureDetector(
+                          onTap: () =>
+                              controller.showAudioTelemetrySheet(context),
+                          child: Obx(() {
+                            bool isHit = controller.isAudioHitActive.value;
+                            bool isPassing =
+                                controller.liveDecibelLevel.value >=
+                                controller.minPunchAudioDb.value;
+                            bool isHighlighted = isHit || isPassing;
+                            if (!AppConstants.showAllFeatures) {
+                              isHit = false;
+                              isPassing = false;
+                              isHighlighted = false;
+                            }
 
-                      final Color accentColor = isHit
-                          ? AppColors.lime
-                          : (isPassing ? AppColors.amber : AppColors.lime);
-                      final Color bgColor = isHit
-                          ? AppColors.lime.withValues(alpha: 0.25)
-                          : (isPassing
-                                ? AppColors.amber.withValues(alpha: 0.15)
-                                : AppColors.panel.withValues(alpha: 0.90));
-                      final Color borderColor = isHit
-                          ? AppColors.lime.withValues(alpha: 0.4)
-                          : (isPassing ? AppColors.amber : AppColors.border);
+                            final Color accentColor = isHit
+                                ? AppColors.lime
+                                : (isPassing
+                                      ? AppColors.amber
+                                      : AppColors.lime);
+                            final Color bgColor = isHit
+                                ? AppColors.lime.withValues(alpha: 0.25)
+                                : (isPassing
+                                      ? AppColors.amber.withValues(alpha: 0.15)
+                                      : AppColors.panel.withValues(
+                                          alpha: 0.90,
+                                        ));
+                            final Color borderColor = isHit
+                                ? AppColors.lime.withValues(alpha: 0.4)
+                                : (isPassing
+                                      ? AppColors.amber
+                                      : AppColors.border);
 
-                      return AnimatedContainer(
-                        duration: const Duration(milliseconds: 200),
-                        padding: EdgeInsets.all(5.r),
-                        decoration: BoxDecoration(
-                          color: bgColor,
-                          borderRadius: BorderRadius.circular(8.r),
-                          border: Border.all(
-                            color: borderColor,
-                            width: isHighlighted ? 1.8 : 1.0,
-                          ),
-                          boxShadow: isHit
-                              ? [
-                                  BoxShadow(
-                                    color: AppColors.lime.withValues(
-                                      alpha: 0.50,
-                                    ),
-                                    blurRadius: 10,
-                                    spreadRadius: 2,
-                                  ),
-                                ]
-                              : null,
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Text(
-                                      'MIC ⚙',
-                                      style: TextStyle(
-                                        fontSize: 8.ts(context),
-                                        color: accentColor,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                    if (isHit) ...[
-                                      2.width,
-                                      Text(
-                                        '⚡ HIT',
-                                        style: TextStyle(
-                                          fontSize: 7.ts(context),
-                                          color: AppColors.lime,
-                                          fontWeight: FontWeight.w900,
+                            return AnimatedContainer(
+                              duration: const Duration(milliseconds: 200),
+                              padding: EdgeInsets.all(5.r),
+                              decoration: BoxDecoration(
+                                color: bgColor,
+                                borderRadius: BorderRadius.circular(8.r),
+                                border: Border.all(
+                                  color: borderColor,
+                                  width: isHighlighted ? 1.8 : 1.0,
+                                ),
+                                boxShadow: isHit
+                                    ? [
+                                        BoxShadow(
+                                          color: AppColors.lime.withValues(
+                                            alpha: 0.50,
+                                          ),
+                                          blurRadius: 10,
+                                          spreadRadius: 2,
                                         ),
-                                      ),
-                                    ],
-                                  ],
-                                ),
-                                Flexible(
-                                  child: Text(
-                                    '+${controller.liveSpikeThresholdDb.value.toStringAsFixed(1)}dB',
-                                    overflow: TextOverflow.ellipsis,
-                                    maxLines: 1,
-                                    style: TextStyle(
-                                      fontSize: 7.5.ts(context),
-                                      color: isHighlighted
-                                          ? accentColor
-                                          : AppColors.textMuted,
-                                      fontWeight: isHighlighted
-                                          ? FontWeight.bold
-                                          : FontWeight.normal,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            // ---------------------------------------------------------------------
-                            // PREVIOUS (Instantaneous live dB — showed jitter too fast):
-                            // Text(
-                            //   '${controller.liveDecibelLevel.value.round()} dB (Base: ${controller.liveBaselineDb.value.round()} dB)',
-                            //   style: TextStyle(
-                            //     color: isHighlighted
-                            //         ? accentColor
-                            //         : AppColors.textMuted,
-                            //     fontSize: 11.ts(context),
-                            //     fontWeight: FontWeight.bold,
-                            //   ),
-                            // ),
-                            // ---------------------------------------------------------------------
-                            // CURRENT (Rolling average dB matching waveform graph to remove jitter):
-                            () {
-                              final double displayDb =
-                                  controller.decibelHistory.isNotEmpty
-                                  ? (controller.decibelHistory.reduce(
-                                          (a, b) => a + b,
-                                        ) /
-                                        controller.decibelHistory.length)
-                                  : controller.liveDecibelLevel.value;
-                              return Text(
-                                '${displayDb.round()} dB',
-                                // '${displayDb.round()} dB (Base: ${controller.liveBaselineDb.value.round()} dB)',
-                                style: TextStyle(
-                                  color: isHighlighted
-                                      ? accentColor
-                                      : AppColors.textMuted,
-                                  fontSize: 11.ts(context),
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              );
-                            }(),
-                          ],
-                        ),
-                      );
-                    }),
-                  ),
-                ),
-                6.width,
-                Expanded(
-                  child: GestureDetector(
-                    onTap: () => controller.showLiveTelemetrySheet(context),
-                    child: Obx(() {
-                      bool isHit = controller.isVisionHitActive.value;
-                      bool isPassing =
-                          controller.visionConfidence.value >=
-                          controller.minPunchVisionConfidence.value;
-                      bool isHighlighted = isHit || isPassing;
-                      if (!AppConstants.showAllFeatures) {
-                        isHit = false;
-                        isPassing = false;
-                        isHighlighted = false;
-                      }
-
-                      final Color accentColor = isHit
-                          ? AppColors.green
-                          : (isPassing ? AppColors.blue : AppColors.blue);
-                      final Color bgColor = isHit
-                          ? AppColors.green.withValues(alpha: 0.25)
-                          : (isPassing
-                                ? AppColors.blue.withValues(alpha: 0.15)
-                                : AppColors.panel.withValues(alpha: 0.90));
-                      final Color borderColor = isHit
-                          ? AppColors.green
-                          : (isPassing ? AppColors.blue : AppColors.border);
-
-                      return AnimatedContainer(
-                        duration: const Duration(milliseconds: 200),
-                        padding: EdgeInsets.all(5.r),
-                        decoration: BoxDecoration(
-                          color: bgColor,
-                          borderRadius: BorderRadius.circular(8.r),
-                          border: Border.all(
-                            color: borderColor,
-                            width: isHighlighted ? 1.8 : 1.0,
-                          ),
-                          boxShadow: isHit
-                              ? [
-                                  BoxShadow(
-                                    color: AppColors.green.withValues(
-                                      alpha: 0.50,
-                                    ),
-                                    blurRadius: 10,
-                                    spreadRadius: 2,
-                                  ),
-                                ]
-                              : null,
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Text(
-                                      'ARM 📊',
-                                      style: TextStyle(
-                                        fontSize: 8.ts(context),
-                                        color: accentColor,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                    if (isHit) ...[
-                                      2.width,
-                                      Text(
-                                        '⚡ HIT',
-                                        style: TextStyle(
-                                          fontSize: 7.ts(context),
-                                          color: AppColors.green,
-                                          fontWeight: FontWeight.w900,
-                                        ),
-                                      ),
-                                    ],
-                                  ],
-                                ),
-                                Flexible(
-                                  child: Text(
-                                    '${controller.minPunchVisionConfidence.value.round()}%',
-                                    overflow: TextOverflow.ellipsis,
-                                    maxLines: 1,
-                                    style: TextStyle(
-                                      fontSize: 7.5.ts(context),
-                                      color: isHighlighted
-                                          ? accentColor
-                                          : AppColors.textMuted,
-                                      fontWeight: isHighlighted
-                                          ? FontWeight.bold
-                                          : FontWeight.normal,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            Text(
-                              (controller.isCameraUnavailable.value ||
-                                      !controller
-                                          .isVisionConfirmationRequired
-                                          .value ||
-                                      !controller
-                                          .sessionMode
-                                          .value
-                                          .requiresCamera)
-                                  ? 'DISABLED'
-                                  : '${controller.visionConfidence.value}%',
-                              style: TextStyle(
-                                color: isHighlighted
-                                    ? accentColor
-                                    : AppColors.textMuted,
-                                fontSize: 11.ts(context),
-                                fontWeight: FontWeight.bold,
+                                      ]
+                                    : null,
                               ),
-                            ),
-                          ],
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    mainAxisAlignment:
+                                        MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Text(
+                                            'MIC ⚙',
+                                            style: TextStyle(
+                                              fontSize: 8.ts(context),
+                                              color: accentColor,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                          if (isHit) ...[
+                                            2.width,
+                                            Text(
+                                              '⚡ HIT',
+                                              style: TextStyle(
+                                                fontSize: 7.ts(context),
+                                                color: AppColors.lime,
+                                                fontWeight: FontWeight.w900,
+                                              ),
+                                            ),
+                                          ],
+                                        ],
+                                      ),
+                                      Flexible(
+                                        child: Text(
+                                          '+${controller.liveSpikeThresholdDb.value.toStringAsFixed(1)}dB',
+                                          overflow: TextOverflow.ellipsis,
+                                          maxLines: 1,
+                                          style: TextStyle(
+                                            fontSize: 7.5.ts(context),
+                                            color: isHighlighted
+                                                ? accentColor
+                                                : AppColors.textMuted,
+                                            fontWeight: isHighlighted
+                                                ? FontWeight.bold
+                                                : FontWeight.normal,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  // ---------------------------------------------------------------------
+                                  // PREVIOUS (Instantaneous live dB — showed jitter too fast):
+                                  // Text(
+                                  //   '${controller.liveDecibelLevel.value.round()} dB (Base: ${controller.liveBaselineDb.value.round()} dB)',
+                                  //   style: TextStyle(
+                                  //     color: isHighlighted
+                                  //         ? accentColor
+                                  //         : AppColors.textMuted,
+                                  //     fontSize: 11.ts(context),
+                                  //     fontWeight: FontWeight.bold,
+                                  //   ),
+                                  // ),
+                                  // ---------------------------------------------------------------------
+                                  // CURRENT (Rolling average dB matching waveform graph to remove jitter):
+                                  () {
+                                    final double displayDb =
+                                        controller.decibelHistory.isNotEmpty
+                                        ? (controller.decibelHistory.reduce(
+                                                (a, b) => a + b,
+                                              ) /
+                                              controller.decibelHistory.length)
+                                        : controller.liveDecibelLevel.value;
+                                    return Text(
+                                      '${displayDb.round()} dB',
+                                      // '${displayDb.round()} dB (Base: ${controller.liveBaselineDb.value.round()} dB)',
+                                      style: TextStyle(
+                                        color: isHighlighted
+                                            ? accentColor
+                                            : AppColors.textMuted,
+                                        fontSize: 11.ts(context),
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    );
+                                  }(),
+                                ],
+                              ),
+                            );
+                          }),
                         ),
-                      );
-                    }),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          // 3. Reference photo card (start of session, until the photo is
-          //    taken) and the subject lock pill afterwards. Tap pill = retake.
-          Positioned(
-            top: 48.h,
-            left: 12.w,
-            right: 12.w,
-            child: Center(
-              child: ReferencePhotoCard(
-                state: controller.subjectLockState,
-                holdStillSeconds: controller.subjectHoldStillSeconds,
-                photo: controller.subjectReferencePhoto,
-                onSkip: controller.skipReferencePhoto,
-                isVisible: () =>
-                    controller.isSubjectLockEnabled.value &&
-                    controller.isCameraInitialized.value,
-              ),
-            ),
-          ),
-          Positioned(
-            bottom: 32.h,
-            left: 12.w,
-            right: 12.w,
-            child: Center(
-              child: SubjectLockPill(
-                state: controller.subjectLockState,
-                onTap: controller.relockSubject,
-                isVisible: () =>
-                    controller.isSubjectLockEnabled.value &&
-                    controller.isCameraInitialized.value,
-                photo: controller.subjectReferencePhoto,
-                referenceColor: controller.subjectReferenceColor,
-                liveColor: controller.subjectLiveColor,
-              ),
-            ),
-          ),
+                      ),
+                      6.width,
+                      Expanded(
+                        child: GestureDetector(
+                          onTap: () =>
+                              controller.showLiveTelemetrySheet(context),
+                          child: Obx(() {
+                            bool isHit = controller.isVisionHitActive.value;
+                            bool isPassing =
+                                controller.visionConfidence.value >=
+                                controller.minPunchVisionConfidence.value;
+                            bool isHighlighted = isHit || isPassing;
+                            if (!AppConstants.showAllFeatures) {
+                              isHit = false;
+                              isPassing = false;
+                              isHighlighted = false;
+                            }
 
-          // 3. Bottom Live Status Badge
-          Positioned(
-            bottom: 8.h,
-            child: Obx(
-              () => Container(
-                padding: EdgeInsets.symmetric(horizontal: 10.w, vertical: 4.h),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF0F1E2E).withValues(alpha: 0.92),
-                  borderRadius: BorderRadius.circular(999.r),
-                  border: Border.all(color: AppColors.blue),
-                ),
-                child: Text(
-                  controller.detectionStatusText.value,
-                  style: TextStyle(
-                    color: AppColors.blue,
-                    fontSize: 9.ts(context),
-                    fontWeight: FontWeight.bold,
+                            final Color accentColor = isHit
+                                ? AppColors.green
+                                : (isPassing ? AppColors.blue : AppColors.blue);
+                            final Color bgColor = isHit
+                                ? AppColors.green.withValues(alpha: 0.25)
+                                : (isPassing
+                                      ? AppColors.blue.withValues(alpha: 0.15)
+                                      : AppColors.panel.withValues(
+                                          alpha: 0.90,
+                                        ));
+                            final Color borderColor = isHit
+                                ? AppColors.green
+                                : (isPassing
+                                      ? AppColors.blue
+                                      : AppColors.border);
+
+                            return AnimatedContainer(
+                              duration: const Duration(milliseconds: 200),
+                              padding: EdgeInsets.all(5.r),
+                              decoration: BoxDecoration(
+                                color: bgColor,
+                                borderRadius: BorderRadius.circular(8.r),
+                                border: Border.all(
+                                  color: borderColor,
+                                  width: isHighlighted ? 1.8 : 1.0,
+                                ),
+                                boxShadow: isHit
+                                    ? [
+                                        BoxShadow(
+                                          color: AppColors.green.withValues(
+                                            alpha: 0.50,
+                                          ),
+                                          blurRadius: 10,
+                                          spreadRadius: 2,
+                                        ),
+                                      ]
+                                    : null,
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    mainAxisAlignment:
+                                        MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Text(
+                                            'ARM 📊',
+                                            style: TextStyle(
+                                              fontSize: 8.ts(context),
+                                              color: accentColor,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                          if (isHit) ...[
+                                            2.width,
+                                            Text(
+                                              '⚡ HIT',
+                                              style: TextStyle(
+                                                fontSize: 7.ts(context),
+                                                color: AppColors.green,
+                                                fontWeight: FontWeight.w900,
+                                              ),
+                                            ),
+                                          ],
+                                        ],
+                                      ),
+                                      Flexible(
+                                        child: Text(
+                                          '${controller.minPunchVisionConfidence.value.round()}%',
+                                          overflow: TextOverflow.ellipsis,
+                                          maxLines: 1,
+                                          style: TextStyle(
+                                            fontSize: 7.5.ts(context),
+                                            color: isHighlighted
+                                                ? accentColor
+                                                : AppColors.textMuted,
+                                            fontWeight: isHighlighted
+                                                ? FontWeight.bold
+                                                : FontWeight.normal,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  Text(
+                                    (controller.isCameraUnavailable.value ||
+                                            !controller
+                                                .isVisionConfirmationRequired
+                                                .value ||
+                                            !controller
+                                                .sessionMode
+                                                .value
+                                                .requiresCamera)
+                                        ? 'DISABLED'
+                                        : '${controller.visionConfidence.value}%',
+                                    style: TextStyle(
+                                      color: isHighlighted
+                                          ? accentColor
+                                          : AppColors.textMuted,
+                                      fontSize: 11.ts(context),
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          }),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-              ),
+                SessionStatusChip(controller: controller),
+                ReferencePhotoCard(
+                  state: controller.subjectLockState,
+                  holdStillSeconds: controller.subjectHoldStillSeconds,
+                  photo: controller.subjectReferencePhoto,
+                  onSkip: controller.skipReferencePhoto,
+                  isVisible: () =>
+                      controller.isSubjectLockEnabled.value &&
+                      controller.isCameraInitialized.value,
+                ),
+                SubjectLockPill(
+                  state: controller.subjectLockState,
+                  onTap: controller.relockSubject,
+                  isVisible: () =>
+                      controller.isSubjectLockEnabled.value &&
+                      controller.isCameraInitialized.value,
+                  photo: controller.subjectReferencePhoto,
+                  referenceColor: controller.subjectReferenceColor,
+                  liveColor: controller.subjectLiveColor,
+                ),
+                DevStatusText(controller: controller),
+              ],
             ),
           ),
         ],

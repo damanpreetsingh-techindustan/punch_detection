@@ -1,429 +1,279 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:get/get.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_text_styles.dart';
 import '../../../../core/utils/common_function.dart';
+import '../../../../core/utils/constants.dart';
 import '../../../../core/utils/size_box.dart';
+import '../../../../core/widgets/knockup_logo.dart';
+import '../../../../core/widgets/ui/app_buttons.dart';
+import '../../../../core/widgets/ui/glass_card.dart';
+import '../../../../core/widgets/ui/press_scale.dart';
 import '../controllers/onboarding_controller.dart';
 
+/// First-launch intro: welcome → phone setup → camera & mic access.
 class OnboardingFlowPage extends GetView<OnboardingController> {
   const OnboardingFlowPage({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      body: SafeArea(
-        child: Padding(
-          padding: EdgeInsets.symmetric(horizontal: 22.w),
-          child: Column(
-            children: [
-              12.height,
-
-              // Top Header with Back button and Step indicator
-              Obx(
-                () => Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    IconButton(
-                      onPressed: controller.previousStep,
-                      icon: const Icon(
-                        Icons.arrow_back_ios_new,
-                        color: AppColors.textPrimary,
-                      ),
-                    ),
-                    Text(
-                      'Step ${controller.currentStep.value + 1} of 3',
-                      style: AppTextStyles.bodyMedium(
-                        context,
-                      ).copyWith(fontWeight: FontWeight.w800),
-                    ),
-                  ],
-                ),
-              ),
-
-              8.height,
-
-              // 3-Segment Progress Bar
-              Obx(
-                () => Row(
-                  children: List.generate(
-                    3,
-                    (index) => Expanded(
-                      child: Container(
-                        height: 4.h,
-                        margin: EdgeInsets.symmetric(horizontal: 2.w),
-                        decoration: BoxDecoration(
-                          color: index <= controller.currentStep.value
-                              ? AppColors.primary
-                              : AppColors.border,
-                          borderRadius: BorderRadius.circular(4.r),
+    final isLandscape = CommonFunction.checkOrientationLandscape(context);
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && controller.currentStep.value > 0) {
+          controller.previousStep();
+        }
+      },
+      child: Scaffold(
+        body: AppBackground(
+          child: SafeArea(
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 560),
+                child: Padding(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: 24.w,
+                    vertical: isLandscape ? 8.h : 16.h,
+                  ),
+                  child: Column(
+                    children: [
+                      _topRow(context),
+                      Expanded(
+                        child: PageView(
+                          controller: controller.pageController,
+                          onPageChanged: controller.onPageChanged,
+                          physics: const BouncingScrollPhysics(),
+                          children: [
+                            _welcome(context),
+                            _phoneSetup(context),
+                            _permissions(context),
+                          ],
                         ),
                       ),
-                    ),
+                      _bottomBar(context),
+                    ],
                   ),
                 ),
               ),
-
-              16.height,
-
-              // 3-Step PageView
-              Expanded(
-                child: PageView(
-                  controller: controller.pageController,
-                  onPageChanged: controller.onPageChanged,
-                  physics: const BouncingScrollPhysics(),
-                  children: [
-                    _buildStep1AppInfo(context),
-                    _buildStep2Permissions(context),
-                    _buildStep3MountGuide(context),
-                  ],
-                ),
-              ),
-            ],
+            ),
           ),
         ),
       ),
     );
   }
 
-  // STEP 1: APP INFO & OVERVIEW
-  Widget _buildStep1AppInfo(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        return SingleChildScrollView(
-          child: ConstrainedBox(
-            constraints: BoxConstraints(minHeight: constraints.maxHeight),
-            child: IntrinsicHeight(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'PUNCH DETECTION ENGINE',
-                    style: AppTextStyles.tag(context),
-                  ),
-                  8.height,
-                  Text(
-                    'Turn your mounted phone into a real-time punch detector.',
-                    style: AppTextStyles.heading2(context),
-                  ),
-                  10.height,
-                  Text(
-                    'Hyper Hitter combines impact audio and camera-based motion confirmation to count punches and measure reaction time directly on your device.',
-                    style: AppTextStyles.bodyMedium(context),
-                  ),
-                  20.height,
-
-                  // Hero Graphic Box
-                  Container(
-                    height: CommonFunction.checkOrientationLandscape(context)
-                        ? 0.4.sh
-                        : 180.h,
-                    width: double.infinity,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF0D1218),
-                      borderRadius: BorderRadius.circular(24.r),
-                      border: Border.all(color: AppColors.border),
-                    ),
-                    child: Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            Icons.sports_kabaddi,
-                            size: 54.r,
-                            color: AppColors.primary,
-                          ),
-                          8.height,
-                          Text(
-                            'On-Device Audio + Vision Fusion',
-                            style: AppTextStyles.heading3(
-                              context,
-                            ).copyWith(fontSize: 15.ts(context)),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-
-                  16.height,
-                  Wrap(
-                    spacing: 8.w,
-                    runSpacing: 8.h,
-                    children: const [
-                      _Chip(label: 'Works offline'),
-                      _Chip(label: 'No external sensors'),
-                      _Chip(label: 'iOS & Android'),
-                    ],
-                  ),
-
-                  const Spacer(),
-                  16.height,
-                  ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primary,
-                      minimumSize: Size(double.infinity, 54.h),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16.r),
-                      ),
-                    ),
-                    onPressed: controller.nextStep,
-                    child: Text(
-                      'Set up punch detection',
-                      style: AppTextStyles.buttonLabel(context).copyWith(
-                        color: AppColors.ink,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                  ),
-                  16.height,
-                ],
+  Widget _topRow(BuildContext context) {
+    return SizedBox(
+      height: 44.h,
+      child: Row(
+        children: [
+          const KnockUpLogo(scale: 0.8),
+          const Spacer(),
+          Obx(
+            () => AnimatedOpacity(
+              opacity:
+                  controller.currentStep.value <
+                      OnboardingController.permissionsPage
+                  ? 1
+                  : 0,
+              duration: const Duration(milliseconds: 200),
+              child: TextButton(
+                onPressed: () => controller.pageController.animateToPage(
+                  OnboardingController.permissionsPage,
+                  duration: const Duration(milliseconds: 400),
+                  curve: Curves.easeOutCubic,
+                ),
+                child: Text('Skip', style: AppTextStyles.bodyMedium(context)),
               ),
             ),
           ),
-        );
-      },
+        ],
+      ),
     );
   }
 
-  // STEP 2: PERMISSIONS
-  Widget _buildStep2Permissions(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        return SingleChildScrollView(
-          child: ConstrainedBox(
-            constraints: BoxConstraints(minHeight: constraints.maxHeight),
-            child: IntrinsicHeight(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Allow on-device detection',
-                    style: AppTextStyles.heading2(context),
-                  ),
-                  8.height,
-                  Text(
-                    'Microphone audio is the primary punch signal. Camera motion provides secondary confirmation.',
-                    style: AppTextStyles.bodyMedium(context),
-                  ),
-                  20.height,
+  // ─── Slides ────────────────────────────────────────────────────────────────
 
-                  Obx(
-                    () => _permissionCard(
-                      context: context,
-                      icon: '🎙',
-                      title: 'Microphone access (Required)',
-                      subtitle:
-                          'Detects energy spikes, impact frequency and impact shape.',
-                      isGranted: controller.micGranted.value,
-                      onTap: controller.requestMicrophone,
-                    ),
-                  ),
-                  12.height,
-                  Obx(
-                    () => _permissionCard(
-                      context: context,
-                      icon: '◉',
-                      title: 'Camera access (Required)',
-                      subtitle:
-                          'Confirms shoulder, elbow and wrist movement using pose estimation.',
-                      isGranted: controller.cameraGranted.value,
-                      onTap: controller.requestCamera,
-                    ),
-                  ),
-                  12.height,
-                  Obx(
-                    () => _permissionCard(
-                      context: context,
-                      icon: '▣',
-                      title: 'Local session storage',
-                      subtitle:
-                          'Saves prompts, punches, timestamps on device storage.',
-                      isGranted: controller.storageGranted.value,
-                      onTap: () {},
-                    ),
-                  ),
-
-                  const Spacer(),
-                  16.height,
-                  ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primary,
-                      minimumSize: Size(double.infinity, 54.h),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16.r),
-                      ),
-                    ),
-                    onPressed: controller.nextStep,
-                    child: Text(
-                      'Continue',
-                      style: AppTextStyles.buttonLabel(context).copyWith(
-                        color: AppColors.ink,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                  ),
-                  16.height,
-                ],
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  // STEP 3: MOUNT GUIDE
-  Widget _buildStep3MountGuide(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        return SingleChildScrollView(
-          child: ConstrainedBox(
-            constraints: BoxConstraints(minHeight: constraints.maxHeight),
-            child: IntrinsicHeight(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Mount the phone',
-                    style: AppTextStyles.heading2(context),
-                  ),
-                  8.height,
-                  Text(
-                    'Secure your phone on the Hyper Hitter bracket. Keep the microphone facing the bag and the camera view clear.',
-                    style: AppTextStyles.bodyMedium(context),
-                  ),
-                  16.height,
-
-                  Container(
-                    height: CommonFunction.checkOrientationLandscape(context)
-                        ? 0.4.sh
-                        : 180.h,
-                    width: double.infinity,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF0E141B),
-                      borderRadius: BorderRadius.circular(23.r),
-                      border: Border.all(color: AppColors.border),
-                    ),
-                    child: Stack(
-                      alignment: Alignment.center,
-                      children: [
-                        Container(
-                          width: 68.w,
-                          height: 120.h,
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(13.r),
-                            border: Border.all(color: AppColors.primary, width: 3),
-                          ),
-                        ),
-                        Positioned(
-                          left: 14.w,
-                          bottom: 12.h,
-                          child: Container(
-                            padding: EdgeInsets.symmetric(
-                              horizontal: 11.w,
-                              vertical: 6.h,
-                            ),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF0D2838),
-                              borderRadius: BorderRadius.circular(999.r),
-                              border: Border.all(
-                                color: const Color(0xFF1C5364),
-                              ),
-                            ),
-                            child: Text(
-                              'Fixed phone-to-bag distance',
-                              style: TextStyle(
-                                color: AppColors.primary,
-                                fontSize: 11.ts(context),
-                                fontWeight: FontWeight.w900,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  16.height,
-                  _guideRow(
-                    context,
-                    '1',
-                    'Use the Hyper Hitter bracket',
-                    'Supports wall, rack and post installations.',
-                  ),
-                  10.height,
-                  _guideRow(
-                    context,
-                    '2',
-                    'Keep the mount stable',
-                    'A stable position improves audio and vision consistency.',
-                  ),
-
-                  const Spacer(),
-                  16.height,
-                  ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primary,
-                      minimumSize: Size(double.infinity, 54.h),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16.r),
-                      ),
-                    ),
-                    onPressed: controller.nextStep,
-                    child: Text(
-                      'Complete setup & Go to Home',
-                      style: AppTextStyles.buttonLabel(context).copyWith(
-                        color: AppColors.ink,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                  ),
-                  16.height,
-                ],
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  // Helpers
-  Widget _permissionCard({
-    required BuildContext context,
-    required String icon,
+  Widget _slide(
+    BuildContext context, {
+    required Widget hero,
     required String title,
-    required String subtitle,
-    required bool isGranted,
-    required VoidCallback onTap,
+    required String body,
+    List<Widget> extra = const [],
   }) {
-    return GestureDetector(
-      onTap: onTap,
-      behavior: HitTestBehavior.opaque,
-      child: Container(
-        padding: EdgeInsets.all(14.r),
-        decoration: BoxDecoration(
-          color: AppColors.panel,
-          borderRadius: BorderRadius.circular(20.r),
-          border: Border.all(
-            color: isGranted
-                ? AppColors.primary.withValues(alpha: 0.5)
-                : AppColors.border,
+    return SingleChildScrollView(
+      padding: EdgeInsets.symmetric(vertical: 16.h),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children:
+            [
+                  Center(child: hero),
+                  28.height,
+                  Text(title, style: AppTextStyles.display(context)),
+                  10.height,
+                  Text(
+                    body,
+                    style: AppTextStyles.bodyLarge(
+                      context,
+                    ).copyWith(color: AppColors.textSecondary, height: 1.5),
+                  ),
+                  ...extra,
+                ]
+                .animate(interval: 70.ms)
+                .fadeIn(duration: 400.ms)
+                .slideY(begin: 0.15, curve: Curves.easeOutCubic),
+      ),
+    );
+  }
+
+  Widget _welcome(BuildContext context) {
+    return _slide(
+      context,
+      hero: KnockUpMark(size: 120.r)
+          .animate(onPlay: (c) => c.repeat(reverse: true))
+          .moveY(begin: -4, end: 4, duration: 1600.ms, curve: Curves.easeInOut),
+      title: AppConstants.tagline,
+      body:
+          'KnockUp turns your phone into a boxing partner. It watches and '
+          'listens, counts every punch you throw, and calls combos to train '
+          'your reactions.',
+      extra: [
+        20.height,
+        _feature(context, Icons.sports_mma_rounded, 'Counts every punch'),
+        _feature(
+          context,
+          Icons.bolt_rounded,
+          'Reaction drills with combo calls',
+        ),
+        _feature(context, Icons.insights_rounded, 'Track your progress'),
+      ],
+    );
+  }
+
+  Widget _phoneSetup(BuildContext context) {
+    return _slide(
+      context,
+      hero: _heroIcon(Icons.smartphone_rounded),
+      title: 'Set up your phone',
+      body: 'Do this once before you train. It takes ten seconds.',
+      extra: [
+        20.height,
+        _tip(
+          context,
+          '1',
+          'Stand it up',
+          'On a shelf, stand or wall, at chest height.',
+        ),
+        _tip(
+          context,
+          '2',
+          'Step back',
+          'About 1–2 metres away, facing the front camera.',
+        ),
+        _tip(
+          context,
+          '3',
+          'Stay in view',
+          'Face and shoulders visible, in a well-lit space.',
+        ),
+      ],
+    );
+  }
+
+  Widget _permissions(BuildContext context) {
+    return _slide(
+      context,
+      hero: _heroIcon(Icons.shield_rounded),
+      title: 'Camera and microphone',
+      body:
+          'KnockUp sees your movement and hears each impact to count punches. '
+          'Everything runs on your phone. No video or audio leaves it.',
+      extra: [
+        20.height,
+        Obx(
+          () => _permissionRow(
+            context,
+            icon: Icons.videocam_rounded,
+            title: 'Camera',
+            subtitle: 'Sees your punches',
+            granted: controller.cameraGranted.value,
+            onTap: controller.requestCamera,
           ),
         ),
+        10.height,
+        Obx(
+          () => _permissionRow(
+            context,
+            icon: Icons.mic_rounded,
+            title: 'Microphone',
+            subtitle: 'Hears each hit',
+            granted: controller.micGranted.value,
+            onTap: controller.requestMicrophone,
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ─── Pieces ────────────────────────────────────────────────────────────────
+
+  Widget _heroIcon(IconData icon) {
+    return Container(
+          width: 120.r,
+          height: 120.r,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: AppColors.accentBg,
+            border: Border.all(color: AppColors.primary.withValues(alpha: 0.4)),
+            boxShadow: [
+              BoxShadow(
+                color: AppColors.primary.withValues(alpha: 0.25),
+                blurRadius: 40,
+              ),
+            ],
+          ),
+          child: Icon(icon, color: AppColors.primary, size: 54.r),
+        )
+        .animate(onPlay: (c) => c.repeat(reverse: true))
+        .scaleXY(end: 1.05, duration: 1400.ms, curve: Curves.easeInOut);
+  }
+
+  Widget _feature(BuildContext context, IconData icon, String text) {
+    return Padding(
+      padding: EdgeInsets.only(bottom: 10.h),
+      child: Row(
+        children: [
+          Icon(icon, color: AppColors.primary, size: 20.r),
+          12.width,
+          Text(text, style: AppTextStyles.bodyLarge(context)),
+        ],
+      ),
+    );
+  }
+
+  Widget _tip(BuildContext context, String n, String title, String body) {
+    return Padding(
+      padding: EdgeInsets.only(bottom: 10.h),
+      child: GlassCard(
+        padding: EdgeInsets.all(14.r),
         child: Row(
           children: [
             Container(
-              width: 40.r,
-              height: 40.r,
-              decoration: BoxDecoration(
-                color: AppColors.panel2,
-                borderRadius: BorderRadius.circular(13.r),
+              width: 32.r,
+              height: 32.r,
+              alignment: Alignment.center,
+              decoration: const BoxDecoration(
+                gradient: AppColors.primaryGradient,
+                shape: BoxShape.circle,
               ),
-              child: Center(
-                child: Text(icon, style: TextStyle(fontSize: 18.ts(context))),
+              child: Text(
+                n,
+                style: AppTextStyles.buttonLabel(
+                  context,
+                ).copyWith(fontSize: 14.ts(context)),
               ),
             ),
             12.width,
@@ -431,44 +281,10 @@ class OnboardingFlowPage extends GetView<OnboardingController> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    title,
-                    style: AppTextStyles.heading3(
-                      context,
-                    ).copyWith(fontSize: 14.ts(context)),
-                  ),
+                  Text(title, style: AppTextStyles.heading3(context)),
                   2.height,
-                  Text(
-                    subtitle,
-                    style: AppTextStyles.bodyMedium(
-                      context,
-                    ).copyWith(fontSize: 12.ts(context)),
-                  ),
+                  Text(body, style: AppTextStyles.bodyMedium(context)),
                 ],
-              ),
-            ),
-            8.width,
-            AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              width: 46.w,
-              height: 26.h,
-              padding: EdgeInsets.all(3.r),
-              decoration: BoxDecoration(
-                color: isGranted ? AppColors.primary : AppColors.border,
-                borderRadius: BorderRadius.circular(999.r),
-              ),
-              child: Align(
-                alignment: isGranted
-                    ? Alignment.centerRight
-                    : Alignment.centerLeft,
-                child: Container(
-                  width: 20.r,
-                  height: 20.r,
-                  decoration: BoxDecoration(
-                    color: isGranted ? AppColors.ink : Colors.white,
-                    shape: BoxShape.circle,
-                  ),
-                ),
               ),
             ),
           ],
@@ -477,77 +293,104 @@ class OnboardingFlowPage extends GetView<OnboardingController> {
     );
   }
 
-  Widget _guideRow(
-    BuildContext context,
-    String num,
-    String title,
-    String subtitle,
-  ) {
-    return Row(
-      children: [
-        Container(
-          width: 36.r,
-          height: 36.r,
-          decoration: BoxDecoration(
-            color: AppColors.panel2,
-            borderRadius: BorderRadius.circular(12.r),
+  Widget _permissionRow(
+    BuildContext context, {
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required bool granted,
+    required VoidCallback onTap,
+  }) {
+    return PressScale(
+      onTap: granted ? null : onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 250),
+        padding: EdgeInsets.all(14.r),
+        decoration: BoxDecoration(
+          color: granted
+              ? AppColors.success.withValues(alpha: 0.1)
+              : AppColors.surface,
+          borderRadius: BorderRadius.circular(18.r),
+          border: Border.all(
+            color: granted ? AppColors.success : AppColors.glassStroke,
           ),
-          child: Center(
-            child: Text(
-              num,
-              style: AppTextStyles.heading3(
-                context,
-              ).copyWith(fontSize: 15.ts(context)),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              icon,
+              color: granted ? AppColors.success : AppColors.textPrimary,
+              size: 22.r,
             ),
-          ),
-        ),
-        12.width,
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                style: AppTextStyles.heading3(
-                  context,
-                ).copyWith(fontSize: 14.ts(context)),
+            12.width,
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: AppTextStyles.heading3(context)),
+                  Text(subtitle, style: AppTextStyles.bodyMedium(context)),
+                ],
               ),
-              2.height,
-              Text(
-                subtitle,
-                style: AppTextStyles.bodyMedium(
-                  context,
-                ).copyWith(fontSize: 12.ts(context)),
-              ),
-            ],
-          ),
+            ),
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 250),
+              child: granted
+                  ? Icon(
+                      Icons.check_circle_rounded,
+                      key: const ValueKey('ok'),
+                      color: AppColors.success,
+                      size: 24.r,
+                    )
+                  : Text(
+                      'Allow',
+                      key: const ValueKey('allow'),
+                      style: AppTextStyles.tag(context),
+                    ),
+            ),
+          ],
         ),
-      ],
+      ),
     );
   }
-}
 
-class _Chip extends StatelessWidget {
-  final String label;
-  const _Chip({required this.label});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: EdgeInsets.symmetric(horizontal: 10.w, vertical: 6.h),
-      decoration: BoxDecoration(
-        color: AppColors.panel2,
-        borderRadius: BorderRadius.circular(999.r),
-        border: Border.all(color: AppColors.border),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          fontSize: 11.ts(context),
-          color: const Color(0xFFD5DAE2),
-          fontWeight: FontWeight.w800,
-        ),
-      ),
-    );
+  Widget _bottomBar(BuildContext context) {
+    return Obx(() {
+      final step = controller.currentStep.value;
+      final isLast = step == OnboardingController.pageCount - 1;
+      final allGranted =
+          controller.micGranted.value && controller.cameraGranted.value;
+      final label = !isLast
+          ? 'Continue'
+          : allGranted
+          ? 'Start training'
+          : 'Allow access';
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              for (var i = 0; i < OnboardingController.pageCount; i++)
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 250),
+                  margin: EdgeInsets.symmetric(horizontal: 3.w),
+                  width: i == step ? 22.w : 7.w,
+                  height: 7.w,
+                  decoration: BoxDecoration(
+                    color: i == step ? AppColors.primary : AppColors.stroke,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+            ],
+          ),
+          16.height,
+          PrimaryButton(
+            label: label,
+            icon: isLast && allGranted ? Icons.sports_mma_rounded : null,
+            onPressed: controller.nextStep,
+          ),
+        ],
+      );
+    });
   }
 }

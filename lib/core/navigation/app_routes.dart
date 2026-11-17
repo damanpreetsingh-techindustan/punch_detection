@@ -7,6 +7,7 @@ abstract class AppRoutes {
   static const String modeSelection = '/mode-selection';
   static const String workoutSetup = '/workout-setup';
   static const String sessionPreCheck = '/session-precheck';
+  static const String getReady = '/get-ready';
   static const String calibration = '/calibration';
   static const String promptSession = '/prompt-session';
   static const String freeSession = '/free-session';
@@ -15,4 +16,5 @@ abstract class AppRoutes {
   static const String historyDetail = '/history-detail';
   static const String settings = '/settings';
   static const String diagnostics = '/diagnostics';
+  static const String paywall = '/paywall';
 }

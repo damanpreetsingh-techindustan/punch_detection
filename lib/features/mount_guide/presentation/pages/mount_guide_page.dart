@@ -40,7 +40,7 @@ class MountGuidePage extends StatelessWidget {
               ),
               8.height,
               Text(
-                'Secure your phone on the Hyper Hitter bracket. Keep the microphone facing the bag and the camera view clear.',
+                'Place your phone on a steady stand or wall mount. Keep the microphone facing the bag and the camera view clear.',
                 style: AppTextStyles.bodyMedium(context),
               ),
               20.height,
@@ -92,7 +92,7 @@ class MountGuidePage extends StatelessWidget {
               _buildGuideRow(
                 context: context,
                 num: '1',
-                title: 'Use the Hyper Hitter bracket',
+                title: 'Use a steady stand',
                 subtitle: 'Supports wall, rack and post installations.',
               ),
               12.height,

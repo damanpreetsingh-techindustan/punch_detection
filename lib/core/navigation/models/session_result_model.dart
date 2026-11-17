@@ -1,5 +1,35 @@
 import '../../utils/constants.dart';
 
+/// Reaction Drill score for the results screen and history. Screen-only:
+/// a call is answered when at least one punch is counted before the next call.
+class DrillScore {
+  final String? difficulty;
+  final int bestStreak;
+  final int callsAnswered;
+  final int callsMade;
+
+  const DrillScore({
+    this.difficulty,
+    this.bestStreak = 0,
+    this.callsAnswered = 0,
+    this.callsMade = 0,
+  });
+
+  Map<String, dynamic> toMap() => {
+    'difficulty': difficulty,
+    'bestStreak': bestStreak,
+    'callsAnswered': callsAnswered,
+    'callsMade': callsMade,
+  };
+
+  factory DrillScore.fromMap(Map<String, dynamic> map) => DrillScore(
+    difficulty: map['difficulty'] as String?,
+    bestStreak: (map['bestStreak'] as num?)?.toInt() ?? 0,
+    callsAnswered: (map['callsAnswered'] as num?)?.toInt() ?? 0,
+    callsMade: (map['callsMade'] as num?)?.toInt() ?? 0,
+  );
+}
+
 /// Strongly typed navigation model for Workout Results Screen.
 class SessionResultModel {
   final int totalPunches;
@@ -38,6 +68,9 @@ class SessionResultModel {
   /// Short CSV table: one row per punch decision and per camera change.
   final String summaryCsv;
 
+  /// Reaction Drill score; null for Free Fight.
+  final DrillScore? drill;
+
   SessionResultModel({
     required this.totalPunches,
     this.leftPunches = 0,
@@ -62,6 +95,7 @@ class SessionResultModel {
     this.sessionTotalsText = '',
     this.rawEventFilePath,
     this.summaryCsv = '',
+    this.drill,
     DateTime? completedAt,
   }) : audioSampleIntervalMs =
            audioSampleIntervalMs ?? AppConstants.globalAudioSampleIntervalMs,
@@ -113,6 +147,9 @@ class SessionResultModel {
         isVisionConfirmationRequired:
             args['isVisionConfirmationRequired'] as bool? ?? true,
         isVibrationGateEnabled: args['isVibrationGateEnabled'] as bool? ?? true,
+        drill: args['drill'] is Map<String, dynamic>
+            ? DrillScore.fromMap(args['drill'] as Map<String, dynamic>)
+            : null,
         completedAt: args['completedAt'] != null
             ? DateTime.tryParse(args['completedAt'].toString()) ??
                   DateTime.now()
@@ -145,6 +182,7 @@ class SessionResultModel {
       'isVisionConfirmationRequired': isVisionConfirmationRequired,
       'isVibrationGateEnabled': isVibrationGateEnabled,
       'completedAt': completedAt.toIso8601String(),
+      'drill': drill?.toMap(),
     };
   }
 

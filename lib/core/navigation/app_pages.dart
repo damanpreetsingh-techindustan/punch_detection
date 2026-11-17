@@ -12,13 +12,17 @@ import '../../features/mount_guide/presentation/bindings/mount_guide_binding.dar
 import '../../features/mount_guide/presentation/pages/mount_guide_page.dart';
 import '../../features/onboarding/presentation/bindings/onboarding_binding.dart';
 import '../../features/onboarding/presentation/pages/onboarding_flow_page.dart';
+import '../../features/paywall/presentation/bindings/paywall_binding.dart';
+import '../../features/paywall/presentation/pages/paywall_page.dart';
 import '../../features/results/presentation/bindings/results_binding.dart';
 import '../../features/results/presentation/pages/results_page.dart';
 import '../../features/session/presentation/bindings/free_session_binding.dart';
 import '../../features/session/presentation/bindings/prompt_session_binding.dart';
 import '../../features/session/presentation/pages/free_session_page.dart';
 import '../../features/session/presentation/pages/prompt_session_page.dart';
+import '../../features/session_precheck/presentation/bindings/get_ready_binding.dart';
 import '../../features/session_precheck/presentation/bindings/session_precheck_binding.dart';
+import '../../features/session_precheck/presentation/pages/get_ready_page.dart';
 import '../../features/session_precheck/presentation/pages/session_precheck_page.dart';
 import '../../features/settings/presentation/bindings/settings_binding.dart';
 import '../../features/settings/presentation/pages/settings_page.dart';
@@ -54,6 +58,7 @@ class AppPages {
       name: AppRoutes.home,
       page: () => const HomePage(),
       binding: HomeBinding(),
+      transition: Transition.fadeIn,
     ),
     GetPage(
       name: AppRoutes.modeSelection,
@@ -69,6 +74,12 @@ class AppPages {
       name: AppRoutes.sessionPreCheck,
       page: () => const SessionPreCheckPage(),
       binding: SessionPreCheckBinding(),
+    ),
+    GetPage(
+      name: AppRoutes.getReady,
+      page: () => const GetReadyPage(),
+      binding: GetReadyBinding(),
+      transition: Transition.fadeIn,
     ),
     GetPage(
       name: AppRoutes.calibration,
@@ -109,6 +120,13 @@ class AppPages {
       name: AppRoutes.diagnostics,
       page: () => const DiagnosticsPage(),
       binding: DiagnosticsBinding(),
+    ),
+    GetPage(
+      name: AppRoutes.paywall,
+      page: () => const PaywallPage(),
+      binding: PaywallBinding(),
+      transition: Transition.downToUp,
+      fullscreenDialog: true,
     ),
   ];
 }

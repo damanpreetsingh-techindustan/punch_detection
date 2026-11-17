@@ -4,10 +4,14 @@ class SessionPreCheckArguments {
   final String? promptMode;
   final int? durationSeconds;
 
+  /// Prompt drill pace: 'beginner', 'intermediate' or 'advanced'.
+  final String? difficulty;
+
   const SessionPreCheckArguments({
     this.sessionType = 'free',
     this.promptMode,
     this.durationSeconds,
+    this.difficulty,
   });
 
   factory SessionPreCheckArguments.fromArguments(dynamic args) {
@@ -18,6 +22,7 @@ class SessionPreCheckArguments {
         sessionType: args['sessionType'] as String? ?? 'free',
         promptMode: args['promptMode'] as String?,
         durationSeconds: args['durationSeconds'] as int?,
+        difficulty: args['difficulty'] as String?,
       );
     }
     return const SessionPreCheckArguments();
@@ -28,6 +33,7 @@ class SessionPreCheckArguments {
       'sessionType': sessionType,
       'promptMode': promptMode,
       'durationSeconds': durationSeconds,
+      'difficulty': difficulty,
     };
   }
 }

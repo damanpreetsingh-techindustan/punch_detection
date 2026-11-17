@@ -32,7 +32,50 @@ enum BodyMotionLevel {
 }
 
 class AppConstants {
-  static const String appName = 'Hyper Hitter';
+  // Brand
+  static const String appName = 'KnockUp';
+  static const String appStoreName = 'KnockUp: Learn Boxing';
+  static const String playStoreName = 'KnockUp - Learn Boxing';
+  static const String tagline = 'Learn Boxing. Build Confidence.';
+
+  // Monetization (store products are configured later in RevenueCat;
+  // these are display fallbacks until live offerings load).
+  /// Free punches per day. **Change this one number** to raise or lower the
+  /// limit: every screen (Home meter, session sheet, paywall) reads it.
+  static const int freeDailyPunchLimit = 300;
+
+  /// Master switch for the free limit. false = nobody is ever stopped
+  /// (usage is still counted and shown on Home).
+  static const bool enforceDailyLimit = true;
+  static const String proEntitlementId = 'pro';
+  static const String fallbackMonthlyPrice = '\$4.99';
+  static const String fallbackYearlyPrice = '\$29.99';
+  static const String fallbackLifetimePrice = '\$59.99';
+  static const int yearlyTrialDays = 7;
+
+  /// Testing: show the PRO button in the Home top bar even when free
+  /// punches are left. Set false for release, so it only appears once
+  /// today's free punches are used up (Settings → KnockUp Pro stays).
+  static const bool alwaysShowUpgrade = true;
+
+  /// Testing: a "Reset to 0 (test)" button on the Home today card that clears
+  /// today's punch count, to try the daily limit again. Set false for
+  /// release.
+  static const bool showTestUsageReset = true;
+
+  /// False until RevenueCat and the store products are set up: the paywall
+  /// shows its plans but Buy / Restore only explain that purchases are not
+  /// connected yet.
+  static const bool purchasesConnected = false;
+
+  /// Shown on the paywall (required by the App Store for subscriptions).
+  /// Empty = not published yet.
+  static const String termsUrl = '';
+  static const String privacyUrl = '';
+
+  /// Taps on the Settings version label that turn on Developer mode.
+  static const int developerModeTapCount = 7;
+
   static const int calibrationDurationSeconds = 10;
   static const int targetDetectionLatencyMs = 100;
 
@@ -239,6 +282,10 @@ class AppConstants {
 
   /// Maximum calibrated target dB sent (Testing default: 90.0 dB).
   static const double maxCalibratedTargetPunchDb = 90.0;
+
+  /// Get Ready room check: when the loudest moment is this many dB above the
+  /// room's average (talking, a door), the room is measured once more.
+  static const double roomCheckSpikeRetryDb = 12.0;
 
   /// Direct Audio Target Calibration Offset:
   /// Default 0.0: direct max calibrated average dB shown on screen is used with no extra offset added.

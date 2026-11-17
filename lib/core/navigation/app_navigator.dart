@@ -1,12 +1,11 @@
 import 'package:get/get.dart';
 import '../utils/constants.dart';
 import 'app_routes.dart';
-import 'models/history_detail_arguments.dart';
+import '../../features/history/domain/entities/workout_record.dart';
 import 'models/session_arguments.dart';
 import 'models/session_precheck_arguments.dart';
 import 'models/session_result_model.dart';
 
-export 'models/history_detail_arguments.dart';
 export 'models/session_arguments.dart';
 export 'models/session_precheck_arguments.dart';
 export 'models/session_result_model.dart';
@@ -20,6 +19,11 @@ class AppNavigator {
 
   static void toOnboarding() {
     Get.toNamed(AppRoutes.onboarding);
+  }
+
+  /// First launch: onboarding replaces the splash.
+  static void startOnboarding() {
+    Get.offAllNamed(AppRoutes.onboarding);
   }
 
   static void toPermissions() {
@@ -59,6 +63,25 @@ class AppNavigator {
     Get.toNamed(AppRoutes.sessionPreCheck, arguments: preCheckArgs);
   }
 
+  /// One-screen setup (photo + room check) that opens the session itself.
+  /// [replace]: swap out the current screen ("Train again" on Results), so
+  /// repeated sessions don't pile up screens behind Home.
+  static void toGetReady({
+    String sessionType = 'free',
+    String? difficulty,
+    bool replace = false,
+  }) {
+    final args = SessionPreCheckArguments(
+      sessionType: sessionType,
+      difficulty: difficulty,
+    );
+    if (replace) {
+      Get.offNamed(AppRoutes.getReady, arguments: args);
+    } else {
+      Get.toNamed(AppRoutes.getReady, arguments: args);
+    }
+  }
+
   static void toCalibration() {
     Get.toNamed(AppRoutes.sessionPreCheck);
   }
@@ -84,15 +107,19 @@ class AppNavigator {
     Get.offNamed(AppRoutes.results, arguments: resultModel);
   }
 
-  static void toHistory() {
-    Get.toNamed(AppRoutes.history);
+  /// Completes when the user comes back from History.
+  static Future<void> toHistory() async {
+    await Get.toNamed(AppRoutes.history);
   }
 
-  static void toHistoryDetail(dynamic session) {
-    final HistoryDetailArguments detailArgs = session is HistoryDetailArguments
-        ? session
-        : HistoryDetailArguments.fromArguments(session);
-    Get.toNamed(AppRoutes.historyDetail, arguments: detailArgs);
+  static void toHistoryDetail(WorkoutRecord record) {
+    Get.toNamed(AppRoutes.historyDetail, arguments: record);
+  }
+
+  /// KnockUp Pro plans. [fromLimit]: opened because today's free punches
+  /// are used up (the paywall says so).
+  static void toPaywall({bool fromLimit = false}) {
+    Get.toNamed(AppRoutes.paywall, arguments: {'fromLimit': fromLimit});
   }
 
   static void toSettings() {

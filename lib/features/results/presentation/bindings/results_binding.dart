@@ -1,6 +1,9 @@
 import 'package:get/get.dart';
+import '../controllers/results_controller.dart';
 
 class ResultsBinding extends Bindings {
   @override
-  void dependencies() {}
+  void dependencies() {
+    Get.put<ResultsController>(ResultsController());
+  }
 }

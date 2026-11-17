@@ -347,7 +347,7 @@ class SessionPreCheckPage extends GetView<SessionPreCheckController> {
                     ),
                     6.height,
                     Text(
-                      'Choose how HyperHitter AI detects your punches during workout sessions.',
+                      'Choose how KnockUp detects your punches during workout sessions.',
                       style: AppTextStyles.bodyMedium(
                         context,
                       ).copyWith(fontSize: 11.ts(context)),
@@ -514,7 +514,7 @@ class SessionPreCheckPage extends GetView<SessionPreCheckController> {
                   ),
                   8.height,
                   Text(
-                    'Choose how HyperHitter AI detects your punches during workout sessions.',
+                    'Choose how KnockUp detects your punches during workout sessions.',
                     style: AppTextStyles.bodyMedium(context),
                   ),
                   16.height,
