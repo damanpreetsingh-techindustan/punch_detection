@@ -1,16 +1,12 @@
 import 'package:get/get.dart';
 import '../../../../core/navigation/app_navigator.dart';
-import '../../../../core/services/storage_service.dart';
 import '../../../../core/services/usage_service.dart';
 import '../../../../core/utils/constants.dart';
 import '../../../history/domain/entities/workout_record.dart';
 import '../../../history/domain/repositories/history_repository.dart';
 
 class HomeController extends GetxController {
-  final StorageService _storage = StorageService.to;
-
   RxInt get todayPunches => UsageService.to.todayPunches;
-  final RxString difficulty = 'beginner'.obs;
 
   /// Last few saved sessions for the "Recent" strip.
   final RxList<WorkoutRecord> recent = <WorkoutRecord>[].obs;
@@ -59,7 +55,6 @@ class HomeController extends GetxController {
   @override
   void onInit() {
     super.onInit();
-    difficulty.value = _storage.difficulty;
     refreshUsage();
     loadRecent();
   }
@@ -96,19 +91,10 @@ class HomeController extends GetxController {
     return true;
   }
 
-  void selectDifficulty(String value) {
-    difficulty.value = value;
-    _storage.setDifficulty(value);
-  }
-
-  /// Called from the drill sheet's Start button.
-  void startPromptMode() {
-    Get.back();
+  /// Reaction Drill library (pick a drill, then Get Ready).
+  void openDrills() {
     if (_offerProIfLimitReached()) return;
-    AppNavigator.toGetReady(
-      sessionType: 'prompt',
-      difficulty: difficulty.value,
-    );
+    AppNavigator.toDrills();
   }
 
   Future<void> openHistory() async {

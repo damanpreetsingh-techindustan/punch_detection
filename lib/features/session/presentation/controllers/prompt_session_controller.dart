@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 import 'dart:developer' as developer;
+import 'package:flutter/services.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:get/get.dart';
 import 'package:punch_detection_demo/core/utils/constants.dart';
@@ -8,6 +9,9 @@ import '../../../../core/navigation/app_navigator.dart';
 import '../../../../core/services/audio_level/android_call_mode_audio.dart';
 import '../../../../core/services/audio_level/i_audio_level_service.dart';
 import '../../../../core/services/audio_level/record_audio_level_service.dart';
+import '../../../drills/data/drill_service.dart';
+import '../../../drills/domain/drill_program.dart';
+import '../../../drills/domain/round_clock.dart';
 import 'free_session_controller.dart';
 
 /// Prompt session: the Free session's detection (audio + vibration + camera
@@ -56,6 +60,37 @@ class PromptSessionController extends FreeSessionController {
   List<int> _activeCombo = [1, 2];
   int _currentComboStepIndex = 0;
 
+  /// Combo after the current one, picked early so the bag can preview it.
+  List<int>? _upcomingCombo;
+
+  /// The number that will be called next (faint ring on the bag).
+  final RxnInt nextNumber = RxnInt();
+
+  /// A punch was counted since the current call (the bag target turns green).
+  final RxBool currentCallHit = false.obs;
+
+  // ─── Drill program & rounds (screen and calls only; not detection) ───────
+
+  /// The drill picked on the Drills page; null = the original difficulty
+  /// presets with [AppConstants.comboList].
+  DrillProgram? program;
+
+  RoundClock? _clock;
+  Timer? _roundTimer;
+  final Rx<RoundPhase> roundPhase = RoundPhase.work.obs;
+  final RxInt round = 1.obs;
+  final RxInt roundSecondsLeft = 0.obs;
+  /// 0 = open-ended drill. Observable, so the round banner's Obx always
+  /// listens to something (it reads [hasRounds] first).
+  final RxInt roundsTotal = 0.obs;
+  int get totalRounds => roundsTotal.value;
+  bool get hasRounds => roundsTotal.value > 0;
+
+  /// Punch counting is held off during rest (same gate as the pause menu).
+  bool _restGateClosed = false;
+
+  List<List<int>> get _comboPool => program?.combos ?? AppConstants.comboList;
+
   Timer? _promptTimer;
   Timer? _promptWarmupTimer;
 
@@ -91,12 +126,20 @@ class PromptSessionController extends FreeSessionController {
   void onInit() {
     super.onInit();
     _readPromptArguments();
+    _loadProgram();
     _initTts();
     _scoreWorkers.addAll([
       ever<int>(promptTick, _scoreCall),
       ever<int>(punchCount, _onCountForScore),
     ]);
     _startPromptRotation();
+    _startRoundClock();
+  }
+
+  void _loadProgram() {
+    if (!Get.isRegistered<DrillService>()) return;
+    program = DrillService.to.active.value;
+    if (program != null) difficulty.value = program!.title;
   }
 
   void _scoreCall(int tick) {
@@ -116,6 +159,7 @@ class PromptSessionController extends FreeSessionController {
 
   /// The count was reset from the pause menu: the score starts over too.
   void _onCountForScore(int count) {
+    if (count > _countAtCall) currentCallHit.value = true;
     if (count >= _countAtCall) return;
     _countAtCall = count;
     _callsMade = 0;
@@ -193,18 +237,20 @@ class PromptSessionController extends FreeSessionController {
     _lastTtsSpeechEndTimeMs = DateTime.now().millisecondsSinceEpoch;
   }
 
-  void _speakSingleNumber(int number) async {
+  void _speakSingleNumber(int number) => _speak('$number');
+
+  void _speak(String text) async {
     if (!isTtsEnabled.value) return;
     try {
       _isTtsSpeaking = true;
       _lastTtsSpeechStartTimeMs = DateTime.now().millisecondsSinceEpoch;
       // ANDROID_CALL_MODE_AEC: native speak() flushes the previous number itself.
       if (AndroidCallModeAudio.isEnabled) {
-        await AndroidCallModeAudio.speak('$number');
+        await AndroidCallModeAudio.speak(text);
         return;
       }
       await _flutterTts.stop();
-      await _flutterTts.speak('$number');
+      await _flutterTts.speak(text);
     } catch (e) {
       _isTtsSpeaking = false;
       developer.log('TTS speak error: $e', name: 'PromptSessionController');
@@ -214,8 +260,8 @@ class PromptSessionController extends FreeSessionController {
   void _tickComboStep() {
     // If we reached the end of the current active combo sequence, pick a new random combination from comboList
     if (_currentComboStepIndex >= _activeCombo.length) {
-      final List<List<int>> list = AppConstants.comboList;
-      _activeCombo = list[Random().nextInt(list.length)];
+      _activeCombo = _upcomingCombo ?? _randomCombo();
+      _upcomingCombo = _randomCombo();
       _currentComboStepIndex = 0;
       currentComboSequence.assignAll(_activeCombo);
     }
@@ -226,10 +272,20 @@ class PromptSessionController extends FreeSessionController {
 
     _speakSingleNumber(numberToSpeak);
     _currentComboStepIndex++;
+    nextNumber.value = _currentComboStepIndex < _activeCombo.length
+        ? _activeCombo[_currentComboStepIndex]
+        : _upcomingCombo?.first;
+    currentCallHit.value = false;
     promptTick.value++;
   }
 
+  List<int> _randomCombo() {
+    final list = _comboPool;
+    return list[Random().nextInt(list.length)];
+  }
+
   int get promptRotationIntervalMs {
+    if (program != null) return program!.callIntervalMs;
     final String diff = difficulty.value.toLowerCase().trim();
     if (diff == 'advanced') return 300; // 0.3s cadence per number
     if (diff == 'intermediate') return 600; // 0.6s cadence per number
@@ -244,6 +300,7 @@ class PromptSessionController extends FreeSessionController {
       if (isClosed) return;
       _currentComboStepIndex =
           _activeCombo.length; // Force fresh combo selection on session start
+      _upcomingCombo = null;
       _tickComboStep();
       _promptTimer?.cancel();
       _promptTimer = Timer.periodic(
@@ -255,26 +312,31 @@ class PromptSessionController extends FreeSessionController {
     });
   }
 
-  /// Pause menu open: no more calls and the voice stops mid-word.
+  /// Pause menu open: no more calls, the voice stops mid-word and the round
+  /// clock stops.
   @override
   void onSessionPaused() {
     if (_callsPaused) return;
     _callsPaused = true;
-    _promptTimer?.cancel();
-    _promptWarmupTimer?.cancel();
-    _stopSpeaking();
+    _stopCalls();
   }
 
-  /// Pause menu closed: calls continue where the combo left off.
+  /// Pause menu closed: calls continue where the combo left off (unless it's
+  /// rest time, then they start with the next round).
   @override
   void onSessionResumed() {
     if (!_callsPaused || isClosed) return;
     _callsPaused = false;
+    if (roundPhase.value != RoundPhase.work) return;
     _skipNextScore = true;
+    // A short beat before the first call, so the user is back in stance.
+    _startCalls(delayMs: 600);
+  }
+
+  void _startCalls({required int delayMs}) {
     _promptTimer?.cancel();
     _promptWarmupTimer?.cancel();
-    // A short beat before the first call, so the user is back in stance.
-    _promptWarmupTimer = Timer(const Duration(milliseconds: 600), () {
+    _promptWarmupTimer = Timer(Duration(milliseconds: delayMs), () {
       if (isClosed || _callsPaused) return;
       _tickComboStep();
       _promptTimer = Timer.periodic(
@@ -282,6 +344,79 @@ class PromptSessionController extends FreeSessionController {
         (_) => _tickComboStep(),
       );
     });
+  }
+
+  void _stopCalls() {
+    _promptTimer?.cancel();
+    _promptWarmupTimer?.cancel();
+    _stopSpeaking();
+    nextNumber.value = null;
+  }
+
+  // ─── Rounds ──────────────────────────────────────────────────────────────
+
+  void _startRoundClock() {
+    final plan = program?.roundPlan;
+    if (plan == null || plan.isOpen) return;
+    _clock = RoundClock(plan);
+    roundsTotal.value = plan.rounds;
+    _syncRound();
+    _roundTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (_callsPaused || isClosed) return;
+      _onRoundEvent(_clock!.tick());
+      _syncRound();
+    });
+  }
+
+  void _syncRound() {
+    final c = _clock;
+    if (c == null) return;
+    round.value = c.round;
+    roundPhase.value = c.phase;
+    roundSecondsLeft.value = c.secondsLeft;
+  }
+
+  void _onRoundEvent(RoundEvent event) {
+    switch (event) {
+      case RoundEvent.none:
+        break;
+      case RoundEvent.restStarted:
+        _stopCalls();
+        if (!_restGateClosed) {
+          _restGateClosed = true;
+          notifySettingsViewOpened();
+        }
+        HapticFeedback.heavyImpact();
+        _speak('Rest');
+      case RoundEvent.restEndingSoon:
+        HapticFeedback.mediumImpact();
+      case RoundEvent.roundStarted:
+        _openRestGate();
+        HapticFeedback.heavyImpact();
+        _speak('Round ${_clock!.round}');
+        _skipNextScore = true;
+        _startCalls(delayMs: 1200);
+      case RoundEvent.finished:
+        _stopCalls();
+        HapticFeedback.heavyImpact();
+        _speak('Time');
+        Timer(const Duration(milliseconds: 1500), () {
+          if (!isClosed) finishSession();
+        });
+    }
+  }
+
+  void _openRestGate() {
+    if (!_restGateClosed) return;
+    _restGateClosed = false;
+    notifySettingsViewClosed();
+  }
+
+  @override
+  void finishSession() {
+    _roundTimer?.cancel();
+    _openRestGate();
+    super.finishSession();
   }
 
   void _stopSpeaking() {
@@ -302,6 +437,7 @@ class PromptSessionController extends FreeSessionController {
     }
     _promptTimer?.cancel();
     _promptWarmupTimer?.cancel();
+    _roundTimer?.cancel();
     try {
       _flutterTts.stop().catchError((_) {});
     } catch (_) {}

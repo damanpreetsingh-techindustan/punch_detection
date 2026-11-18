@@ -17,6 +17,7 @@ import 'package:punch_detection_demo/core/navigation/app_navigator.dart';
 import 'package:punch_detection_demo/core/navigation/app_pages.dart';
 import 'package:punch_detection_demo/core/navigation/app_routes.dart';
 import 'package:punch_detection_demo/core/services/storage_service.dart';
+import 'package:punch_detection_demo/features/drills/data/drill_service.dart';
 import 'package:punch_detection_demo/features/history/data/datasources/local_history_datasource.dart';
 import 'package:punch_detection_demo/features/history/data/repositories/history_repository_impl.dart';
 import 'package:punch_detection_demo/features/history/domain/entities/workout_record.dart';
@@ -57,7 +58,9 @@ Future<void> _shot(
   String route = AppRoutes.paywall,
   Object? arguments,
   int usedToday = 120,
+  Future<void> Function(WidgetTester tester)? after,
 }) async {
+  rootBundle.clear();
   Get.reset();
   SharedPreferences.setMockInitialValues({});
   await Get.putAsync<StorageService>(
@@ -66,6 +69,7 @@ Future<void> _shot(
   );
   await StorageService.to.setTodayPunches(usedToday);
   Get.put(UsageService(), permanent: true);
+  Get.put(DrillService(), permanent: true);
   final repo = HistoryRepositoryImpl(localDatasource: LocalHistoryDatasource());
   Get.put<HistoryRepository>(repo, permanent: true);
   final now = DateTime.now();
@@ -116,6 +120,7 @@ Future<void> _shot(
   if (arguments != null) {
     Get.toNamed(route, arguments: arguments);
   }
+  await tester.runAsync(() => DrillService.to.ensureLoaded());
   // Async loads (saved history) finish over a few frames; then the entrance
   // animations need time to play.
   for (var i = 0; i < 12; i++) {
@@ -124,6 +129,7 @@ Future<void> _shot(
     );
     await tester.pump(const Duration(milliseconds: 400));
   }
+  if (after != null) await after(tester);
   final error = tester.takeException();
   await tester.runAsync(() async {
     final boundary =
@@ -203,5 +209,38 @@ void main() {
   testWidgets(
     'home landscape',
     (t) => _shot(t, 'home_land', land, route: AppRoutes.home),
+  );
+  testWidgets(
+    'drills phone',
+    (t) => _shot(t, 'drills_phone', phone, route: AppRoutes.drills),
+  );
+  testWidgets(
+    'drills landscape',
+    (t) => _shot(t, 'drills_land', land, route: AppRoutes.drills),
+  );
+  testWidgets(
+    'drill detail',
+    (t) => _shot(
+      t,
+      'drill_detail',
+      phone,
+      route: AppRoutes.drills,
+      after: (t) async {
+        await t.ensureVisible(find.text('Jab Master'));
+        await t.pump(const Duration(milliseconds: 300));
+        await t.tap(find.text('Jab Master'));
+        for (var i = 0; i < 6; i++) {
+          await t.pump(const Duration(milliseconds: 400));
+        }
+      },
+    ),
+  );
+  testWidgets(
+    'editor phone',
+    (t) => _shot(t, 'editor_phone', phone, route: AppRoutes.drillEditor),
+  );
+  testWidgets(
+    'editor landscape',
+    (t) => _shot(t, 'editor_land', land, route: AppRoutes.drillEditor),
   );
 }

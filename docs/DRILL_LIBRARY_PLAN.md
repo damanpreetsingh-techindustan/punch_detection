@@ -1,6 +1,17 @@
 # Punching Bag Targets & Drill Library — Plan
 
-Status: **PLANNED** (waiting on the owner's answers in §7). Tracked in `ROADMAP.md` → Phase 8.
+Status: **BUILT (8.1–8.6)**, needs a device test. Tracked in `ROADMAP.md` → Phase 8.
+
+## 0. Owner decisions (2026-11-18)
+| Question | Decision |
+|---|---|
+| Q1 landscape | **(a)** bag large on the left, camera as a small window in its corner, controls on the right |
+| Q2 portrait | Bag shown in portrait too, next to the call ring |
+| Q3 boxer programs | **No real names or photos.** Style names and own artwork, using the boxers' techniques. Anyone can add their own drills. |
+| Q4 Pro | Decide later. Current suggestion in §8; `proOnly` flags set, locking off (`lockProDrills = false`) |
+| Q5 southpaw | Yes: Settings → Stance, and a toggle on the Drills page |
+| Q6 rounds | Yes: rounds, rest, spoken "Round 2" / "Rest" / "Time", vibration cues |
+
 
 ## 1. Goal
 1. Show **where** each number lands, using the KnockUp bag (`assets/images/punching_bag.png`), so beginners learn the 1–6 system by looking, not reading.
@@ -103,3 +114,42 @@ class DrillProgram {
 - **Q4 – Pro.** Which programs are free and which need Pro?
 - **Q5 – Southpaw.** Add the mirror switch (recommended)?
 - **Q6 – Rounds.** Keep drills open-ended (today), or add rounds, rest and a bell?
+
+## 8. What was built (2026-11-18)
+| Piece | File |
+|---|---|
+| Bag targets + southpaw mirror | `lib/features/drills/domain/bag_targets.dart` |
+| Drill format, validation, rounds | `lib/features/drills/domain/drill_program.dart` |
+| Round timing (testable, no timers) | `lib/features/drills/domain/round_clock.dart` |
+| Built-in drills | `assets/drills/programs.json` (3 basics + 5 fight styles) |
+| Loads built-ins + own drills, active drill, free/Pro checks | `lib/features/drills/data/drill_service.dart` |
+| Bag widget (badges, pulse, next ring, hit flash, dim) | `lib/features/drills/presentation/widgets/punch_bag_view.dart` |
+| Drills page (legend, quick start, lists, stance toggle) | `…/pages/drills_page.dart` |
+| Drill detail sheet (demo on the bag, tips, combos, rounds, Start) | `…/widgets/drill_detail_sheet.dart` |
+| Own drill editor (tap the bag to write combos) | `…/pages/drill_editor_page.dart` |
+| Session: bag, round banner, rest overlay | `lib/features/session/presentation/widgets/hud/drill_hud.dart`, `prompt_session_page.dart` |
+| Landscape stage + camera picture-in-picture | `SessionShell.landscapeStage`, `SessionCameraPanel(compact: true)` |
+| Calls, next-call preview, rounds, rest gate | `PromptSessionController` (detection untouched; rest uses the pause gate) |
+
+Flow: Home → Reaction Drill → Drills page → (Start last drill **or** tap a drill → detail → Start) → Get Ready → session.
+
+### How to add a drill (no code)
+1. Add an entry to `assets/drills/programs.json` (format in the `DrillProgram` doc comment):
+   - `"category": "style"` for fight styles, `"basic"` for the basics list;
+   - `"combos"` use the numbers 1–6;
+   - `"callIntervalMs"`: 250–3000;
+   - `"roundPlan"`: `rounds` 0 = open.
+2. Optional image: put it in `assets/drills/images/` and set `"image"`. The folder is already included through `assets/drills/` in `pubspec.yaml`, but add the subfolder line to pubspec if you use it.
+3. Hot restart. Bad entries are skipped and never crash the app.
+4. Users build their own drills in the app (Drills → My drills → Create). They're stored in the same format.
+
+### Suggested free / Pro split (owner to decide)
+- **Free:** the 3 basics, Jab Master, and **1** own drill (`freeCustomDrills`).
+- **Pro:** the other fight styles and unlimited own drills.
+- To switch it on: `AppConstants.lockProDrills = true`. Locked drills show a lock and open the paywall.
+
+### Still open
+- 8.7: drills from Firebase (no app update needed). After Firebase setup.
+- Per-program artwork (`image` field is ready; not shown in cards yet).
+- A higher-resolution bag image (1500×1500, transparent).
+

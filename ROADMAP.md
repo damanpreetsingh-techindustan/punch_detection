@@ -336,14 +336,15 @@ Portrait, Fusion mode, permissions already granted.
 - [ ] Guided drills: timed rounds per punch or combo, using the existing prompt engine (spoken cues)
 - [ ] Progress: lessons completed, badges. Optionally, Pro locks the advanced lessons.
 
-### Phase 8 — Punching bag targets & drill library (`PLANNED`, waiting on owner answers)
-Full plan and questions: **[docs/DRILL_LIBRARY_PLAN.md](docs/DRILL_LIBRARY_PLAN.md)**.
-- [ ] 8.1 `PunchBagView` with target positions for `assets/images/punching_bag.png`
-- [ ] 8.2 Bag legend in the Reaction Drill sheet
-- [ ] 8.3 Drill session: highlight the called target, preview the next, hit/miss flash (landscape layout per Q1)
-- [ ] 8.4 `DrillProgram` model + `assets/drills/programs.json` (the current 3 paces first)
-- [ ] 8.5 Drills list + program detail, Pro lock
-- [ ] 8.6 Rounds / rest / bell (optional)
+### Phase 8 — Punching bag targets & drill library (`CODED`, needs a device test)
+Plan, decisions, files and "how to add a drill": **[docs/DRILL_LIBRARY_PLAN.md](docs/DRILL_LIBRARY_PLAN.md)**.
+- [x] 8.1 `PunchBagView`: own number badges over the printed ones, called target pulses, next call gold ring, green on hit, dimmed in rest, southpaw mirror
+- [x] 8.2 Drills page replaces the pace sheet: bag legend (tap a number), "Start <last drill>", Basics / Fight styles / My drills, Orthodox/Southpaw toggle
+- [x] 8.3 Drill session: bag in portrait (beside the call ring) and landscape (big, camera as a small window), next-call preview
+- [x] 8.4 `DrillProgram` + `assets/drills/programs.json` (3 basics + 5 fight styles, no real names); controller reads combos and pace from it
+- [x] 8.5 Detail sheet (combo demo on the bag, tips, rounds, Start), own-drill editor (tap the bag to write combos), PRO tags + `lockProDrills` switch
+- [x] 8.6 Rounds: round / rest timer, spoken "Round N" / "Rest" / "Time", vibration, rest overlay, punches not counted in rest, auto-finish after the last round
+- [x] Southpaw switch in Settings (+ on the Drills page)
 - [ ] 8.7 Drills from Firebase (no app update needed)
 
 ---
@@ -360,6 +361,9 @@ Full plan and questions: **[docs/DRILL_LIBRARY_PLAN.md](docs/DRILL_LIBRARY_PLAN.
 ---
 
 ## 8. Changelog
+- **2026-11-18**: Quick start for repeat sessions: within `quickStartWindowMinutes` (10) of finishing a session, Get Ready offers "Quick start". It reuses the last room check, skips the photo (same as Skip photo: the session runs without the "only you" lock), and gives a 5 s countdown to step back. A "Full setup instead" link stays available. Close button added to the drill detail sheet.
+- **2026-11-18**: Drill fixes: landscape drill screen redesigned (bag on a glow instead of a framed card, camera window bottom-left, drill name + round on the stage, ring and count side by side, panel scales instead of scrolling); detail sheet two-column in landscape; Get Ready 3-2-1 lined up with the end of the room check + "Starting camera…" loader after GO; mic and camera released in parallel; camera hint no longer overflows in the small window; fixed a GetX error on open-ended drills (round banner). New `tool/render_drill_session_test.dart` renders the drill screen without a camera.
+- **2026-11-18**: Phase 8 built: punching bag targets, drill library (JSON + own drills), detail sheet, editor, rounds/rest, southpaw, landscape bag + camera window. `flutter test`: 414 pass, the same 2 old detection failures.
 - **2026-11-18**: Drill pause fixed (calls and voice stop while the pause menu is open; the first call after resuming isn't scored). Home landscape: two columns. Phase 8 plan written (`docs/DRILL_LIBRARY_PLAN.md`).
 - **2026-11-17**: "Reset to 0 (test)" button on Home (switch `showTestUsageReset`). Added `docs/LAUNCH_SETUP.md` (subscriptions, Firebase, connectivity, hosting, release checklist).
 - **2026-11-17**: Home: today card shows used / limit, Pro card replaced by a PRO button in the top bar + in-card "Go unlimited" at the limit, MeterBar fill fixed, logo shrinks first on tight top bars.
@@ -448,6 +452,8 @@ Every screen reads it (Home meter, session limit sheet, paywall text). To turn t
 | `termsUrl`, `privacyUrl` | empty | real URLs (required by the App Store for subscriptions) |
 | `freeDailyPunchLimit` | 300 | 300 (or your choice) |
 | `enforceDailyLimit` | `true` | `true` (`false` = nobody is ever stopped) |
+| `lockProDrills` | `false` (all drills open) | your choice: `true` locks `proOnly` drills and extra own drills |
+| `quickStartWindowMinutes` | `10` | `10` (`0` turns Quick start off) |
 | `showTestUsageReset` | `true` ("Reset to 0 (test)" on the Home today card) | **`false`** |
 
 ### Text sizes (landscape)

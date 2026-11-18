@@ -3,6 +3,7 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:get/get.dart';
 import '../../../../core/enums/sensitivity_level.dart';
+import '../../../../core/services/storage_service.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_text_styles.dart';
 import '../../../../core/utils/size_box.dart';
@@ -55,6 +56,51 @@ class SettingsPage extends GetView<SettingsController> {
                           24.height,
                           _sectionLabel(context, 'Punch sensitivity'),
                           _sensitivity(context),
+                          24.height,
+                          _sectionLabel(context, 'Stance'),
+                          Obx(
+                            () => GlassCard(
+                              padding: EdgeInsets.symmetric(
+                                horizontal: 16.w,
+                                vertical: 6.h,
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    Icons.swap_horiz_rounded,
+                                    color: AppColors.primary,
+                                    size: 20.r,
+                                  ),
+                                  14.width,
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          'Southpaw (left-handed)',
+                                          style: AppTextStyles.bodyLarge(
+                                            context,
+                                          ),
+                                        ),
+                                        2.height,
+                                        Text(
+                                          'Mirrors the bag targets for drills',
+                                          style: AppTextStyles.bodyMedium(
+                                            context,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  Switch(
+                                    value: StorageService.to.southpaw.value,
+                                    onChanged: StorageService.to.setSouthpaw,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
                           24.height,
                           _sectionLabel(context, 'Setup'),
                           GlassCard(

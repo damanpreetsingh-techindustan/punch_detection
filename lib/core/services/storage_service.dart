@@ -23,17 +23,28 @@ class StorageService extends GetxService {
   static const String _kCalibrationDate = 'calibration_date';
   static const String _kCalibrationMaxDb = 'calibration_max_db';
   static const String _kCalibrationAvgDb = 'calibration_avg_db';
+  static const String _kSouthpaw = 'southpaw';
+  static const String _kLastSessionEndMs = 'last_session_end_ms';
 
   late final SharedPreferences _prefs;
 
   final RxBool developerMode = false.obs;
+
+  /// Left-handed stance: the bag targets mirror left↔right.
+  final RxBool southpaw = false.obs;
 
   static StorageService get to => Get.find<StorageService>();
 
   Future<StorageService> init() async {
     _prefs = await SharedPreferences.getInstance();
     developerMode.value = _prefs.getBool(_kDeveloperMode) ?? false;
+    southpaw.value = _prefs.getBool(_kSouthpaw) ?? false;
     return this;
+  }
+
+  Future<void> setSouthpaw(bool value) async {
+    southpaw.value = value;
+    await _prefs.setBool(_kSouthpaw, value);
   }
 
   bool get onboardingDone => _prefs.getBool(_kOnboardingDone) ?? false;
@@ -69,6 +80,15 @@ class StorageService extends GetxService {
     await _prefs.setDouble(_kCalibrationMaxDb, calibration.maxDb);
     await _prefs.setDouble(_kCalibrationAvgDb, calibration.avgDb);
   }
+
+  /// When the last session finished (Results opened), for Quick start.
+  DateTime? get lastSessionEnd {
+    final ms = _prefs.getInt(_kLastSessionEndMs);
+    return ms == null ? null : DateTime.fromMillisecondsSinceEpoch(ms);
+  }
+
+  Future<void> setLastSessionEnd(DateTime at) =>
+      _prefs.setInt(_kLastSessionEndMs, at.millisecondsSinceEpoch);
 
   /// Punches counted today; resets when the stored date is not today.
   int get todayPunches {

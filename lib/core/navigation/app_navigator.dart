@@ -1,6 +1,7 @@
 import 'package:get/get.dart';
 import '../utils/constants.dart';
 import 'app_routes.dart';
+import '../../features/drills/domain/drill_program.dart';
 import '../../features/history/domain/entities/workout_record.dart';
 import 'models/session_arguments.dart';
 import 'models/session_precheck_arguments.dart';
@@ -114,6 +115,16 @@ class AppNavigator {
 
   static void toHistoryDetail(WorkoutRecord record) {
     Get.toNamed(AppRoutes.historyDetail, arguments: record);
+  }
+
+  /// Reaction Drill library (built-in, fight styles, your own drills).
+  static void toDrills() {
+    Get.toNamed(AppRoutes.drills);
+  }
+
+  /// Create a drill, or edit [program] (one of the user's own).
+  static void toDrillEditor({DrillProgram? program}) {
+    Get.toNamed(AppRoutes.drillEditor, arguments: program);
   }
 
   /// KnockUp Pro plans. [fromLimit]: opened because today's free punches

@@ -58,6 +58,17 @@ class AppConstants {
   /// today's free punches are used up (Settings → KnockUp Pro stays).
   static const bool alwaysShowUpgrade = true;
 
+  /// Pro-only drills (`"proOnly": true` in assets/drills/programs.json) and
+  /// more than [freeCustomDrills] own drills open the paywall for free users.
+  /// false while testing: everything is open, PRO tags still show.
+  static const bool lockProDrills = false;
+  static const int freeCustomDrills = 1;
+
+  /// Quick start: within this many minutes of finishing a session, Get Ready
+  /// offers to reuse the last room check and skip the photo (straight to a
+  /// 5 s countdown). 0 = off.
+  static const int quickStartWindowMinutes = 10;
+
   /// Testing: a "Reset to 0 (test)" button on the Home today card that clears
   /// today's punch count, to try the daily limit again. Set false for
   /// release.

@@ -41,9 +41,10 @@ class HomePage extends GetView<HomeController> {
     _ModeCard(
       title: 'Reaction Drill',
       subtitle:
-          'Hear a combo like 1-2-3 and throw it. Builds speed and reflexes.',
+          'Hit the spot on the bag when it\'s called. Fight-style drills or '
+          'build your own.',
       icon: Icons.bolt_rounded,
-      onTap: () => _showDrillSheet(context),
+      onTap: controller.openDrills,
     ),
     12.height,
     _learnTeaser(context),
@@ -456,45 +457,6 @@ class HomePage extends GetView<HomeController> {
       ),
     );
   }
-
-  void _showDrillSheet(BuildContext context) {
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      builder: (context) => SafeArea(
-        child: Padding(
-          padding: EdgeInsets.fromLTRB(20.w, 0, 20.w, 16.h),
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text('Reaction Drill', style: AppTextStyles.heading2(context)),
-                4.height,
-                Text(
-                  'Choose how fast the combos come.',
-                  style: AppTextStyles.bodyMedium(context),
-                ),
-                12.height,
-                const _ComboLegend(),
-                18.height,
-                for (final option in _drillOptions) ...[
-                  _DrillOption(option: option, controller: controller),
-                  10.height,
-                ],
-                10.height,
-                PrimaryButton(
-                  label: 'Start drill',
-                  icon: Icons.play_arrow_rounded,
-                  onPressed: controller.startPromptMode,
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
 }
 
 /// Small gold "PRO" button in the top bar (opens the plans). Same height as
@@ -541,94 +503,6 @@ class _ProButton extends StatelessWidget {
         ),
       ),
     );
-  }
-}
-
-class _DrillPace {
-  final String id;
-  final String title;
-  final String subtitle;
-  final int bars;
-
-  const _DrillPace(this.id, this.title, this.subtitle, this.bars);
-}
-
-const _drillOptions = [
-  _DrillPace('beginner', 'Beginner', 'Relaxed pace · 1.2 s between calls', 1),
-  _DrillPace('intermediate', 'Intermediate', 'Steady pace · 0.6 s', 2),
-  _DrillPace('advanced', 'Advanced', 'Fight pace · 0.3 s', 3),
-];
-
-class _DrillOption extends StatelessWidget {
-  final _DrillPace option;
-  final HomeController controller;
-
-  const _DrillOption({required this.option, required this.controller});
-
-  @override
-  Widget build(BuildContext context) {
-    return Obx(() {
-      final selected = controller.difficulty.value == option.id;
-      return PressScale(
-        onTap: () => controller.selectDifficulty(option.id),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
-          padding: EdgeInsets.all(14.r),
-          decoration: BoxDecoration(
-            color: selected ? AppColors.accentBg : AppColors.surfaceRaised,
-            borderRadius: BorderRadius.circular(18.r),
-            border: Border.all(
-              color: selected ? AppColors.primary : AppColors.stroke,
-              width: selected ? 1.5 : 1,
-            ),
-          ),
-          child: Row(
-            children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  for (var i = 0; i < 3; i++)
-                    Container(
-                      margin: EdgeInsets.only(right: 3.w),
-                      width: 5.w,
-                      height: (8 + i * 6).h,
-                      decoration: BoxDecoration(
-                        color: i < option.bars
-                            ? AppColors.primary
-                            : AppColors.stroke,
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                ],
-              ),
-              14.width,
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(option.title, style: AppTextStyles.heading3(context)),
-                    2.height,
-                    Text(
-                      option.subtitle,
-                      style: AppTextStyles.bodyMedium(context),
-                    ),
-                  ],
-                ),
-              ),
-              AnimatedOpacity(
-                opacity: selected ? 1 : 0,
-                duration: const Duration(milliseconds: 200),
-                child: Icon(
-                  Icons.check_circle_rounded,
-                  color: AppColors.primary,
-                  size: 22.r,
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-    });
   }
 }
 
@@ -714,52 +588,6 @@ class _ModeCard extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
-}
-
-/// Boxing number system used by the drill calls.
-class _ComboLegend extends StatelessWidget {
-  const _ComboLegend();
-
-  static const _punches = [
-    ('1', 'Jab'),
-    ('2', 'Cross'),
-    ('3', 'Lead hook'),
-    ('4', 'Rear hook'),
-    ('5', 'Lead upper'),
-    ('6', 'Rear upper'),
-  ];
-
-  @override
-  Widget build(BuildContext context) {
-    return Wrap(
-      spacing: 6.w,
-      runSpacing: 6.h,
-      children: [
-        for (final (n, name) in _punches)
-          Container(
-            padding: EdgeInsets.symmetric(horizontal: 10.w, vertical: 6.h),
-            decoration: BoxDecoration(
-              color: AppColors.surfaceRaised,
-              borderRadius: BorderRadius.circular(999),
-            ),
-            child: Text.rich(
-              TextSpan(
-                children: [
-                  TextSpan(text: '$n ', style: AppTextStyles.tag(context)),
-                  TextSpan(
-                    text: name,
-                    style: AppTextStyles.bodyMedium(context).copyWith(
-                      color: AppColors.textPrimary,
-                      fontSize: 12.ts(context),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-      ],
     );
   }
 }

@@ -265,14 +265,37 @@ class GetReadyPage extends GetView<SessionPreCheckController> {
           );
         } else if (controller.isLaunching.value &&
             controller.calibrationDone.value) {
-          centre = Text(
-            'GO!',
+          centre = Column(
             key: const ValueKey('go'),
-            style: AppTextStyles.number(
-              context,
-              80,
-            ).copyWith(color: AppColors.primary),
-          ).animate().scale(duration: 250.ms);
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'GO!',
+                style: AppTextStyles.number(
+                  context,
+                  80,
+                ).copyWith(color: AppColors.primary),
+              ).animate().scale(duration: 250.ms),
+              if (controller.isStartingSession.value) ...[
+                12.height,
+                SizedBox(
+                  width: 22.r,
+                  height: 22.r,
+                  child: const CircularProgressIndicator(
+                    strokeWidth: 2.5,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+                8.height,
+                Text(
+                  'STARTING CAMERA…',
+                  style: AppTextStyles.tag(
+                    context,
+                  ).copyWith(color: AppColors.textPrimary),
+                ),
+              ],
+            ],
+          );
         } else if (step == CaptureStep.prepare) {
           centre = _ring(
             context,
@@ -392,10 +415,26 @@ class GetReadyPage extends GetView<SessionPreCheckController> {
         title = 'Stay still and quiet';
         subtitle = 'Listening to the room. Start punching on GO.';
         accent = AppColors.gold;
+      } else if (controller.isLaunching.value &&
+          controller.launchCountdown.value > 3) {
+        icon = Icons.directions_walk_rounded;
+        title = 'Step back into position';
+        subtitle = 'Face and shoulders in view. Start punching on GO.';
       } else if (controller.isLaunching.value) {
         icon = Icons.sports_mma_rounded;
         title = 'Here we go!';
-        subtitle = 'Start punching when the counter appears.';
+        subtitle = controller.isStartingSession.value
+            ? 'Opening your session… start punching when the counter appears.'
+            : 'Start punching when the counter appears.';
+      } else if (!controller.expressStarted.value &&
+          controller.quickStartAvailable.value &&
+          controller.useQuickStart.value) {
+        icon = Icons.bolt_rounded;
+        title = 'Quick start ready';
+        subtitle =
+            'Same spot as your last session: no photo or room check. You get '
+            '${SessionPreCheckController.quickStartCountdown} seconds to step back.';
+        accent = AppColors.gold;
       } else if (!controller.expressStarted.value) {
         icon = Icons.accessibility_new_rounded;
         title = 'Stand where you will train';
@@ -470,13 +509,36 @@ class GetReadyPage extends GetView<SessionPreCheckController> {
   Widget _actions(BuildContext context) {
     return Obx(() {
       if (!controller.expressStarted.value) {
-        return PrimaryButton(
-              label: "I'm ready",
-              icon: Icons.play_arrow_rounded,
-              onPressed: controller.startExpress,
-            )
-            .animate(onPlay: (c) => c.repeat(reverse: true))
-            .scaleXY(end: 1.02, duration: 900.ms, curve: Curves.easeInOut);
+        final quick =
+            controller.quickStartAvailable.value &&
+            controller.useQuickStart.value;
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            PrimaryButton(
+                  label: quick ? 'Quick start' : "I'm ready",
+                  icon: quick ? Icons.bolt_rounded : Icons.play_arrow_rounded,
+                  onPressed: controller.startExpress,
+                )
+                .animate(onPlay: (c) => c.repeat(reverse: true))
+                .scaleXY(end: 1.02, duration: 900.ms, curve: Curves.easeInOut),
+            if (controller.quickStartAvailable.value)
+              Center(
+                child: TextButton(
+                  onPressed: controller.useQuickStart.toggle,
+                  child: Text(
+                    quick
+                        ? 'Full setup instead (photo + room check)'
+                        : 'Use Quick start',
+                    style: AppTextStyles.bodyMedium(
+                      context,
+                    ).copyWith(decoration: TextDecoration.underline),
+                  ),
+                ),
+              ),
+          ],
+        );
       }
       if (!controller.captureDone.value) {
         return Center(

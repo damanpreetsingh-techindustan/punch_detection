@@ -245,11 +245,16 @@ class _SessionStatusChipState extends State<SessionStatusChip> {
                   children: [
                     Icon(status.$2, color: status.$3, size: 15.r),
                     SizedBox(width: 6.r),
-                    Text(
-                      status.$1,
-                      style: AppTextStyles.bodyLarge().copyWith(
-                        fontSize: 13.fs,
-                        fontWeight: FontWeight.w600,
+                    // Shrinks with "…" in the small drill camera window.
+                    Flexible(
+                      child: Text(
+                        status.$1,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppTextStyles.bodyLarge().copyWith(
+                          fontSize: 13.fs,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
                   ],

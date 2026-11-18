@@ -92,6 +92,21 @@ class SessionPreCheckController extends GetxController {
   /// 3-2-1 before the session opens; 0 = not counting.
   final RxInt launchCountdown = 0.obs;
 
+  /// After GO: the camera is handed over and the session screen is opening.
+  final RxBool isStartingSession = false.obs;
+
+  /// A session finished a few minutes ago ([AppConstants.quickStartWindowMinutes])
+  /// and a room check is saved: offer to skip the photo and the room check.
+  final RxBool quickStartAvailable = false.obs;
+
+  /// The user's choice on Get Ready (on by default when available).
+  final RxBool useQuickStart = true.obs;
+
+  /// Seconds of countdown for a quick start: time to step back into place.
+  static const int quickStartCountdown = 5;
+
+  static const int _countdownStepMs = 800;
+
   /// The first room check caught a loud moment (talking, a door): the room is
   /// measured once more.
   final RxBool roomRechecking = false.obs;
@@ -178,6 +193,7 @@ class SessionPreCheckController extends GetxController {
     selectedMountType.value = MountType.wall;
     pageController = PageController();
     if (express) {
+      quickStartAvailable.value = _canQuickStart();
       unawaited(_prepareExpress());
     } else {
       checkPermissions();
@@ -215,6 +231,17 @@ class SessionPreCheckController extends GetxController {
     );
   }
 
+  bool _canQuickStart() {
+    const window = AppConstants.quickStartWindowMinutes;
+    if (window <= 0) return false;
+    final last = StorageService.to.lastSessionEnd;
+    if (last == null || StorageService.to.lastCalibration == null) {
+      return false;
+    }
+    final age = DateTime.now().difference(last);
+    return !age.isNegative && age.inMinutes < window;
+  }
+
   /// "I'm ready" button.
   Future<void> startExpress() async {
     if (expressStarted.value) return;
@@ -240,6 +267,11 @@ class SessionPreCheckController extends GetxController {
     roomRechecking.value = false;
     roomNoisy.value = false;
     _roomRetried = false;
+
+    if (quickStartAvailable.value && useQuickStart.value) {
+      _quickStart();
+      return;
+    }
 
     if (captureService.isCameraUnavailable.value) {
       skipReferencePhoto();
@@ -271,13 +303,40 @@ class SessionPreCheckController extends GetxController {
     unawaited(_runLaunchCountdown());
   }
 
-  Future<void> _runLaunchCountdown() async {
+  /// Same room, a few minutes later: reuse the last room check and run the
+  /// session without the photo (exactly like "Skip photo"), after a 5 s
+  /// countdown to get back into position.
+  void _quickStart() {
+    final saved = StorageService.to.lastCalibration!;
+    maxCalibratedDb.value = saved.maxDb;
+    avgAmbientDb.value = saved.avgDb;
+    roomNoisy.value =
+        saved.maxDb + _spikeThresholdDb >=
+        AppConstants.maxCalibratedTargetPunchDb;
+    calibrationDone.value = true;
+    captureService.retake();
+    captureSkipped.value = true;
+    captureDone.value = true;
+    unawaited(_runLaunchCountdown(from: quickStartCountdown));
+  }
+
+  Future<void> _runLaunchCountdown({int from = 3}) async {
     isLaunching.value = true;
-    for (var n = 3; n >= 1; n--) {
+    // Line the 3-2-1 up with the end of the room check, so GO is followed
+    // by the session straight away instead of a silent wait (e.g. after
+    // "Skip photo" the check has only just started). The "Stay quiet" ring
+    // shows meanwhile.
+    while (!calibrationDone.value &&
+        isCalibrating.value &&
+        5000 - _calibrationElapsedMs > _countdownStepMs * 3) {
+      await Future.delayed(const Duration(milliseconds: 100));
+      if (isClosed) return;
+    }
+    for (var n = from; n >= 1; n--) {
       if (isClosed) return;
       launchCountdown.value = n;
       HapticFeedback.selectionClick();
-      await Future.delayed(const Duration(milliseconds: 800));
+      await Future.delayed(const Duration(milliseconds: _countdownStepMs));
     }
     if (isClosed) return;
     launchCountdown.value = 0;
@@ -614,13 +673,16 @@ class SessionPreCheckController extends GetxController {
 
   /// Setup complete: hands everything to the session and opens it.
   Future<void> launchSession() async {
+    isStartingSession.value = true;
     // Setup complete -> Stop PreCheck audio monitor immediately before navigating so mic is completely free!
     _audioLevelSubscription?.cancel();
     _audioLevelSubscription = null;
-    await _audioLevelService.stopMonitoring();
-
-    // The session opens the camera next: it must be released first.
-    await captureService.stop();
+    // The session opens the mic and camera next: release both, at the same
+    // time (the camera release is the slow part).
+    await Future.wait([
+      _audioLevelService.stopMonitoring(),
+      captureService.stop(),
+    ]);
     _handOverReferencePhoto();
 
     // DYNAMIC AUDIO TARGET:

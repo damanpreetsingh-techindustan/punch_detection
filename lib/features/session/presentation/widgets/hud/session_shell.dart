@@ -33,12 +33,18 @@ class SessionShell extends StatelessWidget {
   /// The mode's HUD: counter, pace, prompt ring…
   final Widget Function(BuildContext context, bool isLandscape) hud;
 
+  /// Landscape only: replaces the big camera on the left (e.g. the drill's
+  /// punching bag). The camera then shows as a small picture-in-picture in
+  /// the corner; it stays on for detection.
+  final WidgetBuilder? landscapeStage;
+
   const SessionShell({
     super.key,
     required this.controller,
     required this.title,
     required this.hud,
     this.actions = const [],
+    this.landscapeStage,
   });
 
   void _pause(BuildContext context) =>
@@ -120,19 +126,21 @@ class SessionShell extends StatelessWidget {
       child: Row(
         children: [
           Expanded(
-            child: Stack(
-              children: [
-                Positioned.fill(
-                  child: SessionCameraPanel(
-                    controller: controller,
-                    isLandscape: true,
-                  ),
-                ),
-                Positioned.fill(
-                  child: PunchRipple(punchCount: controller.punchCount),
-                ),
-              ],
-            ),
+            child: landscapeStage == null
+                ? Stack(
+                    children: [
+                      Positioned.fill(
+                        child: SessionCameraPanel(
+                          controller: controller,
+                          isLandscape: true,
+                        ),
+                      ),
+                      Positioned.fill(
+                        child: PunchRipple(punchCount: controller.punchCount),
+                      ),
+                    ],
+                  )
+                : _stageWithCamera(context),
           ),
           const SizedBox(width: 8),
           SizedBox(
@@ -158,8 +166,11 @@ class SessionShell extends StatelessWidget {
                                 ),
                               ],
                             )
+                          // Scales down to fit instead of scrolling, so the
+                          // count is always on screen.
                           : Center(
-                              child: SingleChildScrollView(
+                              child: FittedBox(
+                                fit: BoxFit.scaleDown,
                                 child: hud(context, true),
                               ),
                             ),
@@ -178,6 +189,53 @@ class SessionShell extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+
+  /// The mode's stage full size on a soft glow (no card frame), camera as a
+  /// small window in the bottom-left corner.
+  Widget _stageWithCamera(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, box) {
+        final pipWidth = (box.maxWidth * 0.27).clamp(120.0, 220.0);
+        return Stack(
+          children: [
+            const Positioned.fill(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: RadialGradient(
+                    radius: 0.75,
+                    colors: [Color(0x33FF4D2E), Color(0x00FF4D2E)],
+                  ),
+                ),
+              ),
+            ),
+            Positioned.fill(child: landscapeStage!(context)),
+            Positioned(
+              left: 4,
+              bottom: 4,
+              width: pipWidth,
+              height: pipWidth * 3 / 4,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: const [
+                    BoxShadow(color: Color(0x99000000), blurRadius: 16),
+                  ],
+                ),
+                child: SessionCameraPanel(
+                  controller: controller,
+                  isLandscape: true,
+                  compact: true,
+                ),
+              ),
+            ),
+            Positioned.fill(
+              child: PunchRipple(punchCount: controller.punchCount),
+            ),
+          ],
+        );
+      },
     );
   }
 

@@ -1,0 +1,109 @@
+{
+  "version": 1,
+  "programs": [
+    {
+      "id": "beginner",
+      "title": "Beginner",
+      "subtitle": "Relaxed pace · learn the numbers",
+      "description": "Two-punch combos with plenty of time between calls. Focus on hitting the right spot and returning your hands to your chin.",
+      "category": "basic",
+      "level": "beginner",
+      "callIntervalMs": 1200,
+      "roundPlan": {"rounds": 3, "roundSeconds": 90, "restSeconds": 45},
+      "combos": [[1, 2], [1, 1], [1, 3], [2, 3], [1, 5], [2, 6], [3, 2], [1, 2, 3]],
+      "tips": ["Snap every punch back to your guard.", "Turn your rear hip on the 2."],
+      "proOnly": false
+    },
+    {
+      "id": "intermediate",
+      "title": "Intermediate",
+      "subtitle": "Steady pace · three-punch flow",
+      "description": "Three-punch combos at a steady pace. Keep your feet under you and flow from one punch into the next.",
+      "category": "basic",
+      "level": "intermediate",
+      "callIntervalMs": 600,
+      "roundPlan": {"rounds": 3, "roundSeconds": 120, "restSeconds": 45},
+      "combos": [[1, 2, 3], [1, 2, 5], [2, 3, 2], [1, 3, 2], [3, 2, 3], [1, 6, 3], [5, 2, 3], [1, 2, 3, 2]],
+      "tips": ["Pivot on the lead foot for the 3.", "Breathe out on every punch."],
+      "proOnly": false
+    },
+    {
+      "id": "advanced",
+      "title": "Advanced",
+      "subtitle": "Fight pace · long combos",
+      "description": "Four-punch combos called at fight pace. Stay relaxed: tension makes you slow.",
+      "category": "basic",
+      "level": "advanced",
+      "callIntervalMs": 300,
+      "roundPlan": {"rounds": 3, "roundSeconds": 180, "restSeconds": 60},
+      "combos": [[1, 2, 3, 2], [1, 2, 5, 2], [2, 3, 2, 3], [1, 6, 3, 2], [3, 2, 3, 2], [5, 2, 3, 2], [1, 2, 3, 4], [6, 3, 2, 3]],
+      "tips": ["Short, fast punches beat big wind-ups.", "Keep the chin down through the whole combo."],
+      "proOnly": false
+    },
+    {
+      "id": "jab_master",
+      "title": "Jab Master",
+      "subtitle": "Outside fighter · control the distance",
+      "description": "Inspired by the great long-range boxers who won fights behind the jab. Double and triple jabs to measure, then the straight right down the middle.",
+      "category": "style",
+      "level": "beginner",
+      "callIntervalMs": 900,
+      "roundPlan": {"rounds": 3, "roundSeconds": 120, "restSeconds": 45},
+      "combos": [[1], [1, 1], [1, 1, 2], [1, 2, 1], [1, 1, 1, 2], [1, 2]],
+      "tips": ["Step in with the jab, out after the 2.", "Turn the jab over at the end: palm down.", "Your rear hand stays glued to your cheek."],
+      "proOnly": false
+    },
+    {
+      "id": "peekaboo_pressure",
+      "title": "Peek-a-Boo Pressure",
+      "subtitle": "Inside fighter · hooks and uppercuts",
+      "description": "Inspired by the compact pressure style: hands high, head moving, then explosive hooks and uppercuts from close range.",
+      "category": "style",
+      "level": "intermediate",
+      "callIntervalMs": 650,
+      "roundPlan": {"rounds": 3, "roundSeconds": 120, "restSeconds": 45},
+      "combos": [[3, 6, 3], [2, 3, 2], [6, 3, 2], [1, 6, 3, 2], [5, 2, 3], [3, 5, 2], [6, 5, 2]],
+      "tips": ["Bend your knees and stay low.", "Hooks come from the hips, not the arms.", "Keep both gloves high between combos."],
+      "proOnly": true
+    },
+    {
+      "id": "shell_counter",
+      "title": "Shoulder-Roll Counter",
+      "subtitle": "Defensive style · counter right hands",
+      "description": "Inspired by the shoulder-roll defenders: roll the shot off the lead shoulder, then fire the right hand and hook back.",
+      "category": "style",
+      "level": "intermediate",
+      "callIntervalMs": 800,
+      "roundPlan": {"rounds": 3, "roundSeconds": 120, "restSeconds": 45},
+      "combos": [[2, 3], [1, 2], [2, 3, 2], [1, 3, 2], [3, 2], [2, 1, 2]],
+      "tips": ["Imagine rolling a punch off your lead shoulder before each 2.", "Counters are short and straight.", "Reset your stance after every combo."],
+      "proOnly": true
+    },
+    {
+      "id": "volume_puncher",
+      "title": "Volume Puncher",
+      "subtitle": "Fast, non-stop combinations",
+      "description": "Inspired by the high-output fighters who overwhelm with speed and angles: long, fast combinations thrown in bunches.",
+      "category": "style",
+      "level": "advanced",
+      "callIntervalMs": 450,
+      "roundPlan": {"rounds": 4, "roundSeconds": 120, "restSeconds": 45},
+      "combos": [[1, 2, 1, 2], [1, 2, 3, 2], [2, 3, 2, 3], [1, 1, 2, 3, 2], [1, 2, 3, 4], [3, 2, 3, 2]],
+      "tips": ["Speed over power: let the punches flow.", "Exhale sharply on every punch.", "Keep moving your feet between combos."],
+      "proOnly": true
+    },
+    {
+      "id": "body_snatcher",
+      "title": "Body Snatcher",
+      "subtitle": "Break them down to the body",
+      "description": "Inspired by the great body punchers: uppercuts and hooks that dig to the body, then come back up top.",
+      "category": "style",
+      "level": "intermediate",
+      "callIntervalMs": 750,
+      "roundPlan": {"rounds": 3, "roundSeconds": 120, "restSeconds": 45},
+      "combos": [[5, 6], [3, 6, 3], [1, 2, 5, 6], [6, 5, 2], [5, 2, 3], [1, 6, 3]],
+      "tips": ["Drop your level with your legs, not your back.", "Uppercuts travel straight up, close to your body."],
+      "proOnly": true
+    }
+  ]
+}

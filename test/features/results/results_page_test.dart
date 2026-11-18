@@ -69,6 +69,8 @@ void main() {
 
     final saved = await Get.find<HistoryRepository>().getWorkoutHistory();
     expect(saved.single.totalPunches, 42);
+    // Enables Quick start on the next Get Ready.
+    expect(StorageService.to.lastSessionEnd, isNotNull);
     // Today's usage is counted live in the session (UsageService), not here.
     expect(StorageService.to.todayPunches, 0);
   });

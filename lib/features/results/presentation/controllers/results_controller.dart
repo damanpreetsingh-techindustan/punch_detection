@@ -1,5 +1,6 @@
 import 'package:get/get.dart';
 import '../../../../core/navigation/app_navigator.dart';
+import '../../../../core/services/storage_service.dart';
 import '../../../history/domain/entities/workout_record.dart';
 import '../../../history/domain/history_insights.dart';
 import '../../../history/domain/repositories/history_repository.dart';
@@ -60,6 +61,8 @@ class ResultsController extends GetxController {
   @override
   void onInit() {
     super.onInit();
+    // Enables Quick start on the next Get Ready for a few minutes.
+    StorageService.to.setLastSessionEnd(DateTime.now());
     _saveAndCompare();
   }
 

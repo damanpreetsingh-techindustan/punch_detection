@@ -17,4 +17,6 @@ abstract class AppRoutes {
   static const String settings = '/settings';
   static const String diagnostics = '/diagnostics';
   static const String paywall = '/paywall';
+  static const String drills = '/drills';
+  static const String drillEditor = '/drill-editor';
 }

@@ -84,6 +84,8 @@ flutter:
 
   assets:
     - assets/images/app_ic.png
+    - assets/images/punching_bag.png
+    - assets/drills/
     - assets/models/face_recognition_sface_int8.tflite
 
 
