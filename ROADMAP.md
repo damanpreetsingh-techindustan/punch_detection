@@ -336,6 +336,16 @@ Portrait, Fusion mode, permissions already granted.
 - [ ] Guided drills: timed rounds per punch or combo, using the existing prompt engine (spoken cues)
 - [ ] Progress: lessons completed, badges. Optionally, Pro locks the advanced lessons.
 
+### Phase 8 — Punching bag targets & drill library (`PLANNED`, waiting on owner answers)
+Full plan and questions: **[docs/DRILL_LIBRARY_PLAN.md](docs/DRILL_LIBRARY_PLAN.md)**.
+- [ ] 8.1 `PunchBagView` with target positions for `assets/images/punching_bag.png`
+- [ ] 8.2 Bag legend in the Reaction Drill sheet
+- [ ] 8.3 Drill session: highlight the called target, preview the next, hit/miss flash (landscape layout per Q1)
+- [ ] 8.4 `DrillProgram` model + `assets/drills/programs.json` (the current 3 paces first)
+- [ ] 8.5 Drills list + program detail, Pro lock
+- [ ] 8.6 Rounds / rest / bell (optional)
+- [ ] 8.7 Drills from Firebase (no app update needed)
+
 ---
 
 ## 7. Verification checklist (run after each phase)
@@ -350,6 +360,7 @@ Portrait, Fusion mode, permissions already granted.
 ---
 
 ## 8. Changelog
+- **2026-11-18**: Drill pause fixed (calls and voice stop while the pause menu is open; the first call after resuming isn't scored). Home landscape: two columns. Phase 8 plan written (`docs/DRILL_LIBRARY_PLAN.md`).
 - **2026-11-17**: "Reset to 0 (test)" button on Home (switch `showTestUsageReset`). Added `docs/LAUNCH_SETUP.md` (subscriptions, Firebase, connectivity, hosting, release checklist).
 - **2026-11-17**: Home: today card shows used / limit, Pro card replaced by a PRO button in the top bar + in-card "Go unlimited" at the limit, MeterBar fill fixed, logo shrinks first on tight top bars.
 - **2026-11-17**: Paywall redesigned (plans visible without scrolling). Fixed oversized text in landscape on all new screens (`.sp` → `.fs` / context styles). Stat units spacing, shorter stat labels, Progress list newest-first without repeated dates. Screenshot tool added. `flutter test`: 400 pass, the same 2 old detection failures.

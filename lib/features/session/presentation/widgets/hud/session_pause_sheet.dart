@@ -16,6 +16,7 @@ Future<void> showSessionPauseSheet(
   FreeSessionController controller,
 ) async {
   controller.notifySettingsViewOpened();
+  controller.onSessionPaused();
   final _PauseAction? action = await showModalBottomSheet<_PauseAction>(
     context: context,
     isScrollControlled: true,
@@ -26,11 +27,12 @@ Future<void> showSessionPauseSheet(
   switch (action) {
     case _PauseAction.reset:
       controller.resetPunchCount();
+      controller.onSessionResumed();
     case _PauseAction.end:
       controller.finishSession();
     case _PauseAction.resume:
     case null:
-      break;
+      controller.onSessionResumed();
   }
 }
 

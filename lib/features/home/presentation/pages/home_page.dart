@@ -4,6 +4,7 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:get/get.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_text_styles.dart';
+import '../../../../core/utils/common_function.dart';
 import '../../../../core/utils/size_box.dart';
 import '../../../../core/widgets/knockup_logo.dart';
 import '../../../../core/widgets/ui/app_buttons.dart';
@@ -18,51 +19,102 @@ class HomePage extends GetView<HomeController> {
 
   @override
   Widget build(BuildContext context) {
-    final sections = <Widget>[
-      _header(context),
-      22.height,
-      _greeting(context),
-      20.height,
-      _todayCard(context),
-      16.height,
-      _ModeCard(
-        title: 'Free Fight',
-        subtitle: 'Punch at your own pace. Every hit is counted.',
-        icon: Icons.sports_mma_rounded,
-        highlighted: true,
-        onTap: controller.startFreeMode,
-      ),
-      12.height,
-      _ModeCard(
-        title: 'Reaction Drill',
-        subtitle:
-            'Hear a combo like 1-2-3 and throw it. Builds speed and reflexes.',
-        icon: Icons.bolt_rounded,
-        onTap: () => _showDrillSheet(context),
-      ),
-      12.height,
-      _learnTeaser(context),
-      _recent(context),
-      24.height,
-    ];
-
+    final isLandscape = CommonFunction.checkOrientationLandscape(context);
     return Scaffold(
       body: AppBackground(
         child: SafeArea(
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 560),
-              child: SingleChildScrollView(
-                padding: EdgeInsets.symmetric(horizontal: 20.w, vertical: 12.h),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: sections
-                      .animate(interval: 60.ms)
-                      .fadeIn(duration: 350.ms)
-                      .slideY(begin: 0.12, curve: Curves.easeOutCubic),
+          child: isLandscape ? _landscape(context) : _portrait(context),
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _modes(BuildContext context) => [
+    _ModeCard(
+      title: 'Free Fight',
+      subtitle: 'Punch at your own pace. Every hit is counted.',
+      icon: Icons.sports_mma_rounded,
+      highlighted: true,
+      onTap: controller.startFreeMode,
+    ),
+    12.height,
+    _ModeCard(
+      title: 'Reaction Drill',
+      subtitle:
+          'Hear a combo like 1-2-3 and throw it. Builds speed and reflexes.',
+      icon: Icons.bolt_rounded,
+      onTap: () => _showDrillSheet(context),
+    ),
+    12.height,
+    _learnTeaser(context),
+  ];
+
+  Widget _animatedColumn(List<Widget> children, {EdgeInsets? padding}) {
+    return SingleChildScrollView(
+      padding: padding,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: children
+            .animate(interval: 60.ms)
+            .fadeIn(duration: 350.ms)
+            .slideY(begin: 0.12, curve: Curves.easeOutCubic),
+      ),
+    );
+  }
+
+  Widget _portrait(BuildContext context) {
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 560),
+        child: _animatedColumn([
+          _header(context),
+          22.height,
+          _greeting(context),
+          20.height,
+          _todayCard(context),
+          16.height,
+          ..._modes(context),
+          _recent(context),
+          24.height,
+        ], padding: EdgeInsets.symmetric(horizontal: 20.w, vertical: 12.h)),
+      ),
+    );
+  }
+
+  /// Left: who you are today (greeting, today's punches, recent sessions).
+  /// Right: what to do next (the training modes). Each side scrolls alone.
+  Widget _landscape(BuildContext context) {
+    const gap = 20.0;
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 1100),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(gap, 8, gap, 0),
+          child: Column(
+            children: [
+              _header(context),
+              const SizedBox(height: 8),
+              Expanded(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: _animatedColumn([
+                        _greeting(context),
+                        16.height,
+                        _todayCard(context),
+                        _recent(context),
+                        16.height,
+                      ]),
+                    ),
+                    const SizedBox(width: gap),
+                    Expanded(
+                      child: _animatedColumn([..._modes(context), 16.height]),
+                    ),
+                  ],
                 ),
               ),
-            ),
+            ],
           ),
         ),
       ),

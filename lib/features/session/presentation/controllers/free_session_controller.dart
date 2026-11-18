@@ -3435,6 +3435,11 @@ class FreeSessionController extends GetxController {
   /// overrides this). Not used by detection.
   DrillScore? get drillScore => null;
 
+  /// Pause menu opened / closed. The Prompt session stops and restarts its
+  /// spoken calls here. Not used by detection.
+  void onSessionPaused() {}
+  void onSessionResumed() {}
+
   void finishSession() {
     final int nowMs = DateTime.now().millisecondsSinceEpoch;
     final int durationSec = max(

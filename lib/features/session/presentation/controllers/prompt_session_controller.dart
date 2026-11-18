@@ -72,6 +72,11 @@ class PromptSessionController extends FreeSessionController {
   int _callsMade = 0;
   int _callsAnswered = 0;
   int _countAtCall = 0;
+
+  /// The first call after a pause is not scored: no punch could be counted
+  /// for the call that was showing when the user paused.
+  bool _skipNextScore = false;
+  bool _callsPaused = false;
   final List<Worker> _scoreWorkers = <Worker>[];
 
   @override
@@ -96,7 +101,9 @@ class PromptSessionController extends FreeSessionController {
 
   void _scoreCall(int tick) {
     final int count = punchCount.value;
-    if (tick > 1) {
+    if (_skipNextScore) {
+      _skipNextScore = false;
+    } else if (tick > 1) {
       final bool answered = count > _countAtCall;
       _callsMade++;
       if (answered) _callsAnswered++;
@@ -246,6 +253,46 @@ class PromptSessionController extends FreeSessionController {
         },
       );
     });
+  }
+
+  /// Pause menu open: no more calls and the voice stops mid-word.
+  @override
+  void onSessionPaused() {
+    if (_callsPaused) return;
+    _callsPaused = true;
+    _promptTimer?.cancel();
+    _promptWarmupTimer?.cancel();
+    _stopSpeaking();
+  }
+
+  /// Pause menu closed: calls continue where the combo left off.
+  @override
+  void onSessionResumed() {
+    if (!_callsPaused || isClosed) return;
+    _callsPaused = false;
+    _skipNextScore = true;
+    _promptTimer?.cancel();
+    _promptWarmupTimer?.cancel();
+    // A short beat before the first call, so the user is back in stance.
+    _promptWarmupTimer = Timer(const Duration(milliseconds: 600), () {
+      if (isClosed || _callsPaused) return;
+      _tickComboStep();
+      _promptTimer = Timer.periodic(
+        Duration(milliseconds: promptRotationIntervalMs),
+        (_) => _tickComboStep(),
+      );
+    });
+  }
+
+  void _stopSpeaking() {
+    try {
+      if (AndroidCallModeAudio.isEnabled) {
+        unawaited(AndroidCallModeAudio.stop());
+      } else {
+        _flutterTts.stop().catchError((_) {});
+      }
+    } catch (_) {}
+    _markTtsEnded();
   }
 
   @override
