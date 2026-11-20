@@ -3,6 +3,7 @@ import '../../../../core/navigation/app_navigator.dart';
 import '../../../../core/services/usage_service.dart';
 import '../../../../core/utils/constants.dart';
 import '../../../history/domain/entities/workout_record.dart';
+import '../../../learn/data/learn_service.dart';
 import '../../../history/domain/repositories/history_repository.dart';
 
 class HomeController extends GetxController {
@@ -57,6 +58,7 @@ class HomeController extends GetxController {
     super.onInit();
     refreshUsage();
     loadRecent();
+    LearnService.to.ensureLoaded();
   }
 
   Future<void> loadRecent() async {
@@ -89,6 +91,17 @@ class HomeController extends GetxController {
     if (!UsageService.to.limitReached) return false;
     AppNavigator.toPaywall(fromLimit: true);
     return true;
+  }
+
+  void openLearn() => AppNavigator.toLearn();
+
+  /// "START" before the first lesson, then "3/10". Reactive.
+  String get learnProgressLabel {
+    final learn = LearnService.to;
+    final total = learn.course.value?.lessons.length ?? 0;
+    final done = learn.completed.length;
+    if (total == 0 || done == 0) return 'START';
+    return '${done.clamp(0, total)}/$total';
   }
 
   /// Reaction Drill library (pick a drill, then Get Ready).

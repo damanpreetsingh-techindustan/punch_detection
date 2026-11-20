@@ -1,0 +1,304 @@
+{
+  "id": "basics",
+  "title": "Boxing Basics",
+  "subtitle": "10 short lessons from stance to your first combos",
+  "lessons": [
+    {
+      "id": "stance",
+      "number": 1,
+      "title": "Stance & guard",
+      "subtitle": "The position every punch starts from",
+      "minutes": 4,
+      "move": "stance",
+      "keyPoint": "Hands up, chin down, weight on the balls of your feet.",
+      "steps": [
+        {"title": "Feet", "body": "Stand side-on, feet about shoulder-width apart. Your lead foot points forward, your rear foot turns out slightly, heel a little off the floor."},
+        {"title": "Knees", "body": "Soft knees, never locked. Your weight is shared between both feet, on the balls of your feet."},
+        {"title": "Hands", "body": "Lead glove at eye height a little in front of your face, rear glove touching your cheek. Elbows in, protecting your ribs."},
+        {"title": "Chin", "body": "Tuck your chin down slightly and look through your eyebrows."}
+      ],
+      "mistakes": [
+        {"wrong": "Feet in one line, like on a tightrope", "fix": "Keep them shoulder-width apart for balance"},
+        {"wrong": "Hands dropping to chest height", "fix": "Gloves stay up at your face"},
+        {"wrong": "Chin up and straight legs", "fix": "Chin down, knees soft"}
+      ],
+      "practice": {
+        "type": "follow",
+        "description": "Hold your stance for 45 seconds and react to the voice.",
+        "followSeconds": 45,
+        "cueIntervalMs": 5000,
+        "cues": ["Hands up", "Chin down", "Soft knees", "Elbows in", "Light on your feet", "Breathe"]
+      },
+      "proOnly": false
+    },
+    {
+      "id": "footwork",
+      "number": 2,
+      "title": "Footwork",
+      "subtitle": "Move without losing your stance",
+      "minutes": 4,
+      "move": "step",
+      "keyPoint": "The foot closest to where you're going moves first.",
+      "steps": [
+        {"title": "Step forward", "body": "Push off your rear foot and step your lead foot forward a short distance. Then bring the rear foot up the same distance."},
+        {"title": "Step back", "body": "Push off your lead foot, step the rear foot back, then the lead foot follows."},
+        {"title": "Side to side", "body": "To move left, step with the left foot first. To move right, the right foot first."},
+        {"title": "Stay in stance", "body": "Small steps. Your feet never cross or come together, and your hands stay up."}
+      ],
+      "mistakes": [
+        {"wrong": "Crossing your feet", "fix": "The leading foot moves first, the other follows"},
+        {"wrong": "Big jumping steps", "fix": "Small, quick steps keep you balanced"},
+        {"wrong": "Dropping the hands while moving", "fix": "Guard up the whole time"}
+      ],
+      "practice": {
+        "type": "follow",
+        "description": "Move as the voice calls each step. One short step each time.",
+        "followSeconds": 60,
+        "cueIntervalMs": 2500,
+        "cues": ["Step forward", "Step back", "Step left", "Step right", "Step forward", "Step back"]
+      },
+      "proOnly": false
+    },
+    {
+      "id": "jab",
+      "number": 3,
+      "title": "The jab",
+      "subtitle": "Number 1 · your lead hand",
+      "minutes": 5,
+      "move": "jab",
+      "keyPoint": "Fast out, faster back to your face.",
+      "steps": [
+        {"title": "Start in guard", "body": "Stance set, both gloves up."},
+        {"title": "Extend straight", "body": "Push your lead glove straight out from your chin towards the target. Your elbow stays down, behind the punch."},
+        {"title": "Turn the fist", "body": "Turn your fist over at the end so your palm faces down. Your lead shoulder rises to protect your chin."},
+        {"title": "Snap back", "body": "Bring the glove straight back to your face the same way it went out."}
+      ],
+      "mistakes": [
+        {"wrong": "Elbow flaring out to the side", "fix": "Elbow points down, the punch travels in a straight line"},
+        {"wrong": "Leaving the arm out after the punch", "fix": "Snap it straight back to your guard"},
+        {"wrong": "Rear hand drops when you jab", "fix": "Rear glove stays glued to your cheek"}
+      ],
+      "practice": {
+        "type": "drill",
+        "description": "Hit spot 1 on the bag when it's called. Two rounds of 45 seconds.",
+        "minPunches": 10,
+        "drill": {
+          "combos": [[1], [1, 1]],
+          "callIntervalMs": 1500,
+          "roundPlan": {"rounds": 2, "roundSeconds": 45, "restSeconds": 30}
+        }
+      },
+      "proOnly": false
+    },
+    {
+      "id": "cross",
+      "number": 4,
+      "title": "The cross",
+      "subtitle": "Number 2 · your rear hand",
+      "minutes": 5,
+      "move": "cross",
+      "keyPoint": "The power comes from turning your rear hip and foot.",
+      "steps": [
+        {"title": "Start in guard", "body": "Stance set, both gloves up."},
+        {"title": "Pivot", "body": "Turn your rear foot on the ball of the foot as if squashing a bug, and turn your rear hip forward."},
+        {"title": "Extend straight", "body": "Let the rear glove travel straight from your chin to the target as your hips and shoulders turn."},
+        {"title": "Snap back", "body": "Bring it straight back to your cheek and reset your stance."}
+      ],
+      "mistakes": [
+        {"wrong": "Punching with the arm only", "fix": "Turn the rear foot and hip with the punch"},
+        {"wrong": "Leaning forward past your front knee", "fix": "Keep your head over your lead knee, no further"},
+        {"wrong": "Lead hand drops", "fix": "Lead glove stays up to protect your face"}
+      ],
+      "practice": {
+        "type": "drill",
+        "description": "Hit spot 2 when it's called, and 1-2 now and then.",
+        "minPunches": 10,
+        "drill": {
+          "combos": [[2], [2], [1, 2]],
+          "callIntervalMs": 1500,
+          "roundPlan": {"rounds": 2, "roundSeconds": 45, "restSeconds": 30}
+        }
+      },
+      "proOnly": true
+    },
+    {
+      "id": "one_two",
+      "number": 5,
+      "title": "The 1-2",
+      "subtitle": "Your first combination",
+      "minutes": 5,
+      "move": "one_two",
+      "keyPoint": "The jab comes back as the cross goes out.",
+      "steps": [
+        {"title": "Jab", "body": "Throw a quick jab and start bringing it back right away."},
+        {"title": "Cross", "body": "As the jab returns, pivot and throw the cross."},
+        {"title": "One rhythm", "body": "Think \"one-two\" as a single movement, not two separate punches."},
+        {"title": "Reset", "body": "Both hands back to your face, stance set, ready again."}
+      ],
+      "mistakes": [
+        {"wrong": "A long pause between the punches", "fix": "Flow from one into the other"},
+        {"wrong": "Both hands out at the same time", "fix": "One hand out, the other always guarding"}
+      ],
+      "practice": {
+        "type": "drill",
+        "description": "Throw the 1-2 each time it's called.",
+        "minPunches": 16,
+        "drill": {
+          "combos": [[1, 2]],
+          "callIntervalMs": 1100,
+          "roundPlan": {"rounds": 2, "roundSeconds": 45, "restSeconds": 30}
+        }
+      },
+      "proOnly": true
+    },
+    {
+      "id": "lead_hook",
+      "number": 6,
+      "title": "The lead hook",
+      "subtitle": "Number 3 · a curved punch from the side",
+      "minutes": 5,
+      "move": "lead_hook",
+      "keyPoint": "Turn your whole body. The arm just stays locked in its shape.",
+      "steps": [
+        {"title": "Arm shape", "body": "Raise your lead elbow to shoulder height with a bent arm, about a right angle."},
+        {"title": "Turn", "body": "Pivot on your lead foot and turn your hips and shoulders. The glove swings across in a short curve."},
+        {"title": "Stay compact", "body": "The glove travels only a short distance. Don't wind up or swing wide."},
+        {"title": "Back to guard", "body": "Turn back and return the glove to your face."}
+      ],
+      "mistakes": [
+        {"wrong": "Winding the arm back first", "fix": "Start from your guard, no wind-up"},
+        {"wrong": "A wide, looping swing", "fix": "Keep the arm bent and the curve short"},
+        {"wrong": "Not turning the lead foot", "fix": "Pivot the foot with the hips"}
+      ],
+      "practice": {
+        "type": "drill",
+        "description": "Hit spot 3 on the side of the bag, sometimes after a jab.",
+        "minPunches": 10,
+        "drill": {
+          "combos": [[3], [1, 3]],
+          "callIntervalMs": 1300,
+          "roundPlan": {"rounds": 2, "roundSeconds": 45, "restSeconds": 30}
+        }
+      },
+      "proOnly": true
+    },
+    {
+      "id": "rear_hook",
+      "number": 7,
+      "title": "The rear hook",
+      "subtitle": "Number 4 · the hook from your power side",
+      "minutes": 5,
+      "move": "rear_hook",
+      "keyPoint": "Pivot the rear foot and turn the rear hip, like the cross.",
+      "steps": [
+        {"title": "Arm shape", "body": "Rear elbow up to shoulder height, arm bent about a right angle."},
+        {"title": "Turn", "body": "Pivot your rear foot and turn your rear hip forward. The glove swings across in a short curve."},
+        {"title": "Guard", "body": "Your lead glove stays at your face the whole time."},
+        {"title": "Back to guard", "body": "Turn back and return the glove to your cheek."}
+      ],
+      "mistakes": [
+        {"wrong": "Swinging only the arm", "fix": "Turn the foot and hip first"},
+        {"wrong": "Over-turning and losing balance", "fix": "Stop the turn when your chest faces the target"}
+      ],
+      "practice": {
+        "type": "drill",
+        "description": "Hit spot 4, and the 3-4 hook pair.",
+        "minPunches": 10,
+        "drill": {
+          "combos": [[4], [3, 4]],
+          "callIntervalMs": 1300,
+          "roundPlan": {"rounds": 2, "roundSeconds": 45, "restSeconds": 30}
+        }
+      },
+      "proOnly": true
+    },
+    {
+      "id": "uppercuts",
+      "number": 8,
+      "title": "Uppercuts",
+      "subtitle": "Numbers 5 and 6 · punches that travel upward",
+      "minutes": 5,
+      "move": "uppercuts",
+      "keyPoint": "Bend your knees a little, then drive up with your legs.",
+      "steps": [
+        {"title": "Dip", "body": "Bend your knees slightly and drop your level a few centimetres. Don't lean or drop your hand."},
+        {"title": "Drive up", "body": "Push up with your legs and turn your hip. The glove travels upward with your palm facing you."},
+        {"title": "Short and close", "body": "Keep the elbow bent and the punch close to your body."},
+        {"title": "5 and 6", "body": "5 is the lead hand, 6 is the rear hand. Same movement, opposite side."}
+      ],
+      "mistakes": [
+        {"wrong": "Dropping the hand low before punching", "fix": "Bend the knees instead; the glove stays near your chest"},
+        {"wrong": "Leaning back", "fix": "Stay upright and balanced"}
+      ],
+      "practice": {
+        "type": "drill",
+        "description": "Hit spots 5 and 6 at the bottom of the bag.",
+        "minPunches": 12,
+        "drill": {
+          "combos": [[5], [6], [5, 6]],
+          "callIntervalMs": 1300,
+          "roundPlan": {"rounds": 2, "roundSeconds": 45, "restSeconds": 30}
+        }
+      },
+      "proOnly": true
+    },
+    {
+      "id": "defense",
+      "number": 9,
+      "title": "Defense basics",
+      "subtitle": "Block, slip and roll",
+      "minutes": 5,
+      "move": "defense",
+      "keyPoint": "Small, quick movements, then right back to your stance.",
+      "steps": [
+        {"title": "Block", "body": "Raise both gloves to your forehead and keep your elbows tight. Absorb, don't reach."},
+        {"title": "Slip", "body": "Bend your knees slightly and turn your shoulders so your head moves just off the centre line."},
+        {"title": "Roll", "body": "Bend your knees and move your head down and across in a small U shape, under an imaginary punch."},
+        {"title": "Reset", "body": "After every move, come back to your stance with your hands up."}
+      ],
+      "mistakes": [
+        {"wrong": "Bending at the waist", "fix": "Bend with your knees"},
+        {"wrong": "Closing your eyes or looking at the floor", "fix": "Keep your eyes forward"},
+        {"wrong": "Huge movements", "fix": "Move just enough, then reset"}
+      ],
+      "practice": {
+        "type": "follow",
+        "description": "Do each move as the voice calls it.",
+        "followSeconds": 60,
+        "cueIntervalMs": 2500,
+        "cues": ["Block", "Slip", "Roll", "Block", "Slip", "Roll", "Reset"]
+      },
+      "proOnly": true
+    },
+    {
+      "id": "put_together",
+      "number": 10,
+      "title": "Put it together",
+      "subtitle": "Your first full workout",
+      "minutes": 6,
+      "move": "combo",
+      "keyPoint": "Stay relaxed and breathe out on every punch.",
+      "steps": [
+        {"title": "Combos", "body": "Everything you've learned: 1-2, 1-2-3, uppercuts, in short combinations."},
+        {"title": "Rhythm", "body": "Throw the combo, return to guard, breathe, ready for the next call."},
+        {"title": "Pace yourself", "body": "Three rounds of one minute. Speed and form beat power."},
+        {"title": "Next", "body": "When this feels easy, move on to the Reaction Drills."}
+      ],
+      "mistakes": [
+        {"wrong": "Holding your breath", "fix": "Breathe out sharply on each punch"},
+        {"wrong": "Going all-out in round one", "fix": "Steady pace over three rounds"}
+      ],
+      "practice": {
+        "type": "drill",
+        "description": "Three rounds of mixed combos called on the bag.",
+        "minPunches": 30,
+        "drill": {
+          "combos": [[1, 2], [1, 2, 3], [1, 1, 2], [3, 2], [5, 6], [1, 2, 5, 6]],
+          "callIntervalMs": 1000,
+          "roundPlan": {"rounds": 3, "roundSeconds": 60, "restSeconds": 30}
+        }
+      },
+      "proOnly": true
+    }
+  ]
+}

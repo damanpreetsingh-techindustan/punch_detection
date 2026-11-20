@@ -19,4 +19,6 @@ abstract class AppRoutes {
   static const String paywall = '/paywall';
   static const String drills = '/drills';
   static const String drillEditor = '/drill-editor';
+  static const String learn = '/learn';
+  static const String lesson = '/lesson';
 }

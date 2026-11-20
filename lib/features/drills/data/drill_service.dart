@@ -74,10 +74,21 @@ class DrillService extends GetxService {
     return null;
   }
 
-  /// Picks the drill for the next session.
+  /// Picks the drill for the next session. Lesson practice drills are not
+  /// remembered as the Drills page's "last drill".
   void select(DrillProgram program) {
     active.value = program;
-    StorageService.to.setString(_kLastId, program.id);
+    if (program.category != 'lesson') {
+      StorageService.to.setString(_kLastId, program.id);
+    }
+  }
+
+  /// The drill for the Drills page's quick start button.
+  DrillProgram? get lastPicked {
+    final a = active.value;
+    if (a != null && a.category != 'lesson') return a;
+    return byId(StorageService.to.getString(_kLastId)) ??
+        (builtIn.isEmpty ? null : builtIn.first);
   }
 
   // ─── Free / Pro ──────────────────────────────────────────────────────────

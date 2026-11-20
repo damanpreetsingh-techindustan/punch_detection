@@ -57,7 +57,7 @@ Ship a store-ready, premium-feeling punch-training app under a **new brand**:
 ### 3.1 Store-listing gap (important)
 The approved listing promises **"Learn boxing from scratch"**: fundamentals, jab/cross/hook/uppercut technique, stance and movement, structured sessions, and combinations. The app today only **counts punches**.
 - Apple review (Guideline 2.3.1, accurate metadata) can reject a listing that describes features the app doesn't have.
-- **Phase 7 — Learn content** has been added to fill this gap before submission.
+- **Phase 7 — Learn Boxing v1 is built** (10 lessons: stance, footwork, jab, cross, hooks, uppercuts, defense, combos). This covers the listing's promises; have a coach read the lesson text before submission.
 - The other option is to trim the description to what ships.
 
 ---
@@ -330,11 +330,14 @@ Portrait, Fusion mode, permissions already granted.
 - [ ] Release build with `--obfuscate --split-debug-info`
 - [ ] Store listing assets (screenshots, description, privacy labels)
 
-### Phase 7 — Learn content (`PENDING`, needed to match the store listing)
-- [ ] "Learn" tab on Home: Fundamentals → Stance → Jab → Cross → Hook → Uppercut → Footwork → Combos
-- [ ] Lesson page: short text steps, an illustration or looping animation per move, common mistakes, then "Practice this", which starts a drill
-- [ ] Guided drills: timed rounds per punch or combo, using the existing prompt engine (spoken cues)
-- [ ] Progress: lessons completed, badges. Optionally, Pro locks the advanced lessons.
+### Phase 7 — Learn Boxing (`v1 CODED`, needs a device test)
+Plan, decisions and how to edit lessons: **[docs/LEARN_BOXING_PLAN.md](docs/LEARN_BOXING_PLAN.md)**.
+- [x] "Boxing Basics" course: 10 lessons (stance → footwork → 1–6 → defense → full workout) in `assets/learn/basics.json`
+- [x] Animated figure drawn in the app (no video needed), mirrors for southpaw
+- [x] Lesson page: key point, steps, common mistakes, practice (bag drill counted by the app, or follow-along with voice cues)
+- [x] Progress, safety screen, Home card with progress, "Lesson complete" on Results
+- [x] Free/Pro flags (1–3 free suggested); locking off: `lockProLessons = false`
+- [ ] v2: camera form check ("Hands up!"), more courses, coach videos
 
 ### Phase 8 — Punching bag targets & drill library (`CODED`, needs a device test)
 Plan, decisions, files and "how to add a drill": **[docs/DRILL_LIBRARY_PLAN.md](docs/DRILL_LIBRARY_PLAN.md)**.
@@ -361,6 +364,7 @@ Plan, decisions, files and "how to add a drill": **[docs/DRILL_LIBRARY_PLAN.md](
 ---
 
 ## 8. Changelog
+- **2026-11-20**: Learn Boxing v1: 10-lesson course, animated figure, lesson + course pages, follow-along, safety screen, Home progress, Results lesson completion. `flutter test`: 426 pass, the same 2 old detection failures.
 - **2026-11-18**: Quick start for repeat sessions: within `quickStartWindowMinutes` (10) of finishing a session, Get Ready offers "Quick start". It reuses the last room check, skips the photo (same as Skip photo: the session runs without the "only you" lock), and gives a 5 s countdown to step back. A "Full setup instead" link stays available. Close button added to the drill detail sheet.
 - **2026-11-18**: Drill fixes: landscape drill screen redesigned (bag on a glow instead of a framed card, camera window bottom-left, drill name + round on the stage, ring and count side by side, panel scales instead of scrolling); detail sheet two-column in landscape; Get Ready 3-2-1 lined up with the end of the room check + "Starting camera…" loader after GO; mic and camera released in parallel; camera hint no longer overflows in the small window; fixed a GetX error on open-ended drills (round banner). New `tool/render_drill_session_test.dart` renders the drill screen without a camera.
 - **2026-11-18**: Phase 8 built: punching bag targets, drill library (JSON + own drills), detail sheet, editor, rounds/rest, southpaw, landscape bag + camera window. `flutter test`: 414 pass, the same 2 old detection failures.
@@ -452,6 +456,7 @@ Every screen reads it (Home meter, session limit sheet, paywall text). To turn t
 | `termsUrl`, `privacyUrl` | empty | real URLs (required by the App Store for subscriptions) |
 | `freeDailyPunchLimit` | 300 | 300 (or your choice) |
 | `enforceDailyLimit` | `true` | `true` (`false` = nobody is ever stopped) |
+| `lockProLessons` | `false` | your choice (`true` locks lessons 4–10) |
 | `lockProDrills` | `false` (all drills open) | your choice: `true` locks `proOnly` drills and extra own drills |
 | `quickStartWindowMinutes` | `10` | `10` (`0` turns Quick start off) |
 | `showTestUsageReset` | `true` ("Reset to 0 (test)" on the Home today card) | **`false`** |

@@ -13,6 +13,9 @@ import '../../features/mount_guide/presentation/pages/mount_guide_page.dart';
 import '../../features/onboarding/presentation/bindings/onboarding_binding.dart';
 import '../../features/onboarding/presentation/pages/onboarding_flow_page.dart';
 import '../../features/drills/presentation/bindings/drills_binding.dart';
+import '../../features/learn/presentation/bindings/learn_binding.dart';
+import '../../features/learn/presentation/pages/learn_page.dart';
+import '../../features/learn/presentation/pages/lesson_page.dart';
 import '../../features/drills/presentation/pages/drill_editor_page.dart';
 import '../../features/drills/presentation/pages/drills_page.dart';
 import '../../features/paywall/presentation/bindings/paywall_binding.dart';
@@ -123,6 +126,16 @@ class AppPages {
       name: AppRoutes.diagnostics,
       page: () => const DiagnosticsPage(),
       binding: DiagnosticsBinding(),
+    ),
+    GetPage(
+      name: AppRoutes.learn,
+      page: () => const LearnPage(),
+      binding: LearnBinding(),
+    ),
+    GetPage(
+      name: AppRoutes.lesson,
+      page: () => const LessonPage(),
+      binding: LessonBinding(),
     ),
     GetPage(
       name: AppRoutes.drills,

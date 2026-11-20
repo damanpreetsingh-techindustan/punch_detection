@@ -9,6 +9,7 @@ import 'package:punch_detection_demo/features/history/data/datasources/local_his
 import 'package:punch_detection_demo/features/history/data/repositories/history_repository_impl.dart';
 import 'package:punch_detection_demo/features/history/domain/repositories/history_repository.dart';
 import 'package:punch_detection_demo/features/home/presentation/controllers/home_controller.dart';
+import 'package:punch_detection_demo/features/learn/data/learn_service.dart';
 import 'package:punch_detection_demo/features/home/presentation/pages/home_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -25,6 +26,7 @@ Future<void> _pumpHome(WidgetTester tester, {int usedToday = 0}) async {
     HistoryRepositoryImpl(localDatasource: LocalHistoryDatasource()),
     permanent: true,
   );
+  Get.put(LearnService(), permanent: true);
   Get.put(HomeController());
 
   tester.view

@@ -175,6 +175,12 @@ class ResultsPage extends GetView<ResultsController> {
       final h = controller.highlights.value;
       if (h == null) return SizedBox(height: 34.r);
       final chips = <Widget>[
+        if (controller.lessonCompleted.value != null)
+          _chip(
+            Icons.school_rounded,
+            controller.lessonCompleted.value!,
+            AppColors.success,
+          ),
         if (h.firstSession)
           _chip(
             Icons.celebration_rounded,

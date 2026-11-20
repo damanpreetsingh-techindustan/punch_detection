@@ -64,6 +64,10 @@ class AppConstants {
   static const bool lockProDrills = false;
   static const int freeCustomDrills = 1;
 
+  /// Learn lessons with `"proOnly": true` (assets/learn/*.json) open the
+  /// paywall for free users. false while testing.
+  static const bool lockProLessons = false;
+
   /// Quick start: within this many minutes of finishing a session, Get Ready
   /// offers to reuse the last room check and skip the photo (straight to a
   /// 5 s countdown). 0 = off.

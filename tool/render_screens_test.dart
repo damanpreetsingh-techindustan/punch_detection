@@ -18,6 +18,7 @@ import 'package:punch_detection_demo/core/navigation/app_pages.dart';
 import 'package:punch_detection_demo/core/navigation/app_routes.dart';
 import 'package:punch_detection_demo/core/services/storage_service.dart';
 import 'package:punch_detection_demo/features/drills/data/drill_service.dart';
+import 'package:punch_detection_demo/features/learn/data/learn_service.dart';
 import 'package:punch_detection_demo/features/history/data/datasources/local_history_datasource.dart';
 import 'package:punch_detection_demo/features/history/data/repositories/history_repository_impl.dart';
 import 'package:punch_detection_demo/features/history/domain/entities/workout_record.dart';
@@ -70,6 +71,7 @@ Future<void> _shot(
   await StorageService.to.setTodayPunches(usedToday);
   Get.put(UsageService(), permanent: true);
   Get.put(DrillService(), permanent: true);
+  Get.put(LearnService(), permanent: true);
   final repo = HistoryRepositoryImpl(localDatasource: LocalHistoryDatasource());
   Get.put<HistoryRepository>(repo, permanent: true);
   final now = DateTime.now();
@@ -121,6 +123,9 @@ Future<void> _shot(
     Get.toNamed(route, arguments: arguments);
   }
   await tester.runAsync(() => DrillService.to.ensureLoaded());
+  await tester.runAsync(() => LearnService.to.ensureLoaded());
+  await LearnService.to.markComplete('stance');
+  await LearnService.to.markComplete('footwork');
   // Async loads (saved history) finish over a few frames; then the entrance
   // animations need time to play.
   for (var i = 0; i < 12; i++) {
@@ -242,5 +247,50 @@ void main() {
   testWidgets(
     'editor landscape',
     (t) => _shot(t, 'editor_land', land, route: AppRoutes.drillEditor),
+  );
+  testWidgets(
+    'learn phone',
+    (t) => _shot(t, 'learn_phone', phone, route: AppRoutes.learn),
+  );
+  testWidgets(
+    'learn landscape',
+    (t) => _shot(t, 'learn_land', land, route: AppRoutes.learn),
+  );
+  testWidgets(
+    'lesson phone',
+    (t) => _shot(
+      t,
+      'lesson_phone',
+      phone,
+      route: AppRoutes.lesson,
+      arguments: 'jab',
+    ),
+  );
+  testWidgets(
+    'lesson landscape',
+    (t) => _shot(
+      t,
+      'lesson_land',
+      land,
+      route: AppRoutes.lesson,
+      arguments: 'lead_hook',
+    ),
+  );
+  testWidgets(
+    'safety sheet',
+    (t) => _shot(
+      t,
+      'safety_sheet',
+      phone,
+      route: AppRoutes.learn,
+      after: (t) async {
+        await LearnService.to.markComplete('x');
+        LearnService.to.safetyAccepted.value = false;
+        await t.tap(find.textContaining('Continue'));
+        for (var i = 0; i < 4; i++) {
+          await t.pump(const Duration(milliseconds: 400));
+        }
+      },
+    ),
   );
 }

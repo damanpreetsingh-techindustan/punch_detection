@@ -86,7 +86,7 @@ class DrillsPage extends GetView<DrillsController> {
 
   /// Bag legend + "start last drill".
   Widget _legend(BuildContext context) {
-    final last = controller.service.active.value;
+    final last = controller.service.lastPicked;
     return GlassCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,

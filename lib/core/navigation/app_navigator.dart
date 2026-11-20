@@ -117,6 +117,15 @@ class AppNavigator {
     Get.toNamed(AppRoutes.historyDetail, arguments: record);
   }
 
+  /// Learn Boxing course.
+  static void toLearn() {
+    Get.toNamed(AppRoutes.learn);
+  }
+
+  static void toLesson(String lessonId) {
+    Get.toNamed(AppRoutes.lesson, arguments: lessonId);
+  }
+
   /// Reaction Drill library (built-in, fight styles, your own drills).
   static void toDrills() {
     Get.toNamed(AppRoutes.drills);

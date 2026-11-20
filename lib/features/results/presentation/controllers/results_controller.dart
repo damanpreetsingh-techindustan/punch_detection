@@ -1,7 +1,9 @@
 import 'package:get/get.dart';
 import '../../../../core/navigation/app_navigator.dart';
 import '../../../../core/services/storage_service.dart';
+import '../../../drills/data/drill_service.dart';
 import '../../../history/domain/entities/workout_record.dart';
+import '../../../learn/data/learn_service.dart';
 import '../../../history/domain/history_insights.dart';
 import '../../../history/domain/repositories/history_repository.dart';
 
@@ -41,6 +43,9 @@ class ResultsController extends GetxController {
 
   /// Null while the history is loading.
   final Rxn<ResultHighlights> highlights = Rxn<ResultHighlights>();
+
+  /// Set when this session was a lesson's practice and completed it.
+  final RxnString lessonCompleted = RxnString();
 
   bool get isDrill => result.sessionType == 'prompt';
 
@@ -104,6 +109,8 @@ class ResultsController extends GetxController {
       // (UsageService), so it is not added again here.
     }
 
+    await _checkLesson();
+
     final after = isSaved ? [record, ...before] : before;
     final countsForPace =
         record.durationSeconds >= HistoryInsights.minSecondsForPace;
@@ -129,6 +136,26 @@ class ResultsController extends GetxController {
       todayPunches: HistoryInsights.punchesOn(after, now),
       dayStreak: HistoryInsights.dayStreak(after, now),
     );
+  }
+
+  /// A lesson's practice drill (id `lesson_<id>`) with enough punches
+  /// completes the lesson.
+  Future<void> _checkLesson() async {
+    if (!isDrill ||
+        !Get.isRegistered<LearnService>() ||
+        !Get.isRegistered<DrillService>()) {
+      return;
+    }
+    try {
+      final lesson = await LearnService.to.onDrillFinished(
+        DrillService.to.active.value?.id,
+        result.totalPunches,
+      );
+      if (lesson != null) {
+        lessonCompleted.value =
+            'Lesson ${lesson.number} complete: ${lesson.title}';
+      }
+    } catch (_) {}
   }
 
   void trainAgain() => AppNavigator.toGetReady(

@@ -408,52 +408,58 @@ class HomePage extends GetView<HomeController> {
     });
   }
 
+  /// Learn Boxing course with progress ("3/10 lessons").
   Widget _learnTeaser(BuildContext context) {
-    return GlassCard(
-      padding: EdgeInsets.all(16.r),
-      child: Row(
-        children: [
-          Container(
-            width: 44.r,
-            height: 44.r,
-            decoration: BoxDecoration(
-              color: AppColors.gold.withValues(alpha: 0.14),
-              borderRadius: BorderRadius.circular(14.r),
+    return PressScale(
+      onTap: controller.openLearn,
+      child: GlassCard(
+        padding: EdgeInsets.all(16.r),
+        child: Row(
+          children: [
+            Container(
+              width: 44.r,
+              height: 44.r,
+              decoration: BoxDecoration(
+                color: AppColors.gold.withValues(alpha: 0.14),
+                borderRadius: BorderRadius.circular(14.r),
+              ),
+              child: Icon(
+                Icons.school_rounded,
+                color: AppColors.gold,
+                size: 22.r,
+              ),
             ),
-            child: Icon(
-              Icons.school_rounded,
-              color: AppColors.gold,
-              size: 22.r,
+            14.width,
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Learn Boxing', style: AppTextStyles.heading3(context)),
+                  2.height,
+                  Text(
+                    'Stance, jab, cross, hook and uppercut lessons.',
+                    style: AppTextStyles.bodyMedium(context),
+                  ),
+                ],
+              ),
             ),
-          ),
-          14.width,
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Learn Boxing', style: AppTextStyles.heading3(context)),
-                2.height,
-                Text(
-                  'Stance, jab, cross, hook and uppercut lessons.',
-                  style: AppTextStyles.bodyMedium(context),
+            Obx(
+              () => Container(
+                padding: EdgeInsets.symmetric(horizontal: 8.w, vertical: 4.h),
+                decoration: BoxDecoration(
+                  color: AppColors.surfaceRaised,
+                  borderRadius: BorderRadius.circular(999),
                 ),
-              ],
+                child: Text(
+                  controller.learnProgressLabel,
+                  style: AppTextStyles.tag(
+                    context,
+                  ).copyWith(color: AppColors.gold, fontSize: 9.ts(context)),
+                ),
+              ),
             ),
-          ),
-          Container(
-            padding: EdgeInsets.symmetric(horizontal: 8.w, vertical: 4.h),
-            decoration: BoxDecoration(
-              color: AppColors.surfaceRaised,
-              borderRadius: BorderRadius.circular(999),
-            ),
-            child: Text(
-              'SOON',
-              style: AppTextStyles.tag(
-                context,
-              ).copyWith(color: AppColors.gold, fontSize: 9.ts(context)),
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
