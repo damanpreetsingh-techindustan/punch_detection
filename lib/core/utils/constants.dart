@@ -203,7 +203,7 @@ class AppConstants {
 
   /// Default value of the "Max Camera Distance" slider (approx. metres) at the
   /// start of every session and after Defaults / Reset.
-  static const double defaultMaxCameraDistanceM = 0.7;
+  static const double defaultMaxCameraDistanceM = 1.2;
 
   /// What to do when the distance cannot be measured (for example only one
   /// shoulder visible and no eyes): true = treat as valid (never miss a punch).
@@ -220,6 +220,13 @@ class AppConstants {
 
   /// Use the Android `unprocessed` audio source (no gain or filtering).
   static const bool audioExperimentUnprocessedSource = false;
+
+  /// ANDROID_CALL_MODE_AEC (Android only, Prompt session only).
+  /// true = record with the `voiceCommunication` source in call mode and speak
+  /// the prompt numbers as voice-call audio, so Android's echo canceller removes
+  /// them from the mic. false = the previous behaviour (flutter_tts + default mic).
+  /// iOS ignores this flag.
+  static const bool androidCallModeEchoCancel = true;
 
   /// TESTING CONFIGURATION:
   /// Absolute minimum safety floor for punch audio detection.
