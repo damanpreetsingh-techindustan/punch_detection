@@ -63,6 +63,7 @@ void main() {
     required int startEpochMs,
     required double baselineDb,
     required double calibratedDb,
+    double targetDb = 90.0,
   }) {
     t0 = startEpochMs;
     punchTimes.clear();
@@ -79,7 +80,7 @@ void main() {
     controller.isCameraUnavailable.value = false;
     controller.isBodyMotionGateEnabled.value = false;
     controller.staticCalibratedAudioDb.value = calibratedDb;
-    controller.customTargetAudioDb.value = 90.0;
+    controller.customTargetAudioDb.value = targetDb;
     controller.minAudioPunchSpikeDb.value = 8.0;
   }
 
@@ -183,5 +184,27 @@ void main() {
     expect(punchesBetween(77100, 77700), 5, reason: '5 rapid [4]');
     // Sounds between the rounds (no hit on the bag) stay rejected.
     expect(controller.punchCount.value, 100, reason: 'app counted 90');
+  });
+
+  test('sprung wall pad: one punch counts once, not once per swing', () {
+    // Client review session: single punches on a wall pad (phone mounted on
+    // it) that rings at ~8 swings/s for ~1 s and rattles on each swing. The
+    // video shows one punch in each range below; the app counted 3, 2, 2, 3.
+    startSession(
+      startEpochMs: 1795409833155,
+      baselineDb: 46.917,
+      calibratedDb: 51.0,
+      targetDb: 66.0,
+    );
+    replay('test/fixtures/client_review_session_2026_11_23.csv');
+
+    // ignore: avoid_print
+    print('punches at (ms): $punchTimes');
+
+    expect(punchesBetween(20900, 22800), 1, reason: 'punch at 21.03 s');
+    expect(punchesBetween(23300, 25000), 1, reason: 'punch at 23.46 s');
+    expect(punchesBetween(33500, 35000), 1, reason: 'punch at 33.65 s');
+    expect(punchesBetween(36400, 38000), 1, reason: 'punch at 36.48 s');
+    expect(punchesBetween(38800, 40500), 1, reason: 'punch at 38.91 s');
   });
 }

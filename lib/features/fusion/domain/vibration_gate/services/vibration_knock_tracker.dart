@@ -25,17 +25,19 @@ class _RawSample {
 /// low-frequency pendulum bag swings (~0.5Hz sinusoidal motion with smooth delta).
 ///
 /// ONE PHYSICAL HIT = ONE KNOCK. Three rules guarantee it:
-///  1. Merge: jerks within [knockMergeMs] of the START of the last knock are
-///     the same hit (shockwave rise + rebound), even when that knock was
-///     already used by a confirmed punch. Without this the rebound became a
-///     new, unused knock. The window does not slide with later jerks, or it
-///     swallows the next punch of a fast combo.
+///  1. Merge: jerks within [knockMergeMs] of the strongest jerk so far of the
+///     last hit are the same hit (shockwave rise + rebound + the ring-up of a
+///     sprung pad), even when that knock was already used by a confirmed
+///     punch. Without this the rebound became a new, unused knock. A jump
+///     from rest (rule 2 exception) is never merged, so the next punch of a
+///     fast combo is not swallowed.
 ///  2. Ring-down: after the merge window the mount keeps shaking with
 ///     SHRINKING jerks. A jerk only starts a new knock when it is at least
 ///     [riseFactor] × the biggest jerk of the last [ringDownWindowMs]. A
 ///     new punch landing on the tail passes; the tail itself never does.
 ///     Exception: a reading that jumps from near rest to a hard level
-///     ([onsetMinRawMag], [onsetMaxPrevFraction]) is a new punch.
+///     ([onsetMinRawMag], [onsetMaxPrevFraction]), or from a mount that had
+///     stopped ([onsetRestFraction]), is a new punch.
 ///  3. Gaps: a missed sensor reading is compared with the previous reading
 ///     (never with 0, which turned any bag swing into a fake knock). After a
 ///     long pause ([reseedGapMs]) the reading only becomes the new start.
@@ -68,6 +70,9 @@ class VibrationKnockTracker {
   /// Rule 2 exception: previous reading at most this fraction of the new one.
   final double onsetMaxPrevFraction;
 
+  /// Rule 2 exception: "stopped" = readings at most this fraction of the peak.
+  final double onsetRestFraction;
+
   /// [claimRiseNear]: minimum reading (m/s²).
   final double riseMinRawMag;
 
@@ -84,6 +89,7 @@ class VibrationKnockTracker {
   final List<VibrationKnock> _knocks = [];
   final List<_RawSample> _rawHistory = [];
   int _mergeAnchorMs = 0;
+  double _mergeAnchorJerk = 0.0;
   final List<_JerkSample> _recentJerks = [];
   double _prevX = 0.0;
   double _prevY = 0.0;
@@ -102,6 +108,7 @@ class VibrationKnockTracker {
     this.reseedGapMs = AppConstants.knockReseedGapMs,
     this.onsetMinRawMag = AppConstants.knockOnsetMinRawMag,
     this.onsetMaxPrevFraction = AppConstants.knockOnsetMaxPrevFraction,
+    this.onsetRestFraction = AppConstants.knockOnsetRestFraction,
     this.riseMinRawMag = AppConstants.knockRiseMinRawMag,
     this.riseOverTroughFactor = AppConstants.knockRiseOverTroughFactor,
     this.riseLookbackMs = AppConstants.knockRiseLookbackMs,
@@ -168,33 +175,51 @@ class VibrationKnockTracker {
     }
     // Biggest jerk just before this one (rule 2), read before adding this one.
     final double recentJerk = _recentJerkMax(sensorMs);
+    // Rule 2 exception, a jump from rest: from a low reading to a hard level,
+    // or from a mount that had stopped (the last two readings at most
+    // [onsetRestFraction] of the peak of the last [ringDownWindowMs]). A
+    // ringing pad only passes zero for one reading between two swings.
+    double recentPeak = 0.0;
+    double readingBefore = double.infinity;
+    for (int i = _rawHistory.length - 1;
+        i >= 0 && sensorMs - _rawHistory[i].tMs <= ringDownWindowMs;
+        i--) {
+      recentPeak = max(recentPeak, _rawHistory[i].rawMag);
+      if (i == _rawHistory.length - 2) readingBefore = _rawHistory[i].rawMag;
+    }
     final bool isOnsetFromRest =
         has3d &&
-        rawMag >= onsetMinRawMag &&
-        _prevMag <= onsetMaxPrevFraction * rawMag;
+        _prevMag <= onsetMaxPrevFraction * rawMag &&
+        (rawMag >= onsetMinRawMag ||
+            max(_prevMag, readingBefore) <= onsetRestFraction * recentPeak);
     _setPrevious(sensorMs, rawMag, x, y, z);
     _rememberJerk(sensorMs, delta);
     if (has3d) _rememberRaw(sensorMs, rawMag, delta);
 
     // 2. Sudden collision threshold check
     if (delta >= minKnockDelta) {
-      if (_knocks.isNotEmpty) {
-        final last = _knocks.last;
-        if ((sensorMs - _mergeAnchorMs).abs() <= knockMergeMs) {
-          // Rule 1: same hit. Keep the strongest jerk, but never touch a knock
-          // that a confirmed punch already used.
-          if (!last.isUsed && delta > last.deltaMag) {
-            _knocks[_knocks.length - 1] = VibrationKnock(
-              id: last.id,
-              timestampMs: sensorMs,
-              deltaMag: delta,
-              rawMag: max(last.rawMag, rawMag),
-              isUsed: false,
-              claimedByAudioTsMs: last.claimedByAudioTsMs,
-            );
-          }
-          return;
+      if (_knocks.isNotEmpty &&
+          !isOnsetFromRest &&
+          (sensorMs - _mergeAnchorMs).abs() <= knockMergeMs) {
+        // Rule 1: same hit. The window follows the hit while its jerk grows.
+        if (delta > _mergeAnchorJerk) {
+          _mergeAnchorMs = sensorMs;
+          _mergeAnchorJerk = delta;
         }
+        // Keep the strongest jerk, but never touch a knock that a confirmed
+        // punch already used.
+        final last = _knocks.last;
+        if (!last.isUsed && delta > last.deltaMag) {
+          _knocks[_knocks.length - 1] = VibrationKnock(
+            id: last.id,
+            timestampMs: sensorMs,
+            deltaMag: delta,
+            rawMag: max(last.rawMag, rawMag),
+            isUsed: false,
+            claimedByAudioTsMs: last.claimedByAudioTsMs,
+          );
+        }
+        return;
       }
 
       // Rule 2: the fading shake of the previous hit is not a new knock.
@@ -279,6 +304,7 @@ class VibrationKnockTracker {
 
   void _addKnock(int sensorMs, double delta, double rawMag) {
     _mergeAnchorMs = sensorMs;
+    _mergeAnchorJerk = delta;
     _knocks.add(VibrationKnock(
       id: ++_knockIdCounter,
       timestampMs: sensorMs,
@@ -389,6 +415,7 @@ class VibrationKnockTracker {
     _recentJerks.clear();
     _rawHistory.clear();
     _mergeAnchorMs = 0;
+    _mergeAnchorJerk = 0.0;
     _hasPrevious = false;
     _prevX = 0.0;
     _prevY = 0.0;

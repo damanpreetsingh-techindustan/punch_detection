@@ -64,7 +64,8 @@ class FreshKnockGate implements IVibrationGate {
     required int fromMs,
     required int toMs,
     required double threshold,
-    required bool windowClosed,
+    required int nowMs,
+    required double soundRiseDb,
     required bool isVibrationDisabled,
     List<int> otherOpenAudioTsMs = const <int>[],
   }) {
@@ -75,33 +76,36 @@ class FreshKnockGate implements IVibrationGate {
       );
     }
 
-    final double? minRawMag = threshold > 0 ? threshold : null;
-    // A knock after the sound may be the next punch's knock, so it is only
-    // taken once the window closes (the next punch has claimed its own knock
-    // by then). A knock closer to another waiting sound is never taken.
+    final bool windowClosed = nowMs >= toMs;
+    // A knock closer to another waiting sound is never taken.
     VibrationKnock? knock = tracker.findUnusedKnock(
       fromMs: fromMs,
-      toMs: min(toMs, audioTsMs + AppConstants.knockMatchAfterMs),
+      toMs: min(toMs, audioTsMs + AppConstants.knockLateMatchAfterMs),
       audioTsMs: audioTsMs,
-      minRawMag: minRawMag,
+      minRawMag: threshold > 0 ? threshold : null,
       rivalAudioTsMs: otherOpenAudioTsMs,
     );
+    // A knock after the sound may belong to a sound not heard yet (the next
+    // punch of a combo). It is taken once no later sound can be nearer to it
+    // than this one, so it waits only as long as needed on any device.
+    if (knock != null &&
+        !windowClosed &&
+        knock.claimedByAudioTsMs != audioTsMs &&
+        nowMs < 2 * knock.timestampMs - audioTsMs) {
+      knock = null;
+    }
     String label = 'Knock verified';
-    if (knock == null && windowClosed) {
-      knock = tracker.findUnusedKnock(
-        fromMs: fromMs,
-        toMs: min(toMs, audioTsMs + AppConstants.knockLateMatchAfterMs),
+    // A punch landing on a bag still shaking from the last one can lack a
+    // clean knock. Only a clearly new sound may take a fresh rise there; the
+    // rattle of a ringing target is a small bump in the fading sound.
+    if (knock == null &&
+        windowClosed &&
+        soundRiseDb >= AppConstants.knockRescueMinRiseDb) {
+      knock = tracker.claimRiseNear(
         audioTsMs: audioTsMs,
-        minRawMag: minRawMag,
         rivalAudioTsMs: otherOpenAudioTsMs,
       );
-      if (knock == null) {
-        knock = tracker.claimRiseNear(
-          audioTsMs: audioTsMs,
-          rivalAudioTsMs: otherOpenAudioTsMs,
-        );
-        label = 'Knock on shaking bag';
-      }
+      label = 'Knock on shaking bag';
     }
 
     if (knock != null) {

@@ -20,7 +20,8 @@ abstract class IVibrationGate {
   /// [fromMs]: Start of the coincidence window (e.g. audioTsMs - impactVibrationBeforeMs).
   /// [toMs]: End of the coincidence window (e.g. audioTsMs + impactVibrationAfterMs).
   /// [threshold]: Configured vibration sensitivity threshold.
-  /// [windowClosed]: True when the full impact window duration has elapsed.
+  /// [nowMs]: Latest sensor time seen; the window is closed once it reaches [toMs].
+  /// [soundRiseDb]: How many dB the sound rose above the frames just before it.
   /// [isVibrationDisabled]: True if the vibration gate is bypassed (pole mount or toggle off).
   /// [otherOpenAudioTsMs]: Sounds of the other impacts still waiting. A knock
   /// closer to one of them belongs to that impact, not to this one.
@@ -29,7 +30,8 @@ abstract class IVibrationGate {
     required int fromMs,
     required int toMs,
     required double threshold,
-    required bool windowClosed,
+    required int nowMs,
+    required double soundRiseDb,
     required bool isVibrationDisabled,
     List<int> otherOpenAudioTsMs = const <int>[],
   });

@@ -248,8 +248,10 @@ void main() {
       tracker.addSample(sensorMs: 1100, rawMag: 0.7, x: -0.6, y: -0.1, z: -0.4);
       tracker.addSample(sensorMs: 1120, rawMag: 0.5, x: 0.4, y: 0.1, z: 0.3);
       tracker.addSample(sensorMs: 1140, rawMag: 0.3, x: -0.25, y: -0.05, z: -0.2);
-      // Second punch 120 ms after the first, while the bag still shakes.
-      tracker.addSample(sensorMs: 1180, rawMag: 2.4, x: 1.9, y: 0.4, z: 1.3);
+      // Second punch 120 ms after the first, while the bag still shakes. It
+      // must stand out from the swing (1.5x its biggest jerk of the last
+      // 130 ms): a sprung pad's own swings are as strong as a same-size punch.
+      tracker.addSample(sensorMs: 1180, rawMag: 4.0, x: 3.2, y: 0.6, z: 2.3);
 
       expect(tracker.allKnocks.length, 2);
       expect(tracker.allKnocks.last.timestampMs, 1180);
@@ -333,11 +335,16 @@ void main() {
         [15433, 0.075, 1.066, 5.241, 5.349],
         [15453, 8.529, -5.059, 1.892, 10.096], // tail bump, not a hit
       ]);
-      // Hit 3 starts at 15393; its knock keeps the strongest jerk (15413).
-      expect(tracker.allKnocks.map((k) => k.timestampMs).toList(), <int>[
-        15273,
-        15413,
-      ]);
+      // Each knock keeps the strongest jerk of its hit: hit 2 at 15313, hit 3
+      // (starts at 15393) at 15413; the tail bump is not a knock. The first
+      // reading of the snippet is taken as a jump from 0, so it is skipped.
+      expect(
+        tracker.allKnocks
+            .where((k) => k.timestampMs > 15253)
+            .map((k) => k.timestampMs)
+            .toList(),
+        <int>[15313, 15413],
+      );
     });
 
     test('the merge window does not slide onto the next punch', () {
@@ -368,8 +375,10 @@ void main() {
         [24981, 1.955, -1.471, 2.989, 3.863],
         [25001, 2.315, 0.807, -1.333, 2.790],
       ]);
-      expect(tracker.allKnocks, hasLength(2));
-      expect(tracker.allKnocks.last.timestampMs, inInclusiveRange(24880, 24900));
+      // The first reading of the snippet is taken as a jump from 0; skip it.
+      final hits = tracker.allKnocks.where((k) => k.timestampMs > 24800);
+      expect(hits, hasLength(2));
+      expect(hits.last.timestampMs, inInclusiveRange(24880, 24900));
     });
   });
 
@@ -389,7 +398,8 @@ void main() {
         fromMs: 930,
         toMs: 1170,
         threshold: 0.18,
-        windowClosed: true,
+        nowMs: 1170,
+        soundRiseDb: 0,
         isVibrationDisabled: false,
       );
 
@@ -404,7 +414,8 @@ void main() {
         fromMs: 930,
         toMs: 1170,
         threshold: 0.18,
-        windowClosed: true,
+        nowMs: 1170,
+        soundRiseDb: 0,
         isVibrationDisabled: true,
       );
 
@@ -420,7 +431,8 @@ void main() {
         fromMs: 930,
         toMs: 1170,
         threshold: 0.18,
-        windowClosed: true,
+        nowMs: 1170,
+        soundRiseDb: 0,
         isVibrationDisabled: false,
       );
 
@@ -444,7 +456,8 @@ void main() {
         fromMs: 930,
         toMs: 1170,
         threshold: 0.18,
-        windowClosed: true,
+        nowMs: 1170,
+        soundRiseDb: 0,
         isVibrationDisabled: false,
       );
 
@@ -460,7 +473,8 @@ void main() {
         fromMs: 930,
         toMs: 1170,
         threshold: 0.18,
-        windowClosed: true,
+        nowMs: 1170,
+        soundRiseDb: 0,
         isVibrationDisabled: false,
       );
 
@@ -632,12 +646,14 @@ void main() {
       rawVibe(1.0, 100, x: 0.8, y: 0.2, z: 0.6); // its knock, 40 ms late
       rest(120, 180);
       quiet(70, 170);
-      expect(controller.punchCount.value, 0, reason: 'late knock: waits');
+      // The knock is 40 ms after the sound: it is taken at 140 ms, once no
+      // later sound can be nearer to it (not when the window closes at 210).
+      expect(controller.punchCount.value, 1, reason: 'late knock: waits 40 ms');
 
-      frame(92.0, 170); // punch 2 audio while punch 1 is still open
+      frame(92.0, 170); // punch 2 audio
       rawVibe(2.0, 180, x: 1.6, y: 0.3, z: 1.1); // knock of punch 2
       quiet(180, 200);
-      expect(controller.punchCount.value, 1, reason: 'punch 2 has its knock');
+      expect(controller.punchCount.value, 2, reason: 'punch 2 has its knock');
 
       camera(CameraGateState.valid, 200);
       rest(200, 400);

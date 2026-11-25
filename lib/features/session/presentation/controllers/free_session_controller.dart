@@ -1859,7 +1859,8 @@ class FreeSessionController extends GetxController {
       fromMs: windowStartMs,
       toMs: windowEndMs,
       threshold: minVibrationThreshold.value,
-      windowClosed: windowClosed,
+      nowMs: _eventClockMs,
+      soundRiseDb: impact.windowRise,
       isVibrationDisabled: !vibeRequired,
       otherOpenAudioTsMs: <int>[
         for (final _PendingImpact other in _pendingImpacts)
@@ -1903,7 +1904,12 @@ class FreeSessionController extends GetxController {
       motion: motionEval.state,
       motionUnknownIsValid: AppConstants.bodyMotionUnknownIsValid,
     );
-    if (result.isPending) return;
+    // Punches are counted in the order they were heard: a newer impact that
+    // is ready waits (keeping its knock) while an older one is still open.
+    if (result.isPending ||
+        (result.isValid && _pendingImpacts.first != impact)) {
+      return;
+    }
 
     _pendingImpacts.remove(impact);
     _recordImpactDecision(

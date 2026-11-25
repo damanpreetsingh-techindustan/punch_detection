@@ -54,7 +54,8 @@ class PeakThresholdGate implements IVibrationGate {
     required int fromMs,
     required int toMs,
     required double threshold,
-    required bool windowClosed,
+    required int nowMs,
+    required double soundRiseDb,
     required bool isVibrationDisabled,
     List<int> otherOpenAudioTsMs = const <int>[],
   }) {
@@ -88,7 +89,7 @@ class PeakThresholdGate implements IVibrationGate {
     return VibrationGateEvaluation(
       state: VibrationGateState.missing,
       peakMagnitude: peak,
-      detail: windowClosed
+      detail: nowMs >= toMs
           ? 'Peak ${peak.toStringAsFixed(2)} < threshold ${threshold.toStringAsFixed(2)} m/s²'
           : 'Waiting for vibration in window...',
     );

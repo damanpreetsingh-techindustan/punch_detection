@@ -262,14 +262,20 @@ class AppConstants {
   /// Merge window (ms) to group multi-axis jerk oscillations of the same hit into one knock
   static const int knockMergeMs = 40;
 
-  /// After a hit the mount keeps shaking for ~100 ms with SHRINKING jerks.
-  /// A jerk only counts as a new knock when it is at least this many times
-  /// larger than the biggest jerk of the last [knockRingDownWindowMs]; the
-  /// fading tail never is, a new punch landing on it is.
+  /// After a hit the mount keeps shaking with SHRINKING jerks (a stiff mount
+  /// for ~100 ms, a sprung wall pad rings for ~1 s). A jerk only counts as a
+  /// new knock when it is at least this many times larger than the biggest
+  /// jerk of the last [knockRingDownWindowMs]; the fading tail never is, a new
+  /// punch landing on it is.
   static const double knockRiseFactor = 1.5;
 
-  /// How far back (ms) the "recent jerk" used by [knockRiseFactor] looks.
-  static const int knockRingDownWindowMs = 60;
+  /// How far back (ms) the "recent jerk" used by [knockRiseFactor] looks. It
+  /// must span one full swing of a ringing mount: with 60 ms the trough
+  /// between two swings reset the comparison, and every swing of a sprung
+  /// wall pad (~8 per second) became a knock that a rattle sound could take
+  /// (client session 2026-11-23: one punch counted 3-4 times). 130 ms is also
+  /// shorter than any two punches a person can throw with the same hand.
+  static const int knockRingDownWindowMs = 130;
 
   /// A reading that jumps from near rest to at least this level (m/s²) in one
   /// step is a new hit even while the previous hit's shake is still big
@@ -282,16 +288,16 @@ class AppConstants {
   /// first fake knock appeared at 0.6.
   static const double knockOnsetMaxPrevFraction = 0.4;
 
-  /// A sound takes a knock at once only if the knock happened at most this
-  /// long after it (sensor time); a later knock waits until the window closes.
-  /// Real hits measured -52..+29 ms (most before the sound); a knock 40-130 ms
-  /// after a sound was the NEXT punch's knock, and taking it made the last
-  /// punch of a fast combo lose its knock.
-  static const int knockMatchAfterMs = 10;
+  /// A jump also counts as from rest at any level when the mount had stopped:
+  /// the last two readings were at most this fraction of the peak of the last
+  /// [knockRingDownWindowMs]. A sprung pad's trough between two swings stayed
+  /// at 15-19 % of the peak (client session 2026-11-23); a stopped mount < 10 %.
+  static const double knockOnsetRestFraction = 0.1;
 
-  /// When the impact window closes without a knock, a knock up to this long
-  /// after the sound is still accepted (timing on other devices). By then the
-  /// next punch has already taken its own knock.
+  /// A knock up to this long after a sound (sensor time) can belong to it.
+  /// A knock after the sound is only taken once no later sound can be nearer
+  /// to it (see FreshKnockGate), so the next punch of a fast combo keeps its
+  /// own knock without assuming any fixed audio / vibration clock offset.
   static const int knockLateMatchAfterMs = 100;
 
   /// A punch landing on a bag still shaking from the previous punch often
@@ -307,6 +313,13 @@ class AppConstants {
   static const int knockRiseLookbackMs = 60;
   static const int knockRiseBeforeMs = 50;
   static const int knockRiseAfterMs = 30;
+
+  /// Only a clearly new sound may use the rule above: its onset rose at least
+  /// this many dB above the frames just before it. A ringing target rattles
+  /// with small bumps in the fading sound (6-14 dB); punches the rule rescued
+  /// rose 19-38 dB. dB rises do not depend on how the phone is mounted, the
+  /// m/s² levels above do.
+  static const double knockRescueMinRiseDb = 15.0;
 
   /// A gap between two sensor readings longer than this (ms) means the sensor
   /// was paused or restarted; the next reading only becomes the new starting
