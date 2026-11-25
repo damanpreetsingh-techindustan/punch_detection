@@ -29,7 +29,8 @@
       "WebFetch(domain:media.isbweb.org)",
       "WebFetch(domain:ojs.ub.uni-konstanz.de)",
       "Bash(sort -t\"'\" -k2 -u)",
-      "Bash(git stash *)"
+      "Bash(git stash *)",
+      "Bash(grep -vE \"^\\\\-\\\\-$\")"
     ]
   }
 }

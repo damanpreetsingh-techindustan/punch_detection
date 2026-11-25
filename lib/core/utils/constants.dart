@@ -203,7 +203,7 @@ class AppConstants {
 
   /// Default value of the "Max Camera Distance" slider (approx. metres) at the
   /// start of every session and after Defaults / Reset.
-  static const double defaultMaxCameraDistanceM = 0.7;
+  static const double defaultMaxCameraDistanceM = 1.2;
 
   /// What to do when the distance cannot be measured (for example only one
   /// shoulder visible and no eyes): true = treat as valid (never miss a punch).
