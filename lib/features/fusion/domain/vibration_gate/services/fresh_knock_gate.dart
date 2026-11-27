@@ -87,6 +87,7 @@ class FreshKnockGate implements IVibrationGate {
       rivalAudioTsMs: otherOpenAudioTsMs,
     );
     String label = 'Knock verified';
+    bool isRescue = false;
     if (knock == null && windowClosed) {
       knock = tracker.findUnusedKnock(
         fromMs: fromMs,
@@ -101,6 +102,7 @@ class FreshKnockGate implements IVibrationGate {
           rivalAudioTsMs: otherOpenAudioTsMs,
         );
         label = 'Knock on shaking bag';
+        isRescue = knock != null;
       }
     }
 
@@ -112,6 +114,8 @@ class FreshKnockGate implements IVibrationGate {
         peakMagnitude: knock.rawMag,
         detail:
             '$label: Δ${knock.deltaMag.toStringAsFixed(2)} m/s² @ ${knock.timestampMs}ms (Raw: ${knock.rawMag.toStringAsFixed(2)} m/s²)',
+        isShakingBagRescue: isRescue,
+        previousPunchKnock: tracker.lastUsedKnock,
       );
     }
 
@@ -131,6 +135,11 @@ class FreshKnockGate implements IVibrationGate {
   @override
   void onImpactRejected({required int audioTsMs}) {
     tracker.releaseClaim(audioTsMs);
+  }
+
+  @override
+  void onSameHitRejected({required int audioTsMs}) {
+    tracker.consumeClaim(audioTsMs);
   }
 
   @override

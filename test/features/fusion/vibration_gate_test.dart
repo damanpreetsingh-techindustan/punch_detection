@@ -637,7 +637,9 @@ void main() {
       frame(92.0, 170); // punch 2 audio while punch 1 is still open
       rawVibe(2.0, 180, x: 1.6, y: 0.3, z: 1.1); // knock of punch 2
       quiet(180, 200);
-      expect(controller.punchCount.value, 1, reason: 'punch 2 has its knock');
+      // Punch 2 has its knock but waits until punch 1 is decided, so the
+      // same-hit checks compare it with the punch right before it.
+      expect(controller.punchCount.value, 0, reason: 'punch 2 waits for 1');
 
       camera(CameraGateState.valid, 200);
       rest(200, 400);

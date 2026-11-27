@@ -30,7 +30,17 @@
       "WebFetch(domain:ojs.ub.uni-konstanz.de)",
       "Bash(sort -t\"'\" -k2 -u)",
       "Bash(git stash *)",
-      "Bash(grep -vE \"^\\\\-\\\\-$\")"
+      "Bash(grep -vE \"^\\\\-\\\\-$\")",
+      "Bash(python3 - \"/private/tmp/claude-501/-Users-damanpreetsingh-Projects-official-punch-detection-demo/df75df22-57ad-4409-aa93-9c153ca867a1/scratchpad/replay.txt\")",
+      "Bash(python3 /private/tmp/claude-501/-Users-damanpreetsingh-Projects-official-punch-detection-demo/df75df22-57ad-4409-aa93-9c153ca867a1/scratchpad/gap.py /private/tmp/claude-501/-Users-damanpreetsingh-Projects-official-punch-detection-demo/df75df22-57ad-4409-aa93-9c153ca867a1/scratchpad/pt.txt)",
+      "Bash(python3 /private/tmp/claude-501/-Users-damanpreetsingh-Projects-official-punch-detection-demo/df75df22-57ad-4409-aa93-9c153ca867a1/scratchpad/knock.py /private/tmp/claude-501/-Users-damanpreetsingh-Projects-official-punch-detection-demo/df75df22-57ad-4409-aa93-9c153ca867a1/scratchpad/pt.txt)",
+      "Bash(python3 /private/tmp/claude-501/-Users-damanpreetsingh-Projects-official-punch-detection-demo/df75df22-57ad-4409-aa93-9c153ca867a1/scratchpad/ratio.py /private/tmp/claude-501/-Users-damanpreetsingh-Projects-official-punch-detection-demo/df75df22-57ad-4409-aa93-9c153ca867a1/scratchpad/pt.txt)",
+      "Bash(grep -vE \"^\\\\s*$\")",
+      "Bash(python3 -c ' *)",
+      "Bash(python3 /private/tmp/claude-501/-Users-damanpreetsingh-Projects-official-punch-detection-demo/df75df22-57ad-4409-aa93-9c153ca867a1/scratchpad/convert.py test/hyper_hitter_raw_events_1795669747795.jsonl test/fixtures/hard_punch_double_count_2026_11_26.csv)"
+    ],
+    "additionalDirectories": [
+      "/Users/damanpreetsingh/Projects/official/punch_detection_demo/test"
     ]
   }
 }

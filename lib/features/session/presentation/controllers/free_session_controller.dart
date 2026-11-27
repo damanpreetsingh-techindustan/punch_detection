@@ -18,6 +18,7 @@ import '../../../vision_detection/domain/entities/punch_detection_config.dart';
 import '../../../fusion/domain/services/impact_gate_evaluator.dart';
 import '../../../fusion/domain/vibration_gate/i_vibration_gate.dart';
 import '../../../fusion/domain/vibration_gate/models/vibration_gate_evaluation.dart';
+import '../../../fusion/domain/vibration_gate/models/vibration_knock.dart';
 import '../../../fusion/domain/vibration_gate/vibration_gate_factory.dart';
 import '../../../fusion/domain/body_motion_gate/i_body_motion_gate.dart';
 import '../../../fusion/domain/body_motion_gate/models/body_motion_evaluation.dart';
@@ -440,6 +441,13 @@ class FreeSessionController extends GetxController {
     'audioRefractoryMs': AppConstants.audioRefractoryMs,
     'subBlockPcm': AppConstants.useSubBlockPcmLevels,
     'warmupMs': AppConstants.warmUpDurationInMiliSeconds.round(),
+    'sameHitRules': <String, bool>{
+      'sameBurst': AppConstants.sameBurstCheckEnabled,
+      'weakEcho': AppConstants.weakEchoCheckEnabled,
+      'stillRinging': AppConstants.stillRingingCheckEnabled,
+      'sameJolt': AppConstants.sameJoltCheckEnabled,
+      'shakingBagEcho': AppConstants.shakingBagEchoCheckEnabled,
+    },
   };
 
   void _recordConfigChange(String reason) {
@@ -1904,13 +1912,29 @@ class FreeSessionController extends GetxController {
       motionUnknownIsValid: AppConstants.bodyMotionUnknownIsValid,
     );
     if (result.isPending) return;
+    // A punch is only counted once every older waiting sound is decided, so
+    // the same-hit checks always compare it with the punch right before it.
+    if (result.isValid &&
+        _pendingImpacts.any(
+          (_PendingImpact p) => p.audioTsMs < impact.audioTsMs,
+        )) {
+      return;
+    }
 
     _pendingImpacts.remove(impact);
+    final String? sameHit = result.isValid
+        ? _sameHitReason(impact, vibeEval)
+        : null;
+    if (sameHit != null) {
+      _vibrationGate.onSameHitRejected(audioTsMs: impact.audioTsMs);
+    }
     _recordImpactDecision(
       impact: impact,
-      code: result.code,
-      reason: result.reasonLabel,
-      valid: result.isValid,
+      code: sameHit != null ? 'IMPACT_REJECTED_SAME_HIT' : result.code,
+      reason: sameHit != null
+          ? 'Rejected — same punch counted twice ($sameHit)'
+          : result.reasonLabel,
+      valid: result.isValid && sameHit == null,
       vibration: vibeState,
       camera: cameraState,
       vibePeak: vibePeak,
@@ -1919,6 +1943,124 @@ class FreeSessionController extends GetxController {
       vibeJerk: vibeEval.matchedKnock?.deltaMag,
       motion: motionEval,
     );
+  }
+
+  /// Recent microphone frames, oldest first, for the same-burst check.
+  final List<_AudioFrame> _recentAudioFrames = <_AudioFrame>[];
+
+  /// Frames kept: the burst window plus margin.
+  static const int _audioFrameHistoryMs = AppConstants.sameBurstMaxMs + 200;
+
+  void _rememberAudioFrame(int tMs, double db) {
+    _recentAudioFrames.add(_AudioFrame(tMs, db));
+    while (_recentAudioFrames.isNotEmpty &&
+        tMs - _recentAudioFrames.first.tMs > _audioFrameHistoryMs) {
+      _recentAudioFrames.removeAt(0);
+    }
+  }
+
+  /// Rule S: why the sound at [audioTsMs] is still the burst of the counted
+  /// punch (it never dropped [AppConstants.sameBurstMinDropDb] below the
+  /// loudest level since that punch), or null when it dropped enough.
+  String? _sameBurstReason(int audioTsMs, int sincePunchMs) {
+    double peakDb = 0.0;
+    double lowestAfterPeakDb = double.infinity;
+    bool sawFrame = false;
+    for (final _AudioFrame f in _recentAudioFrames) {
+      if (f.tMs < _lastPunchTimestampMs || f.tMs >= audioTsMs) continue;
+      sawFrame = true;
+      if (f.db > peakDb) {
+        peakDb = f.db;
+        lowestAfterPeakDb = double.infinity;
+      } else if (f.db < lowestAfterPeakDb) {
+        lowestAfterPeakDb = f.db;
+      }
+      if (f.db <= peakDb - AppConstants.sameBurstMinDropDb) return null;
+    }
+    if (!sawFrame) return null;
+    final String fellTo = lowestAfterPeakDb.isFinite
+        ? 'fell only to ${lowestAfterPeakDb.toStringAsFixed(1)} dB'
+        : 'never fell';
+    return 'same sound burst $sincePunchMs ms after punch #${punchCount.value} '
+        '(peak ${peakDb.toStringAsFixed(1)} dB, $fellTo, needs a '
+        '${AppConstants.sameBurstMinDropDb.toStringAsFixed(0)} dB drop)';
+  }
+
+  /// Why an otherwise valid impact is the previous punch counted again, or
+  /// null when it is a new punch. See the same-hit rules in AppConstants.
+  String? _sameHitReason(
+    _PendingImpact impact,
+    VibrationGateEvaluation vibeEval,
+  ) {
+    if (_lastPunchTimestampMs <= 0) return null;
+    final int sincePunchMs = impact.audioTsMs - _lastPunchTimestampMs;
+    final String jump = impact.frameJump.toStringAsFixed(1);
+
+    if (AppConstants.sameBurstCheckEnabled &&
+        sincePunchMs > 0 &&
+        sincePunchMs <= AppConstants.sameBurstMaxMs) {
+      final String? burst = _sameBurstReason(impact.audioTsMs, sincePunchMs);
+      if (burst != null) return burst;
+    }
+
+    if (AppConstants.stillRingingCheckEnabled &&
+        sincePunchMs >= 0 &&
+        sincePunchMs <= AppConstants.stillRingingWindowMs) {
+      final double troughDb = impact.peakDb - impact.windowRise;
+      if (troughDb >= AppConstants.stillRingingMinTroughDb &&
+          impact.windowRise < AppConstants.stillRingingMaxRiseDb) {
+        return 'sound still ringing $sincePunchMs ms after punch '
+            '#${punchCount.value} (never below '
+            '${troughDb.toStringAsFixed(1)} dB, rose '
+            '+${impact.windowRise.toStringAsFixed(1)} dB)';
+      }
+    }
+
+    final VibrationKnock? knock = vibeEval.matchedKnock;
+    final VibrationKnock? previous = vibeEval.previousPunchKnock;
+    if (knock == null || previous == null) return null;
+
+    if (AppConstants.sameJoltCheckEnabled) {
+      const int windowMs = AppConstants.sameJoltWindowMs;
+      final int gapMs = knock.timestampMs - previous.timestampMs;
+      final double growth = previous.deltaMag > 0
+          ? knock.deltaMag / previous.deltaMag
+          : 0.0;
+      if (gapMs > 0 &&
+          gapMs <= windowMs &&
+          growth >= AppConstants.sameJoltMinGrowth &&
+          impact.frameJump < AppConstants.sameJoltMaxFrameJumpDb) {
+        return 'jolt $gapMs ms after punch #${previous.confirmedPunchNo}\'s '
+            '(<= $windowMs ms), ${growth.toStringAsFixed(1)}x stronger, '
+            'sound +$jump dB';
+      }
+    }
+
+    if (AppConstants.shakingBagEchoCheckEnabled &&
+        vibeEval.isShakingBagRescue) {
+      if (sincePunchMs >= 0 &&
+          sincePunchMs <= AppConstants.shakingBagEchoWindowMs &&
+          impact.frameJump < AppConstants.shakingBagEchoMinFrameJumpDb) {
+        return 'shaking bag $sincePunchMs ms after punch '
+            '#${previous.confirmedPunchNo}, sound +$jump dB';
+      }
+    }
+
+    if (AppConstants.weakEchoCheckEnabled &&
+        sincePunchMs > 0 &&
+        sincePunchMs <= AppConstants.weakEchoWindowMs &&
+        previous.rawMag > 0) {
+      final double ratio = knock.rawMag / previous.rawMag;
+      if (ratio < AppConstants.weakEchoMaxRatio &&
+          knock.rawMag < AppConstants.weakEchoMaxRawMag) {
+        return 'weak echo $sincePunchMs ms after punch '
+            '#${previous.confirmedPunchNo} (jolt '
+            '${knock.rawMag.toStringAsFixed(2)} m/s² = '
+            '${(ratio * 100).toStringAsFixed(0)}% of the punch\'s '
+            '${previous.rawMag.toStringAsFixed(1)})';
+      }
+    }
+    return null;
   }
 
   /// Logs the final decision of one impact and, when valid, registers the punch.
@@ -2210,6 +2352,7 @@ class FreeSessionController extends GetxController {
   void _checkPunchDetection({int? frameTimestampMs}) {
     final int nowMs = DateTime.now().millisecondsSinceEpoch;
     _noteEventClock(frameTimestampMs ?? nowMs);
+    _rememberAudioFrame(frameTimestampMs ?? nowMs, liveDecibelLevel.value);
 
     // Dynamic Session Start Warmup: ignore audio & vision spikes from screen transition / tap sound
     final int warmupMs = AppConstants.warmUpDurationInMiliSeconds.round();
@@ -3608,6 +3751,13 @@ class _PendingImpact {
 }
 
 /// What the vibration in one impact window looked like.
+/// One microphone frame: when it happened and how loud it was.
+class _AudioFrame {
+  final int tMs;
+  final double db;
+  const _AudioFrame(this.tMs, this.db);
+}
+
 class _VibeWindowInfo {
   /// Highest value in the window (0 if none).
   final double peak;

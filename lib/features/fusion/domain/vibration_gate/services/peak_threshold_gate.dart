@@ -101,6 +101,9 @@ class PeakThresholdGate implements IVibrationGate {
   void onImpactRejected({required int audioTsMs}) {}
 
   @override
+  void onSameHitRejected({required int audioTsMs}) {}
+
+  @override
   void reset() {
     _samples.clear();
   }

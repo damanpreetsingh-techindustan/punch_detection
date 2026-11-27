@@ -85,6 +85,7 @@ class VibrationKnockTracker {
   final List<_RawSample> _rawHistory = [];
   int _mergeAnchorMs = 0;
   final List<_JerkSample> _recentJerks = [];
+  VibrationKnock? _lastUsedKnock;
   double _prevX = 0.0;
   double _prevY = 0.0;
   double _prevZ = 0.0;
@@ -297,6 +298,9 @@ class VibrationKnockTracker {
     }
   }
 
+  /// Newest knock used by a confirmed punch (null when none yet).
+  VibrationKnock? get lastUsedKnock => _lastUsedKnock;
+
   void _rememberJerk(int sensorMs, double delta) {
     _recentJerks.add(_JerkSample(sensorMs, delta));
     while (_recentJerks.isNotEmpty &&
@@ -367,7 +371,20 @@ class VibrationKnockTracker {
       if (knock.claimedByAudioTsMs == audioTsMs) {
         knock.isUsed = true;
         knock.confirmedPunchNo = punchNo;
+        if (_lastUsedKnock == null ||
+            knock.timestampMs > _lastUsedKnock!.timestampMs) {
+          _lastUsedKnock = knock;
+        }
       }
+    }
+  }
+
+  /// Marks any knock claimed by [audioTsMs] as used WITHOUT a punch (the
+  /// impact was the same hit counted twice), so no later sound can take it.
+  /// [lastUsedKnock] keeps pointing at the real punch's knock.
+  void consumeClaim(int audioTsMs) {
+    for (final knock in _knocks) {
+      if (knock.claimedByAudioTsMs == audioTsMs) knock.isUsed = true;
     }
   }
 
@@ -388,6 +405,7 @@ class VibrationKnockTracker {
     _knocks.clear();
     _recentJerks.clear();
     _rawHistory.clear();
+    _lastUsedKnock = null;
     _mergeAnchorMs = 0;
     _hasPrevious = false;
     _prevX = 0.0;
