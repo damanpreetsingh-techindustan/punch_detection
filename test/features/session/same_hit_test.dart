@@ -207,34 +207,77 @@ void main() {
   });
 
   group('the bag\'s light tap after a hard punch', () {
-    // Recorded (build 8): 320-410 ms after a hard punch, once its sound has
-    // died away, a quiet sound with a jolt of 0.2-1.3 m/s² (the punch: 14-54).
-    double punchThenTap(int t) {
+    // Recorded (build 8): 135-878 ms after a hard punch, once its sound has
+    // died away, a sound with a jolt of 0.2-5.5 m/s² (the punch: 14-54).
+    double Function(int t) punchThenTap({int tapMs = 1350}) => (int t) {
       if (t < 1000) return 50.0;
       if (t == 1000) return 105.0;
       if (t < 1100) return 85.0;
-      if (t < 1350) return 52.0;
-      if (t == 1350) return 80.0;
-      if (t < 1400) return 70.0;
+      if (t < tapMs) return 52.0;
+      if (t == tapMs) return 80.0;
+      if (t < tapMs + 50) return 70.0;
       return 50.0;
-    }
-
-    Map<int, double> jolts({required double tap}) => <int, double>{
-      990: 20.0,
-      1010: 6.0,
-      1030: 2.0,
-      1340: tap,
-      1360: 0.05,
     };
 
+    Map<int, double> jolts({required double tap, int tapMs = 1350}) =>
+        <int, double>{
+          990: 20.0,
+          1010: 6.0,
+          1030: 2.0,
+          tapMs - 10: tap,
+          tapMs + 10: 0.05,
+        };
+
     test('a tiny jolt is the same punch', () {
-      play(db: punchThenTap, raw: jolts(tap: 0.6), sensorEveryMs: 20);
+      play(db: punchThenTap(), raw: jolts(tap: 0.6), sensorEveryMs: 20);
       expect(controller.punchCount.value, 1);
       expect(sameHitReason(), contains('weak echo'));
     });
 
     test('a real jolt at the same moment is a new punch', () {
-      play(db: punchThenTap, raw: jolts(tap: 12.0), sensorEveryMs: 20);
+      play(db: punchThenTap(), raw: jolts(tap: 12.0), sensorEveryMs: 20);
+      expect(controller.punchCount.value, 2);
+    });
+
+    test('a tiny jolt 880 ms later is still the same punch', () {
+      play(
+        db: punchThenTap(tapMs: 1880),
+        raw: jolts(tap: 1.6, tapMs: 1880),
+        sensorEveryMs: 20,
+        endMs: 2200,
+      );
+      expect(controller.punchCount.value, 1);
+      expect(sameHitReason(), contains('weak echo'));
+    });
+
+    test('a light punch more than a second later counts', () {
+      play(
+        db: punchThenTap(tapMs: 2100),
+        raw: jolts(tap: 1.6, tapMs: 2100),
+        sensorEveryMs: 20,
+        endMs: 2400,
+      );
+      expect(controller.punchCount.value, 2);
+    });
+
+    test('a jolt of 18% while the bag still rings is the same punch', () {
+      // Recorded punch 27: 135 ms after the punch, 5.5 m/s² (punch: 30.1).
+      play(
+        db: punchThenTap(tapMs: 1140),
+        raw: jolts(tap: 3.6, tapMs: 1140),
+        sensorEveryMs: 20,
+      );
+      expect(controller.punchCount.value, 1);
+      expect(sameHitReason(), contains('weak echo'));
+    });
+
+    test('a fast follow-up with a third of the jolt counts', () {
+      // Real fast punches measured 31-39% of the one before, 9 m/s² or more.
+      play(
+        db: punchThenTap(tapMs: 1140),
+        raw: jolts(tap: 9.0, tapMs: 1140),
+        sensorEveryMs: 20,
+      );
       expect(controller.punchCount.value, 2);
     });
   });

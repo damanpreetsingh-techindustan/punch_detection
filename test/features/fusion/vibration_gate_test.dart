@@ -543,21 +543,22 @@ void main() {
       quiet(0, 50);
       camera(CameraGateState.valid, 40);
 
-      // Punch 1 (Hard strike): 2.0 m/s² vibration + 95 dB audio spike at 60ms
-      rawVibe(2.0, 55, x: 1.6, y: 0.3, z: 1.1);
+      // Punch 1 (Hard strike): 30 m/s² vibration + 95 dB audio spike at 60ms
+      rawVibe(30.0, 55, x: 24.0, y: 4.5, z: 16.5);
       frame(95.0, 60);
 
       expect(controller.punchCount.value, 1, reason: 'Punch 1 confirmed');
 
       // Vibration decays
-      rawVibe(0.8, 80);
-      rawVibe(0.3, 100);
-      rawVibe(0.15, 120);
+      rawVibe(12.0, 80);
+      rawVibe(4.5, 100);
+      rawVibe(2.25, 120);
       quiet(70, 230);
       camera(CameraGateState.valid, 220);
 
-      // Punch 2 (Soft strike): 0.35 m/s² vibration jump + 85 dB audio spike at 240ms (180ms after Punch 1)
-      rawVibe(0.35, 235, x: 0.25, y: 0.05, z: 0.22);
+      // Punch 2 (Soft strike): 10.5 m/s² jump (35% of punch 1; real follow-ups
+      // measured 31% or more) + 85 dB audio spike at 240ms (180ms after Punch 1)
+      rawVibe(10.5, 235, x: 7.5, y: 1.5, z: 6.6);
       frame(85.0, 240);
       quiet(250, 380);
 

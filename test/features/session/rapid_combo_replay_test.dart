@@ -274,4 +274,28 @@ void main() {
     expect(punchesBetween(72000, 90000), 31, reason: 'combos');
     expect(controller.punchCount.value, 58, reason: 'app counted 61');
   });
+
+  test('build 8 second session: hard single punches count once', () {
+    startSession(
+      startEpochMs: 1795758471114,
+      baselineDb: 40.831,
+      calibratedDb: 48.0,
+      targetDb: 66.0,
+    );
+    replay('test/fixtures/hard_punch_double_count_2026_11_27_b.csv');
+
+    // ignore: avoid_print
+    print('punches at (ms): $punchTimes');
+
+    // The punches the app counted twice (its count in brackets). Punch 2's
+    // extra: a 60 dB sound 646 ms later on the settling bag (0.55 m/s²);
+    // punch 22's: 878 ms later (1.58 m/s²); punch 27's: 135 ms later while
+    // the bag still rang at 3-6 m/s² (5.54 m/s², 18% of the punch's).
+    expect(punchesBetween(31700, 32600), 1, reason: 'punch 2 [2]');
+    expect(punchesBetween(79000, 80100), 1, reason: 'punch 22 [2]');
+    expect(punchesBetween(87400, 87700), 1, reason: 'punch 27 [2]');
+    // From the first punch on. The sound at 27.4 s came while Settings was
+    // open on the phone (declined there), which the replay cannot see.
+    expect(punchesBetween(29000, 140000), 57, reason: 'app counted 60');
+  });
 }

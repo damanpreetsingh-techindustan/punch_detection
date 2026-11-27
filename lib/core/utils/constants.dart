@@ -203,7 +203,7 @@ class AppConstants {
 
   /// Default value of the "Max Camera Distance" slider (approx. metres) at the
   /// start of every session and after Defaults / Reset.
-  static const double defaultMaxCameraDistanceM = 1.1;
+  static const double defaultMaxCameraDistanceM = 1.2;
 
   /// What to do when the distance cannot be measured (for example only one
   /// shoulder visible and no eyes): true = treat as valid (never miss a punch).
@@ -344,18 +344,20 @@ class AppConstants {
   /// block the next punch (real punches in a flurry came 71-150 ms apart).
   static const int sameBurstMaxMs = 300;
 
-  /// Rule W (weak echo): 320-410 ms after a hard punch the bag swings back and
-  /// taps lightly — a quiet sound with a jolt of only 0.2-1.3 m/s² (1-2% of the
-  /// punch's 13.7-53.9). Within this long after a counted punch ...
+  /// Rule W (weak echo): after a hard punch the bag rings and swings back, and
+  /// a sound on it brings only a small jolt: 135-878 ms later, 0.2-5.5 m/s²
+  /// (1-18% of the punch's 13.7-53.9). Within this long after a counted
+  /// punch ...
   static const bool weakEchoCheckEnabled = true;
-  static const int weakEchoWindowMs = 600;
+  static const int weakEchoWindowMs = 1000;
 
-  /// ... a jolt below this fraction of the punch's jolt (real punches never
-  /// measured below 0.31 of the one before) ...
-  static const double weakEchoMaxRatio = 0.15;
+  /// ... a jolt below this fraction of the punch's jolt (real punches within
+  /// 1.5 s never measured below 0.31 of the one before) ...
+  static const double weakEchoMaxRatio = 0.25;
 
-  /// ... and below this level (m/s²) is that tap, not a punch.
-  static const double weakEchoMaxRawMag = 5.0;
+  /// ... and below this level (m/s²; real punches there measured 9.1 or
+  /// more) is the bag, not a punch.
+  static const double weakEchoMaxRawMag = 8.0;
 
   /// Rule C (sound still ringing): the sound is at most this long after the
   /// counted punch's sound (duplicates 62-83 ms; real punches whose sound had
