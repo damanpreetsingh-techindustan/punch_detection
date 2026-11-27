@@ -58,6 +58,10 @@ abstract class IVibrationGate {
   /// Releases any temporary knock claim if an impact window ended in rejection.
   void onImpactRejected({required int audioTsMs});
 
+  /// The impact at [audioTsMs] was the same hit as the previous punch: its
+  /// knock is used up (no later sound may take it) but no punch is counted.
+  void onSameHitRejected({required int audioTsMs});
+
   /// Resets internal buffers and state between sessions.
   void reset();
 }

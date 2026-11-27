@@ -15,11 +15,21 @@ class VibrationGateEvaluation {
   /// Diagnostic detail string for telemetry logs and developer console.
   final String detail;
 
+  /// True when [matchedKnock] is not a knock but a rise found on a still
+  /// shaking bag (the "Knock on shaking bag" rescue).
+  final bool isShakingBagRescue;
+
+  /// Knock of the newest confirmed punch, for the same-hit check (null when
+  /// none, or when the gate does not track knocks).
+  final VibrationKnock? previousPunchKnock;
+
   const VibrationGateEvaluation({
     required this.state,
     this.matchedKnock,
     this.peakMagnitude = 0.0,
     this.detail = '',
+    this.isShakingBagRescue = false,
+    this.previousPunchKnock,
   });
 
   bool get isPresent => state == VibrationGateState.present;

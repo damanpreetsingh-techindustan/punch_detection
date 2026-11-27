@@ -8,6 +8,7 @@ import 'package:share_plus/share_plus.dart';
 import '../../../../core/navigation/app_navigator.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_text_styles.dart';
+import '../../../../core/utils/app_version_info.dart';
 import '../../../../core/utils/size_box.dart';
 
 /// Developer mode only: the session's detection settings, the punch spikes
@@ -40,6 +41,7 @@ class ResultsDevPanel extends StatelessWidget {
     SessionResultModel result,
   ) async {
     try {
+      await AppVersionInfo.init();
       final double ppm = result.durationSeconds > 0
           ? (result.totalPunches / (result.durationSeconds / 60.0))
           : 0.0;
@@ -48,6 +50,9 @@ class ResultsDevPanel extends StatelessWidget {
       buffer.writeln('====================================================');
       buffer.writeln('             KNOCKUP - PUNCH LOG EXPORT              ');
       buffer.writeln('====================================================');
+      buffer.writeln(
+        'App Version          : ${AppVersionInfo.fullVersion} (${Platform.operatingSystem})',
+      );
       buffer.writeln(
         'Session Type         : ${result.formattedSessionTypeLabel}',
       );

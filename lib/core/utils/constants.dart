@@ -261,7 +261,7 @@ class AppConstants {
 
   /// Default value of the "Max Camera Distance" slider (approx. metres) at the
   /// start of every session and after Defaults / Reset.
-  static const double defaultMaxCameraDistanceM = 0.7;
+  static const double defaultMaxCameraDistanceM = 0.9;
 
   /// What to do when the distance cannot be measured (for example only one
   /// shoulder visible and no eyes): true = treat as valid (never miss a punch).
@@ -381,6 +381,82 @@ class AppConstants {
   /// was paused or restarted; the next reading only becomes the new starting
   /// point and can never be a knock by itself.
   static const int knockReseedGapMs = 200;
+
+  // ─── Same-hit check (one hard punch counted twice) ──────────────────────────
+  // A hard punch makes a second loud sound (~97-104 dB) 60-85 ms after the
+  // first, while the first is still ringing. Its jolt is a ~100 ms burst whose
+  // biggest reading can come ~60 ms after it starts (recorded: 10 → 19.5 →
+  // 17.5 → 59.8 m/s² at 20 ms steps), past [knockMergeMs], or the bag swings
+  // back; either gave the second sound a knock of its own. Real rapid punches
+  // land 71+ ms apart too, so time alone cannot decide; each rule below needs
+  // several signs at once. Measured on 8 duplicates from 3 sessions against
+  // every real fast punch of the rapid-combo recordings. Rejected impacts are
+  // logged as IMPACT_REJECTED_SAME_HIT with the measured values.
+
+  /// Rule S (same sound burst): one punch is one burst of sound — a small
+  /// sound as the glove arrives (70-85 dB), the hit (~110 dB), a bump while
+  /// it rings, then it dies away. A new punch can only start once the sound
+  /// has dropped at least [sameBurstMinDropDb] below the loudest level since
+  /// the counted punch (the small sound before a hit dropped only 2-7 dB
+  /// before rising into it; real flurry punches always dropped 21.7+ dB) ...
+  static const bool sameBurstCheckEnabled = true;
+  static const double sameBurstMinDropDb = 20.0;
+
+  /// ... and only this long after the counted punch, so a long noise can never
+  /// block the next punch (real punches in a flurry came 71-150 ms apart).
+  static const int sameBurstMaxMs = 300;
+
+  /// Rule W (weak echo): after a hard punch the bag rings and swings back, and
+  /// a sound on it brings only a small jolt: 135-878 ms later, 0.2-5.5 m/s²
+  /// (1-18% of the punch's 13.7-53.9). Within this long after a counted
+  /// punch ...
+  static const bool weakEchoCheckEnabled = true;
+  static const int weakEchoWindowMs = 1000;
+
+  /// ... a jolt below this fraction of the punch's jolt (real punches within
+  /// 1.5 s never measured below 0.31 of the one before) ...
+  static const double weakEchoMaxRatio = 0.25;
+
+  /// ... and below this level (m/s²; real punches there measured 9.1 or
+  /// more) is the bag, not a punch.
+  static const double weakEchoMaxRawMag = 8.0;
+
+  /// Rule C (sound still ringing): the sound is at most this long after the
+  /// counted punch's sound (duplicates 62-83 ms; real punches whose sound had
+  /// not died down came 98+ ms later) ...
+  static const bool stillRingingCheckEnabled = true;
+  static const int stillRingingWindowMs = 90;
+
+  /// ... the level never fell below this during the 40 ms before it
+  /// (duplicates 86.4-91.1 dB but one 81.7; the real punch 71 ms after the
+  /// previous one fell to 81.0) ...
+  static const double stillRingingMinTroughDb = 84.0;
+
+  /// ... and it rose less than this above that low point (duplicates 6.9-16.2).
+  static const double stillRingingMaxRiseDb = 18.0;
+
+  /// Rule A (same jolt): the knock is at most this long after the previous
+  /// punch's knock (the duplicates measured 60-61 ms) ...
+  static const bool sameJoltCheckEnabled = true;
+  static const int sameJoltWindowMs = 70;
+
+  /// ... is at least this many times stronger (jerk), i.e. the peak of the same
+  /// jolt (measured 1.2-2.9x; a real rapid punch 60 ms later measured 0.93x) ...
+  static const double sameJoltMinGrowth = 1.3;
+
+  /// ... and brought no new glove sound: the sound rose less than this from
+  /// the previous audio frame (duplicates 6.3-17.0 dB; the real rapid punch
+  /// whose jolt came 40 ms after the previous one rose 26 dB).
+  static const double sameJoltMaxFrameJumpDb = 18.0;
+
+  /// Rule B (shaking-bag echo): a "Knock on shaking bag" rescue within this
+  /// long after a counted punch ...
+  static const bool shakingBagEchoCheckEnabled = true;
+  static const int shakingBagEchoWindowMs = 100;
+
+  /// ... needs a sound that rose at least this much from the previous frame
+  /// (the bag swinging back measured +5.3 and +15.5 dB).
+  static const double shakingBagEchoMinFrameJumpDb = 20.0;
 
   /// Impact Sensitivity Slider bounds in session detection settings (0.05 m/s² to 1.0 m/s²)
   static double minImpactVibrationSlider = 0.05;
